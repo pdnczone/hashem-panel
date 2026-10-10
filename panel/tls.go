@@ -634,6 +634,7 @@ func startHTTPSListener() {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	applyServerLimits(httpsSrv)
 	srvToStart := httpsSrv
 	go func(srv *http.Server) {
 		if err := srv.ListenAndServeTLS(tlsCertFile(), tlsKeyFile()); err != nil && err != http.ErrServerClosed {

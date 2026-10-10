@@ -622,20 +622,29 @@ func applyDoctorFixes() map[string]any {
 	fixes = append(fixes, "Configured FRP systemd service limits (LimitNOFILE=1048576, LimitNPROC=512000, Restart=always)")
 
 	// 5. Interface & routing health check
-	st := localStatus()
-	if !st.Gre.Exists {
-		if err := exec.Command("systemctl", "restart", "gre-tunnel").Run(); err == nil {
-			fixes = append(fixes, "Restarted gre-tunnel service to bring interface UP")
-		}
-	} else if !st.PingOK && st.Gre.PeerIP != "" {
-		if err := exec.Command("systemctl", "restart", "gre-tunnel").Run(); err == nil {
-			fixes = append(fixes, "Refreshed gre-tunnel routing and interface link")
-		}
-	}
+	fixes = append(fixes, interfaceFixes(localStatus(), func() error {
+		return exec.Command("systemctl", "restart", "gre-tunnel").Run()
+	})...)
 
 	return map[string]any{
 		"applied": fixes,
 	}
+}
+
+// interfaceFixes is step 5 of applyDoctorFixes. It restarts gre-tunnel only when
+// the interface is missing. ICMP alone says nothing about the service path
+// (filtered or one-way ICMP is common), and a restart would drop live FRP
+// sessions, so a silent ping only adds a note.
+func interfaceFixes(st tunnelStatus, restartGre func() error) []string {
+	var fixes []string
+	if !st.Gre.Exists {
+		if err := restartGre(); err == nil {
+			fixes = append(fixes, "Restarted gre-tunnel service to bring interface UP")
+		}
+	} else if !st.PingOK && st.Gre.PeerIP != "" {
+		fixes = append(fixes, "ICMP not answering: not restarting gre-tunnel (see Reverse Path diagnosis)")
+	}
+	return fixes
 }
 
 // frpcLoginEOF reports whether the recent frpc journal shows the login EOF

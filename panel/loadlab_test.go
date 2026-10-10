@@ -43,7 +43,7 @@ type labResult struct {
 	sc                       labScenario
 	secs                     float64
 	routes                   map[string]routeJSON
-	livePeers, fleetTick     samplerJSON
+	snapTick, fleetTick      samplerJSON
 	calls                    map[string]uint64
 	gBase, gPeak, gAfter     int
 	heapBase, heapPeak       uint64
@@ -100,6 +100,14 @@ func (h *labHost) run(ctx context.Context, name string, args ...string) ([]byte,
 			}
 			return []byte(b.String()), nil
 		}
+		if len(args) >= 4 && args[0] == "-o" {
+			var b strings.Builder
+			b.WriteString("5: gre-tunnel    inet 10.10.0.1/30 scope global gre-tunnel\\       valid_lft forever preferred_lft forever\n")
+			for i := 1; i <= h.sc.n; i++ {
+				fmt.Fprintf(&b, "6: gre-t%d    inet 10.20.%d.1/30 scope global gre-t%d\\       valid_lft forever preferred_lft forever\n", i, i, i)
+			}
+			return []byte(b.String()), nil
+		}
 		if len(args) >= 5 && args[0] == "-4" {
 			dev := args[4]
 			if dev == "gre-tunnel" {
@@ -111,11 +119,21 @@ func (h *labHost) run(ctx context.Context, name string, args ...string) ([]byte,
 			}
 		}
 	case "systemctl":
-		if len(args) == 2 && args[0] == "is-active" {
-			if args[1] == "frps" || strings.HasPrefix(args[1], "frps-") {
-				return []byte("active\n"), nil
+		if len(args) >= 2 && args[0] == "is-active" {
+			var b strings.Builder
+			bad := false
+			for _, u := range args[1:] {
+				if u == "frps" || strings.HasPrefix(u, "frps-") {
+					b.WriteString("active\n")
+				} else {
+					b.WriteString("inactive\n")
+					bad = true
+				}
 			}
-			return []byte("inactive\n"), fmt.Errorf("exit status 3")
+			if bad {
+				return []byte(b.String()), fmt.Errorf("exit status 3")
+			}
+			return []byte(b.String()), nil
 		}
 	case "ss":
 		if len(args) > 0 && args[0] == "-Htin" {
@@ -230,18 +248,18 @@ func runLabCell(t *testing.T, sc labScenario, secs int, pingDur time.Duration, t
 		}
 	}
 
-	// fleet sampler equivalent (15s real -> 150ms), same body as startFleetSampler
+	// Shared collector (snapshotEvery/icmpEvery compressed 20x, like the fleet
+	// sampler was before) plus the fleet sampler body reading the snapshot.
+	resetSnapshotState()
+	oldEvery, oldIcmp := snapshotEvery, icmpEvery
+	snapshotEvery, icmpEvery = 250*time.Millisecond, 3*time.Second
+	startSnapshotCollector(clientCtx)
 	tickDone := make(chan struct{})
 	go func() {
 		defer close(tickDone)
 		tick := func() {
 			defer func(t time.Time) { recordSampler("fleetSampler", time.Since(t)) }(time.Now())
-			peers := livePeers()
-			if m := mainTunnelLive(); m != nil {
-				peers = append([]peerLive{*m}, peers...)
-			}
-			fleetRemember(peers)
-			fleetRecord(peers, time.Now())
+			fleetRecord(currentSnapshot().All(), time.Now())
 		}
 		tk := time.NewTicker(150 * time.Millisecond)
 		defer tk.Stop()
@@ -296,8 +314,8 @@ func runLabCell(t *testing.T, sc labScenario, secs int, pingDur time.Duration, t
 	}
 	for _, s := range samplerSnapshot() {
 		switch s.Name {
-		case "livePeers":
-			res.livePeers = s
+		case "snapshot":
+			res.snapTick = s
 		case "fleetSampler":
 			res.fleetTick = s
 		}
@@ -320,6 +338,9 @@ func runLabCell(t *testing.T, sc labScenario, secs int, pingDur time.Duration, t
 	cancelClients()
 	wg.Wait()
 	<-tickDone
+	snapPool.wait()
+	snapshotEvery, icmpEvery = oldEvery, oldIcmp
+	resetSnapshotState()
 	<-peakDone
 	srv.CloseClientConnections()
 	srv.Close()
@@ -366,7 +387,7 @@ var labCSVHeader = []string{"N", "clients", "icmp", "ss_lines", "secs",
 	"dash_n", "dash_p50_ms", "dash_p95_ms", "dash_p99_ms",
 	"fleet_n", "fleet_p50_ms", "fleet_p95_ms", "fleet_p99_ms",
 	"peers_n", "peers_p50_ms", "peers_p95_ms", "peers_p99_ms",
-	"livepeers_runs", "livepeers_avg_ms", "livepeers_max_ms", "fleet_tick_avg_ms", "fleet_tick_max_ms",
+	"snapshot_runs", "snapshot_avg_ms", "snapshot_max_ms", "fleet_tick_avg_ms", "fleet_tick_max_ms",
 	"ip_per_min", "systemctl_per_min", "ss_tin_per_min", "ss_tun_per_min", "ping_per_min",
 	"goroutines_base", "goroutines_peak", "goroutines_after", "heap_base_mb", "heap_peak_mb", "fd_base", "fd_peak", "fd_after",
 	"completed_reqs", "inflight_at_end", "oldest_inflight_ms"}
@@ -391,7 +412,7 @@ func (r labResult) csvRow() []string {
 		x := r.routes[p]
 		row = append(row, strconv.FormatUint(x.Count, 10), f(x.P50Ms), f(x.P95Ms), f(x.P99Ms))
 	}
-	row = append(row, strconv.FormatUint(r.livePeers.Runs, 10), f(r.livePeers.AvgDurationMs), f(r.livePeers.MaxDurationMs),
+	row = append(row, strconv.FormatUint(r.snapTick.Runs, 10), f(r.snapTick.AvgDurationMs), f(r.snapTick.MaxDurationMs),
 		f(r.fleetTick.AvgDurationMs), f(r.fleetTick.MaxDurationMs),
 		perMin("ip:"), perMin("systemctl:"), perMin("ss:-Htin"), perMin("ss:-tun"), perMin("ping:"),
 		strconv.Itoa(r.gBase), strconv.Itoa(r.gPeak), strconv.Itoa(r.gAfter),
@@ -455,10 +476,10 @@ func TestLoadLab(t *testing.T) {
 		r := runLabCell(t, sc, cell, pingDur, tb[0], tb[1])
 		results = append(results, r)
 		rows = append(rows, r.csvRow())
-		t.Logf("N=%-2d C=%-2d icmp=%-7v ss=%-5d | dash p50/p95/p99=%6.0f/%6.0f/%6.0f ms (n=%d) fleet p95=%5.1f peers p95=%6.0f | livePeers avg/max=%6.0f/%6.0f ms | inflight@end=%d oldest=%.0fms | G %d->%d->%d FD %d->%d->%d heap %.0f->%.0fMB",
+		t.Logf("N=%-2d C=%-2d icmp=%-7v ss=%-5d | dash p50/p95/p99=%6.0f/%6.0f/%6.0f ms (n=%d) fleet p95=%5.1f peers p95=%6.0f | snapshot avg/max=%6.0f/%6.0f ms | inflight@end=%d oldest=%.0fms | G %d->%d->%d FD %d->%d->%d heap %.0f->%.0fMB",
 			sc.n, sc.clients, !sc.dropped, sc.ssLines,
 			r.routes["/api/dashboard"].P50Ms, r.routes["/api/dashboard"].P95Ms, r.routes["/api/dashboard"].P99Ms, r.routes["/api/dashboard"].Count,
-			r.routes["/api/fleet"].P95Ms, r.routes["/api/peers"].P95Ms, r.livePeers.AvgDurationMs, r.livePeers.MaxDurationMs,
+			r.routes["/api/fleet"].P95Ms, r.routes["/api/peers"].P95Ms, r.snapTick.AvgDurationMs, r.snapTick.MaxDurationMs,
 			r.inflightAtEnd, r.oldestInflightMs, r.gBase, r.gPeak, r.gAfter, r.fdBase, r.fdPeak, r.fdAfter,
 			float64(r.heapBase)/1e6, float64(r.heapPeak)/1e6)
 	}

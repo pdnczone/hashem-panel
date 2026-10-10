@@ -141,7 +141,7 @@ func ensureFreshScript(script string) {
 // ---- GET /api/setup: defaults + whether a tunnel already exists ----
 
 func currentIranBundle() (string, string) {
-	st := localStatus()
+	st := currentLocal()
 
 	var setupMeta struct {
 		Role       string `json:"role"`
@@ -275,7 +275,7 @@ func currentIranBundle() (string, string) {
 }
 
 func handleSetupGet(w http.ResponseWriter, r *http.Request) {
-	st := localStatus()
+	st := currentLocal()
 	resp := map[string]any{
 		"local_public": detectPublicIP(),
 		"iran_gre":     defaultIranGRE,
@@ -311,7 +311,7 @@ func tunnelExists() bool {
 }
 
 func detectPublicIP() string {
-	out, err := exec.Command("ip", "route", "get", "1.1.1.1").CombinedOutput()
+	out, err := runCmdTimeout(5*time.Second, "ip", "route", "get", "1.1.1.1")
 	if err == nil {
 		f := strings.Fields(string(out))
 		for i, p := range f {
@@ -837,11 +837,10 @@ func handlePeersGet(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, resp)
 		return
 	}
-	peers := livePeers()
-	if peers == nil {
-		peers = []peerLive{}
-	}
-	writeJSON(w, map[string]any{"peers": peers, "peer_count": len(peers), "max": 5})
+	snap := currentSnapshot()
+	setSnapshotAgeHeader(w, snap)
+	peers := snap.PeersAged()
+	writeJSON(w, map[string]any{"peers": peers, "peer_count": len(peers), "max": 5, "snapshot_age_ms": snap.AgeMs()})
 }
 
 // POST /api/peers just proxies validation errors from /api/setup role=add-peer.

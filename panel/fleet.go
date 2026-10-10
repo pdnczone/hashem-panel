@@ -66,6 +66,12 @@ type fleetNode struct {
 	ControlPort int           `json:"control_port"`
 	Main        bool          `json:"main"`
 	Health      string        `json:"health"` // healthy | degraded | down
+	HealthState string        `json:"health_state"`
+	ICMPFilt    bool          `json:"icmp_filtered"`
+	ICMPOK      bool          `json:"icmp_ok"`
+	ICMPMs      float64       `json:"icmp_ms"`
+	Reasons     []string      `json:"reasons"`
+	SnapAgeMs   int64         `json:"snapshot_age_ms"`
 	Rx          *uint64       `json:"rx"`
 	Tx          *uint64       `json:"tx"`
 	Ports       []int         `json:"ports"`
@@ -117,6 +123,18 @@ func fleetSaveLocked() {
 	}
 }
 
+// fleetFlushIfDirty persists the history only when a sample was added since the
+// last write (the write itself is temp file + atomic rename).
+func fleetFlushIfDirty() bool {
+	fleetMu.Lock()
+	defer fleetMu.Unlock()
+	if !fleetDirty {
+		return false
+	}
+	fleetSaveLocked()
+	return true
+}
+
 func parsePingMs(s string) float64 {
 	s = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "ms"))
 	v, err := strconv.ParseFloat(s, 64)
@@ -126,18 +144,14 @@ func parsePingMs(s string) float64 {
 	return v
 }
 
+// fleetHealth is the sample level of a live record. Snapshot-built records carry
+// the published (debounced) state; others are computed by ComputeHealth, so
+// there is one definition of health.
 func fleetHealth(l peerLive) int {
-	switch {
-	case l.GreUp && l.FrpUp && l.PingOK:
-		return fleetOK
-	case l.FrpUp && l.Linked:
-		// A live FRP session is the real service path: healthy even when the
-		// GRE inner address does not answer ping (reported as "FRP only").
-		return fleetOK
-	case l.GreUp || l.FrpUp:
-		return fleetDeg
+	if l.HealthState != "" {
+		return healthLevel(l.HealthState)
 	}
-	return fleetDown
+	return healthLevel(ComputeHealth(signalsOf(l)).State)
 }
 
 func healthName(s int) string {
@@ -193,7 +207,11 @@ func fleetCompute(h []fleetSample) fleetStats {
 			up++
 		}
 		if s.Ms < 0 {
-			loss++
+			// no latency is loss only when the link was not healthy: a healthy
+			// link without a measurable RTT (ICMP filtered) is not loss.
+			if s.S < fleetOK {
+				loss++
+			}
 			continue
 		}
 		if n == 0 || s.Ms < st.MinMs {
@@ -232,7 +250,7 @@ func fleetSnapshot(recs []peerRecord, live map[int]peerLive) []fleetNode {
 			ID: r.ID, Name: r.Name, RemotePub: r.RemotePub, Engine: r.Engine,
 			Transport: r.Transport, Carrier: r.Carrier, Ports: r.Ports, PingMs: -1,
 			LatencyMs: -1, ControlPort: r.FrpPort,
-			Health: "down", History: append([]fleetSample{}, win...), Stats: fleetCompute(win),
+			Health: "down", HealthState: "down", ICMPMs: -1, Reasons: []string{}, SnapAgeMs: -1, History: append([]fleetSample{}, win...), Stats: fleetCompute(win),
 		}
 		if n.Name == "" {
 			n.Name = "peer-" + strconv.Itoa(r.ID)
@@ -252,9 +270,16 @@ func fleetSnapshot(recs []peerRecord, live map[int]peerLive) []fleetNode {
 				n.PingMs = parsePingMs(l.PingMs)
 			}
 			n.Health = healthName(fleetHealth(l))
+			n.HealthState, n.ICMPFilt, n.ICMPOK, n.ICMPMs = n.Health, l.ICMPFiltered, l.ICMPOK, l.ICMPMs
+			n.SnapAgeMs = l.SnapshotAgeMs
+			if n.ICMPMs == 0 && !l.ICMPOK {
+				n.ICMPMs = -1
+			}
+			n.Reasons = append([]string{}, l.Reasons...)
 		} else if len(win) > 0 {
 			last := win[len(win)-1]
 			n.Health, n.PingOK, n.PingMs = healthName(last.S), last.Ms >= 0, last.Ms
+			n.HealthState = n.Health
 			n.LatencyMs = last.Ms
 		}
 		out = append(out, n)
@@ -263,30 +288,15 @@ func fleetSnapshot(recs []peerRecord, live map[int]peerLive) []fleetNode {
 	return out
 }
 
-// lastLive caches the most recent sampler result so the API never pings.
-var (
-	lastLiveMu sync.Mutex
-	lastLive   = map[int]peerLive{}
-)
-
-func fleetRemember(peers []peerLive) {
-	m := make(map[int]peerLive, len(peers))
-	for _, p := range peers {
-		m[p.ID] = p
-	}
-	lastLiveMu.Lock()
-	lastLive = m
-	lastLiveMu.Unlock()
-}
-
 func handleFleet(w http.ResponseWriter, r *http.Request) {
+	snap := currentSnapshot()
+	setSnapshotAgeHeader(w, snap)
 	recs := loadPeers()
-	lastLiveMu.Lock()
-	live := make(map[int]peerLive, len(lastLive))
-	for k, v := range lastLive {
-		live[k] = v
+	all := snap.All()
+	live := make(map[int]peerLive, len(all))
+	for _, l := range all {
+		live[l.ID] = l
 	}
-	lastLiveMu.Unlock()
 	// The main tunnel is just another spoke of the Iran hub.
 	if m, ok := live[mainTunnelID]; ok {
 		recs = append([]peerRecord{m.peerRecord}, recs...)
@@ -303,12 +313,18 @@ func handleFleet(w http.ResponseWriter, r *http.Request) {
 			down++
 		}
 	}
+	snapAt := ""
+	if !snap.At.IsZero() {
+		snapAt = snap.At.UTC().Format(time.RFC3339)
+	}
 	writeJSON(w, map[string]any{
 		"nodes": nodes, "count": len(nodes), "latency": hubLatency(nodes),
 		"healthy": healthy, "degraded": degraded, "down": down,
-		"interval_s": int(fleetSampleEvery / time.Second),
-		"hub":        nilIfEmpty(detectPublicIPCached()),
-		"checked":    time.Now().UTC().Format(time.RFC3339),
+		"interval_s":      int(fleetSampleEvery / time.Second),
+		"hub":             nilIfEmpty(snap.PublicIP),
+		"checked":         time.Now().UTC().Format(time.RFC3339),
+		"snapshot_age_ms": snap.AgeMs(),
+		"snapshot_at":     nilIfEmpty(snapAt),
 	})
 }
 
@@ -325,8 +341,12 @@ func detectPublicIPCached() string {
 	if pubIPVal != "" && time.Since(pubIPTime) < 10*time.Minute {
 		return pubIPVal
 	}
+	if pubIPVal == "" && time.Since(pubIPTime) < time.Minute {
+		return "" // recent failed lookup: do not retry on every snapshot tick
+	}
+	pubIPTime = time.Now()
 	if v := detectPublicIP(); v != "" {
-		pubIPVal, pubIPTime = v, time.Now()
+		pubIPVal = v
 	}
 	return pubIPVal
 }
@@ -334,14 +354,11 @@ func detectPublicIPCached() string {
 func startFleetSampler() {
 	fleetOnce.Do(func() {
 		go func() {
+			// The sampler only records the latest shared snapshot; it never
+			// collects on its own.
 			tick := func() {
 				defer func(t time.Time) { recordSampler("fleetSampler", time.Since(t)) }(time.Now())
-				peers := livePeers()
-				if m := mainTunnelLive(); m != nil {
-					peers = append([]peerLive{*m}, peers...)
-				}
-				fleetRemember(peers)
-				fleetRecord(peers, time.Now())
+				fleetRecord(currentSnapshot().All(), time.Now())
 			}
 			tick()
 			sample := time.NewTicker(fleetSampleEvery)
@@ -353,11 +370,7 @@ func startFleetSampler() {
 				case <-sample.C:
 					tick()
 				case <-flush.C:
-					fleetMu.Lock()
-					if fleetDirty {
-						fleetSaveLocked()
-					}
-					fleetMu.Unlock()
+					fleetFlushIfDirty()
 				}
 			}
 		}()
@@ -370,30 +383,6 @@ func syncOnceReset() sync.Once { return sync.Once{} }
 // mainTunnelID is the synthetic fleet id of the base (non-peer) tunnel. Peer
 // ids start at 1, so 0 never collides.
 const mainTunnelID = 0
-
-// mainTunnelLive describes the base tunnel as a hub spoke, or nil when this
-// machine is not an Iran hub or has no base tunnel configured.
-func mainTunnelLive() *peerLive {
-	st := localStatus()
-	if !strings.HasPrefix(st.Role, "iran") || !(st.Gre.Exists || st.FrpUp || len(st.Proxies) > 0) {
-		return nil
-	}
-	name := "Tunnel"
-	if st.RemotePub != "" {
-		name = "Tunnel · " + st.RemotePub
-	}
-	rec := peerRecord{ID: mainTunnelID, Name: name, RemotePub: st.RemotePub, Engine: st.Engine,
-		Transport: st.Transport, FrpPort: st.BindPort, Ports: st.ProxyPorts}
-	l := &peerLive{peerRecord: rec, GreUp: st.Gre.Exists, FrpUp: st.FrpUp, PingOK: st.PingOK, PingMs: st.PingMs,
-		GreInner: st.Gre.Inner}
-	var tcpRTT float64 = -1
-	if st.FrpUp {
-		l.Linked, tcpRTT = controlSession(st.BindPort)
-	}
-	l.FrpOnly = l.Linked && !l.PingOK
-	l.LatencyMs, l.LatencyKind = pickLatency(l.PingOK, l.PingMs, tcpRTT)
-	return l
-}
 
 type hubLat struct {
 	Avg   float64 `json:"avg_ms"`

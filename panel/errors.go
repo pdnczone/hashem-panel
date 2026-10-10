@@ -94,6 +94,7 @@ var errCatalog = map[string]errInfo{
 	"E-FRP-09": {0, "yamux stream capacity / buffer overflow", "High stream contention on single TCP mux. Increase poolCount in frpc."},
 	"E-FRP-10": {0, "frpc login failed with EOF (likely tcpMux mismatch)", "tcpMux mismatch: hub is likely tcpMux=true, run `hashem perf tcpmux on|off` so both ends match (default OFF)."},
 	"E-SYS-01": {0, "host tool unavailable", "journalctl/systemctl/ip missing on this host."},
+	"E-SYS-02": {503, "panel is busy (too many requests in flight)", "Retry in a couple of seconds; /api/selfstats still answers."},
 	"E-SUPPORT-01": {400, "bad support request (invalid JSON)", "Reload the page and try again."},
 	"E-SUPPORT-02": {400, "unknown support action", "Use claim, close, snooze or donate."},
 	"E-RESCUE-01": {400, "bad rescue request", "Reload the page and try again."},

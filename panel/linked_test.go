@@ -1,6 +1,13 @@
 package main
 
-import "testing"
+import (
+	"errors"
+	"net"
+	"os"
+	"syscall"
+	"testing"
+	"time"
+)
 
 func TestLinkedFromSS(t *testing.T) {
 	ss := "0 0 10.10.10.1:7091 10.10.10.2:51000\n0 0 5.75.195.15:7093 1.2.3.4:40000\n0 0 [::ffff:77.1.1.1]:22 9.9.9.9:5\n"
@@ -87,5 +94,149 @@ func TestHubLatency(t *testing.T) {
 	}
 	if z := hubLatency(nil); z.Count != 0 || z.Avg != 0 {
 		t.Fatalf("empty: %+v", z)
+	}
+}
+
+// captured `ss -Htin state established` shapes (info line indented under the header)
+const (
+	ssNAT    = "0      0      5.9.9.9:7091   100.64.3.9:41000\n\t cubic wscale:7,7 rto:276 rtt:75.5/1.2 mss:1328\n"
+	ssWSS    = "0      0      5.9.9.9:7093   198.51.100.7:50000\n\t cubic rto:240 rtt:40.25/3.1 mss:1388\n"
+	ssDial   = "0      0      203.0.113.5:7091   198.51.100.7:52000\n\t cubic rto:230 rtt:12.5/0.5\n"
+	ssMapped = "0      0      [::ffff:5.9.9.9]:7091   [::ffff:198.51.100.7]:53000\n\t cubic rto:230 rtt:21.125/0.5\n"
+	ssTwo    = "0      0      10.10.10.1:7091   10.10.10.2:51000\n\t cubic rtt:74.1/0.1\n" +
+		"0      0      10.20.20.1:7100   10.20.20.2:51001\n\t cubic rtt:30.2/0.1\n"
+)
+
+func TestControlSessionFixtures(t *testing.T) {
+	resetSnapshotState()
+	a := ctrlQuery{ID: 1, Port: 7091, RemotePub: "198.51.100.7", PeerGre: "10.10.10.2"}
+	b := ctrlQuery{ID: 2, Port: 7100, RemotePub: "198.51.100.8", PeerGre: "10.20.20.2"}
+	owners := portOwners([]int{7091, 7100})
+
+	t.Run("NAT remote single owner is accepted and cached", func(t *testing.T) {
+		r := controlSessionIn(parseSS(ssNAT), a, owners)
+		if !r.Linked || r.RTTms != 75.5 || r.Remote != "100.64.3.9" {
+			t.Fatalf("NAT'd client must link: %+v", r)
+		}
+		if cachedRemote(1) != "100.64.3.9" {
+			t.Fatal("observed remote must be cached")
+		}
+	})
+	t.Run("cached remote matches where owners are ambiguous", func(t *testing.T) {
+		amb := portOwners([]int{7091, 7093}) // 7093 claimed by both peers
+		c := ctrlQuery{ID: 9, Port: 7093, RemotePub: "198.51.100.99"}
+		other := ctrlQuery{ID: 10, Port: 7091, RemotePub: "198.51.100.98"}
+		sess := parseSS("0 0 5.9.9.9:7093 100.64.7.7:40000\n\t rtt:9.5/1\n")
+		if controlSessionIn(sess, c, amb).Linked || controlSessionIn(sess, other, amb).Linked {
+			t.Fatal("ambiguous port with unknown remote must not be attributed")
+		}
+		rememberRemote(9, "100.64.7.7")
+		if !controlSessionIn(sess, c, amb).Linked {
+			t.Fatal("cached remote must match")
+		}
+		if controlSessionIn(sess, other, amb).Linked {
+			t.Fatal("cache is per peer")
+		}
+	})
+	t.Run("WSS front port+2", func(t *testing.T) {
+		r := controlSessionIn(parseSS(ssWSS), a, owners)
+		if !r.Linked || r.RTTms != 40.25 {
+			t.Fatalf("port+2 session from the peer must link: %+v", r)
+		}
+	})
+	t.Run("dial route over public IP", func(t *testing.T) {
+		r := controlSessionIn(parseSS(ssDial), a, owners)
+		if !r.Linked || r.RTTms != 12.5 || r.Remote != "198.51.100.7" {
+			t.Fatalf("public-IP session must link: %+v", r)
+		}
+	})
+	t.Run("two peers on different ports", func(t *testing.T) {
+		all := parseSS(ssTwo)
+		ra, rb := controlSessionIn(all, a, owners), controlSessionIn(all, b, owners)
+		if !ra.Linked || ra.RTTms != 74.1 || !rb.Linked || rb.RTTms != 30.2 {
+			t.Fatalf("each peer owns its own session: %+v %+v", ra, rb)
+		}
+		only := parseSS("0 0 10.20.20.1:7100 10.20.20.2:51001\n")
+		if controlSessionIn(only, a, owners).Linked {
+			t.Fatal("peer B's session must not link peer A")
+		}
+	})
+	t.Run("IPv6-mapped addresses", func(t *testing.T) {
+		all := parseSS(ssMapped)
+		if all[0].RHost != "198.51.100.7" || all[0].LPort != 7091 || all[0].RPort != 53000 {
+			t.Fatalf("mapped remote must normalise to IPv4: %+v", all[0])
+		}
+		strict := portOwners([]int{7091, 7093}) // port claimed twice: only a remote match can link
+		if r := controlSessionIn(all, ctrlQuery{ID: 20, Port: 7091, RemotePub: "198.51.100.7"}, strict); !r.Linked || r.RTTms != 21.125 {
+			t.Fatalf("mapped remote must match RemotePub: %+v", r)
+		}
+	})
+	t.Run("no session", func(t *testing.T) {
+		if r := controlSessionIn(parseSS(""), a, owners); r.Linked || r.RTTms != -1 {
+			t.Fatalf("empty ss: %+v", r)
+		}
+		if r := controlSessionIn(parseSS("0 0 1.1.1.1:22 2.2.2.2:5\n"), a, owners); r.Linked {
+			t.Fatal("unrelated port must not link")
+		}
+	})
+}
+
+func TestNormHost(t *testing.T) {
+	for in, want := range map[string]string{
+		"[::ffff:1.2.3.4]": "1.2.3.4", "::ffff:1.2.3.4": "1.2.3.4", "1.2.3.4": "1.2.3.4",
+		"[2001:db8::1]": "2001:db8::1", "fe80::1%eth0": "fe80::1", "": "", "host": "host",
+	} {
+		if got := normHost(in); got != want {
+			t.Errorf("normHost(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
+func stubDial(t *testing.T, f func(addr string) (net.Conn, error)) *[]string {
+	t.Helper()
+	var calls []string
+	prev := dialFn
+	dialFn = func(network, addr string, timeout time.Duration) (net.Conn, error) {
+		calls = append(calls, addr)
+		if timeout != connectProbeTimeout {
+			t.Errorf("probe timeout %v, want %v", timeout, connectProbeTimeout)
+		}
+		return f(addr)
+	}
+	t.Cleanup(func() { dialFn = prev })
+	return &calls
+}
+
+func TestConnectProbe(t *testing.T) {
+	refused := &net.OpError{Op: "dial", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}
+	q := ctrlQuery{ID: 1, Port: 7091, RemotePub: "198.51.100.7", PeerGre: "10.10.10.2"}
+
+	calls := stubDial(t, func(addr string) (net.Conn, error) { return nil, refused })
+	if r := connectProbe(q); !r.OK || r.Addr != "10.10.10.2:7091" || r.RTTms < 0 {
+		t.Fatalf("refusal over the inner address proves reachability: %+v", r)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("inner success must not try the public address: %v", *calls)
+	}
+
+	calls = stubDial(t, func(addr string) (net.Conn, error) {
+		if addr == "198.51.100.7:7091" {
+			return nil, refused
+		}
+		return nil, errors.New("i/o timeout")
+	})
+	if r := connectProbe(q); !r.OK || r.Addr != "198.51.100.7:7091" {
+		t.Fatalf("falls back to the public address: %+v", r)
+	}
+	if len(*calls) != 2 || (*calls)[0] != "10.10.10.2:7091" {
+		t.Fatalf("order must be inner then public: %v", *calls)
+	}
+
+	stubDial(t, func(addr string) (net.Conn, error) { return nil, errors.New("i/o timeout") })
+	if r := connectProbe(q); r.OK || r.RTTms != -1 {
+		t.Fatalf("both timing out is a failed probe: %+v", r)
+	}
+	if r := connectProbe(ctrlQuery{}); r.OK {
+		t.Fatal("no target, no probe")
 	}
 }

@@ -245,6 +245,7 @@ type selfStats struct {
 	Routes   []routeJSON    `json:"routes"`
 	Exec     []execStatJSON `json:"exec"`
 	Samplers []samplerJSON  `json:"samplers"`
+	Snapshot snapStatsJSON  `json:"snapshot"`
 }
 
 func collectSelfStats() selfStats {
@@ -254,6 +255,7 @@ func collectSelfStats() selfStats {
 		Routes:   routeSnapshot(),
 		Exec:     execSnapshot(),
 		Samplers: samplerSnapshot(),
+		Snapshot: snapshotStats(),
 	}
 }
 

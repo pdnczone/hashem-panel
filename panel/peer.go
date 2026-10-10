@@ -70,7 +70,7 @@ func peerConfigFile() string {
 }
 
 func defaultPeerConfig() PeerConfig {
-	st := localStatus()
+	st := currentLocal() // reached from request handlers via loadPeerConfig: no fresh fork
 	role := "master"
 	if strings.ToLower(st.Role) == "kharej" || strings.ToLower(st.Role) == "foreign" {
 		role = "worker"
@@ -314,7 +314,7 @@ func handlePeerPing(w http.ResponseWriter, r *http.Request) {
 func handlePeerStatus(w http.ResponseWriter, r *http.Request) {
 	c := loadPeerConfig()
 	carrierCfg := loadCarrierConfig()
-	st := localStatus()
+	st := currentLocal()
 
 	writeJSON(w, map[string]any{
 		"role":             c.Role,

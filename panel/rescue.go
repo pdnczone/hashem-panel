@@ -611,7 +611,7 @@ func suggestRescuePorts() []int {
 		}
 	}
 
-	ls := localStatus()
+	ls := currentLocal()
 	for _, p := range ls.ProxyPorts {
 		add(p)
 	}
@@ -694,7 +694,7 @@ func rescueTargets() []rescueTarget {
 	}
 
 	// 3. GRE status from localStatus
-	ls := localStatus()
+	ls := currentLocal()
 	if ls.RemotePub != "" {
 		add(ls.RemotePub, cfg.Port)
 	}

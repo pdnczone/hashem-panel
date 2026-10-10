@@ -15,9 +15,7 @@ func resetFleet() {
 	fleetDirty = false
 	fleetMu.Unlock()
 	_ = os.Remove(fleetPath())
-	lastLiveMu.Lock()
-	lastLive = map[int]peerLive{}
-	lastLiveMu.Unlock()
+	resetSnapshotState()
 }
 
 func mkLive(id int, gre, frp, ping bool, ms string) peerLive {
@@ -121,5 +119,39 @@ func TestFleetSnapshotDownWithoutLive(t *testing.T) {
 	nodes := fleetSnapshot(recs, nil)
 	if nodes[0].Name != "peer-7" || nodes[0].Health != "down" || nodes[0].PingMs != -1 || nodes[0].Ports == nil {
 		t.Fatalf("defaults wrong: %+v", nodes[0])
+	}
+}
+
+func TestFleetSaveIsAtomicAndOnlyWhenDirty(t *testing.T) {
+	resetFleet()
+	fleetLoad = syncOnceReset()
+	if fleetFlushIfDirty() {
+		t.Fatal("nothing recorded: no write")
+	}
+	if _, err := os.Stat(fleetPath()); err == nil {
+		t.Fatal("clean state must not create the file")
+	}
+	fleetRecord([]peerLive{mkLive(1, true, true, true, "9ms")}, time.Now())
+	if !fleetFlushIfDirty() {
+		t.Fatal("dirty state must be written")
+	}
+	if _, err := os.Stat(fleetPath() + ".tmp"); err == nil {
+		t.Fatal("temp file must be renamed away")
+	}
+	first, err := os.Stat(fleetPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if fleetFlushIfDirty() {
+		t.Fatal("second flush without new samples must be a no-op")
+	}
+	if again, _ := os.Stat(fleetPath()); !again.ModTime().Equal(first.ModTime()) {
+		t.Fatal("file must not be rewritten when clean")
+	}
+	// on-disk format unchanged: {"<id>": [{"t","ms","s"}]}
+	b, _ := os.ReadFile(fleetPath())
+	if !strings.Contains(string(b), `"1": [`) || !strings.Contains(string(b), `"ms"`) {
+		t.Fatalf("format changed: %s", b)
 	}
 }

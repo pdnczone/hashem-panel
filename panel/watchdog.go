@@ -202,7 +202,7 @@ func listBackups() []backupItem {
 }
 
 func collectTunnelPorts() []int {
-	ports := localStatus().ProxyPorts
+	ports := currentLocal().ProxyPorts
 	for _, p := range loadPeers() {
 		ports = append(ports, p.Ports...)
 	}

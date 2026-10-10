@@ -417,3 +417,47 @@ read, and every new endpoint sits behind the normal session auth.
   findings in `docs/audit/LOAD_REPORT.md`.
 - GRE counter deltas include live tunnel traffic, so they are only used as
   zero versus non-zero.
+
+## Phase 2+3 status (multi-signal health + hub scalability) — 2026-10-10
+
+Owner decisions locked in: (D1) system `ping` only, background, <=1/min per
+peer, skipped while the session is live; (D2) 5 s shared snapshot with age in
+the API; (D3) session-live + ICMP-dead = healthy with `icmp_filtered` chip,
+TCP RTT as latency; (D4) moderate HTTP hardening
+(Read 30 s / Write 60 s / 1 MB headers / 64 in-flight -> 503+Retry-After,
+WebSocket/terminal/streaming/selfstats exempt); (D5) 2-sample debounce.
+
+Shipped (see `docs/audit/LOAD_REPORT.md` + `load_lab_results.csv` for numbers):
+- `panel/health.go`: `LinkSignals`/`ComputeHealth` (session -> healthy; latency
+  order tcp-session RTT -> connect RTT -> ICMP; reasons always populated);
+  2-consecutive-snapshot debounce; `fleetHealth` is a thin wrapper over it.
+- `linked.go`: remote matching by port set + known/cached remotes (NAT/CGNAT/
+  WSS port+2/dial-route/IPv6-mapped), single-owner fallback, 1.5 s active TCP
+  connect probe (injectable `dialFn`, collector-only).
+- Snapshot (`panel/snapshot.go`): 5 s collector, one `ss` dump + one
+  `ip tunnel show` + one `ip -o -4 addr` + one batched `systemctl is-active`
+  per tick (4 commands, asserted), bounded worker pool, skip-if-running,
+  background ICMP per D1, `/proc/net/*` streaming conn count, atomic fleet
+  save. Consumers (dashboard/fleet/peers/status/fleet sampler, plus
+  setup/peer/rescue/watchdog readers) read it; handlers never fork
+  (asserted); `X-Snapshot-Age-Ms` header; `snapshot` block in selfstats.
+- `panel/hardening.go`: server limits on both listeners, in-flight limiter,
+  long-running/stream exemptions, E-SYS-02 503 shape.
+- UI (surgical): TCP latency + "ICMP filtered" chip instead of "no ping" on
+  healthy links, reasons tooltips, snapshot age, health-aware nav badge.
+- `applyDoctorFixes` step 5: no more `restart gre-tunnel` on silent ICMP;
+  `interfaceFixes` is factored and tested.
+
+Deviations from the spec worth knowing:
+- `signalsOf`/`fleetHealth` wrapper infers `ICMPFresh` from `ICMKnown` on the
+  record rather than an explicit flag (fewer fields to plumb, same meaning).
+- ICMP is skipped while the *control session* is live (D1 said "FRP session";
+  same thing, implemented as `FrpUp && Linked`).
+- `activeConns` counts /proc/net/{tcp,udp}[6] state-01 rows (equivalent to
+  the old `ss -tun state established` count, incl. connected UDP).
+- Pre-existing `gofmt` drift (15 files) left untouched, incl. doctor.go.
+- `detectPublicIP`: still `ip route get` inside the collector (cached
+  10 min, 1 min negative); tests pre-seed the cache.
+
+Deferred: C2.6 (systemd limits, cgroup, watchdog), C2.7 (frontend polling
+backoff), Plan A fixes/UI/CLI/netns lab, spoke-side probes, x/net/icmp.

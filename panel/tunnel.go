@@ -22,13 +22,29 @@ import (
 
 // status of GRE + FRP on this machine.
 func handleStatus(w http.ResponseWriter, r *http.Request) {
-	st := localStatus()
-	peers := livePeers()
-	resp := map[string]any{"local": st, "peers": peers, "peer_count": len(peers)}
+	snap := currentSnapshot()
+	setSnapshotAgeHeader(w, snap)
+	peers := snap.PeersAged()
+	lv := localView{tunnelStatus: snap.Local, LatencyMs: -1}
+	if m := snap.Main; m != nil {
+		lv.HealthState, lv.ICMPFiltered, lv.LatencyMs, lv.LatencyKind, lv.Reasons = m.HealthState, m.ICMPFiltered, m.LatencyMs, m.LatencyKind, m.Reasons
+	}
+	resp := map[string]any{"local": lv, "peers": peers, "peer_count": len(peers), "snapshot_age_ms": snap.AgeMs()}
 	if c, err := r.Cookie("gre_session"); err == nil && c.Value != "" {
 		resp["csrf_token"] = GenerateCSRFToken(c.Value)
 	}
 	writeJSON(w, resp)
+}
+
+// localView is the base tunnel status plus its multi-signal health (additive
+// fields; the embedded status keeps every existing key).
+type localView struct {
+	tunnelStatus
+	HealthState  string   `json:"health_state,omitempty"`
+	ICMPFiltered bool     `json:"icmp_filtered"`
+	LatencyMs    float64  `json:"latency_ms"`
+	LatencyKind  string   `json:"latency_kind,omitempty"`
+	Reasons      []string `json:"reasons,omitempty"`
 }
 
 func splitLogLines(text string) []string {
@@ -282,6 +298,16 @@ type peerLive struct {
 	LatencyKind string  `json:"latency_kind"`
 	Rx          *uint64 `json:"rx"`
 	Tx          *uint64 `json:"tx"`
+	// Multi-signal health (health.go). HealthState is the published (debounced)
+	// verdict; the legacy fields above keep their meaning.
+	HealthState   string   `json:"health_state"`
+	ICMPFiltered  bool     `json:"icmp_filtered"`
+	ICMPOK        bool     `json:"icmp_ok"`
+	ICMPMs        float64  `json:"icmp_ms"` // -1 when ICMP has not answered
+	Reasons       []string `json:"reasons"`
+	SnapshotAgeMs int64    `json:"snapshot_age_ms"`
+	ICMPKnown     bool     `json:"-"` // an ICMP measurement exists for this link
+	icmpTarget    string
 }
 
 func peersFile() string { return configDir + "/peers.json" }
@@ -344,55 +370,21 @@ func peerPingTarget(peerID int) string {
 	return localStatus().GrePeer
 }
 
-func ifaceTraffic(ifname string) (rx, tx *uint64) {
-	data, err := os.ReadFile("/proc/net/dev")
-	if err != nil {
-		return nil, nil
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, ifname+":") {
-			continue
-		}
-		f := strings.Fields(strings.TrimPrefix(line, ifname+":"))
-		if len(f) < 9 {
-			return nil, nil
-		}
-		var r, t uint64
-		if _, err := fmt.Sscanf(f[0], "%d", &r); err != nil {
-			return nil, nil
-		}
-		if _, err := fmt.Sscanf(f[8], "%d", &t); err != nil {
-			return nil, nil
-		}
-		return &r, &t
-	}
-	return nil, nil
-}
-
-func ifaceInner(ifname string) string {
-	out, err := runCmdTimeout(5*time.Second, "ip", "-4", "addr", "show", "dev", ifname)
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "inet ") {
-			return strings.Fields(line)[1]
-		}
-	}
-	return ""
-}
-
-func svcActive(svc string) bool {
-	out, err := runCmdTimeout(5*time.Second, "systemctl", "is-active", svc)
-	return err == nil && strings.TrimSpace(string(out)) == "active"
-}
-
-// livePeers inspects every registered peer: GRE up, frps up, ping, counters.
+// livePeers inspects every registered peer with a fresh synchronous read (one
+// batch of host commands, ICMP inline). Polling handlers must use the shared
+// snapshot instead (snapshot.go); this is the collector's building block.
 func livePeers() []peerLive {
 	defer func(t time.Time) { recordSampler("livePeers", time.Since(t)) }(time.Now())
 	recs := loadPeers()
+	if len(recs) == 0 {
+		return nil
+	}
+	return livePeersFrom(directView(recs), recs)
+}
+
+// livePeersFrom derives every peer's live state from an already collected host
+// view; it runs no commands itself.
+func livePeersFrom(v *hostView, recs []peerRecord) []peerLive {
 	if len(recs) == 0 {
 		return nil
 	}
@@ -402,35 +394,52 @@ func livePeers() []peerLive {
 		if p.NoGre {
 			l.GreInner = "standalone"
 			l.GreUp = true
-		} else if _, err := runCmdTimeout(5*time.Second, "ip", "tunnel", "show"); err == nil {
+		} else if v.tunnelOK {
 			// presence check via interface address (works without parsing tun show)
-			l.GreInner = ifaceInner(p.GreIf)
+			l.GreInner = v.inner[p.GreIf]
 			l.GreUp = l.GreInner != ""
 		}
-		l.FrpUp = svcActive(p.FrpsSvc)
-		var tcpRTT float64 = -1
+		l.FrpUp = v.active[p.FrpsSvc]
+		sig := LinkSignals{ServiceActive: l.FrpUp, GreIfUp: l.GreUp}
+		q := ctrlQuery{ID: p.ID, Port: p.FrpPort, RemotePub: p.RemotePub, PeerGre: p.PeerGre}
 		if l.FrpUp {
-			l.Linked, tcpRTT = controlSession(p.FrpPort, p.RemotePub, p.PeerGre)
-		}
-		pingTarget := p.PeerGre
-		if pingTarget == "" && p.NoGre {
-			pingTarget = p.RemotePub
-		}
-		if pingTarget != "" {
-			start := time.Now()
-			if _, err := runCmdTimeout(4*time.Second, "ping", "-c", "1", "-W", "2", pingTarget); err == nil {
-				l.PingOK = true
-				l.PingMs = fmt.Sprintf("%.0fms", float64(time.Since(start).Microseconds())/1000)
+			r := controlSessionIn(v.sessions, q, v.owners)
+			l.Linked, sig.Session, sig.TCPRTTms = r.Linked, r.Linked, r.RTTms
+			if !r.Linked && v.connect != nil {
+				if c := v.connect(p.ID); c.OK {
+					sig.ConnectRTTms = c.RTTms
+				}
 			}
 		}
-		if !p.NoGre {
-			l.Rx, l.Tx = ifaceTraffic(p.GreIf)
+		l.icmpTarget = p.PeerGre
+		if l.icmpTarget == "" && p.NoGre {
+			l.icmpTarget = p.RemotePub
 		}
-		l.FrpOnly = l.Linked && !l.PingOK
-		l.LatencyMs, l.LatencyKind = pickLatency(l.PingOK, l.PingMs, tcpRTT)
+		ic := v.icmpFor(l.icmpTarget)
+		if !p.NoGre {
+			l.Rx, l.Tx = v.traffic(p.GreIf)
+			sig.TrafficFlowing = v.flowing[p.GreIf]
+		}
+		sig.Rx, sig.Tx = l.Rx, l.Tx
+		l.applyHealth(sig, ic)
 		out = append(out, l)
 	}
 	return out
+}
+
+// applyHealth fills the PingOK/latency/health fields from one signal set so every
+// consumer sees the same verdict (health.go is the single definition).
+func (l *peerLive) applyHealth(sig LinkSignals, ic icmpResult) {
+	sig.ICMPOK, sig.ICMPms, sig.ICMPFresh = ic.OK, ic.Ms, ic.Known
+	l.PingOK, l.ICMPOK, l.ICMPKnown, l.ICMPMs = ic.OK, ic.OK, ic.Known, -1
+	if ic.OK {
+		l.PingMs = fmt.Sprintf("%.0fms", ic.Ms)
+		l.ICMPMs = ic.Ms
+	}
+	h := ComputeHealth(sig)
+	l.HealthState, l.ICMPFiltered, l.Reasons = h.State, h.ICMPFiltered, h.Reasons
+	l.LatencyMs, l.LatencyKind = h.LatencyMs, h.LatencyKind
+	l.FrpOnly = l.Linked && !l.PingOK
 }
 
 func removePeerViaInstaller(id int) (string, error) {
@@ -554,11 +563,19 @@ type tunnelStatus struct {
 	BindPort     int      `json:"bind_port"`
 }
 
+// localStatus reads the base tunnel with a fresh synchronous read (batched host
+// commands, ICMP inline). Polling handlers use the shared snapshot instead.
 func localStatus() tunnelStatus {
+	return localStatusFrom(directView(nil))
+}
+
+// localStatusFrom derives the base tunnel state from a collected host view plus
+// the config files; it runs no commands itself.
+func localStatusFrom(v *hostView) tunnelStatus {
 	var st tunnelStatus
 	// GRE interface
-	if out, err := runCmdTimeout(5*time.Second, "ip", "tunnel", "show"); err == nil {
-		for _, line := range strings.Split(string(out), "\n") {
+	if v.tunnelOK {
+		for _, line := range strings.Split(v.tunnelShow, "\n") {
 			if strings.Contains(line, "gre-tunnel") {
 				st.Gre.Exists = true
 				st.Gre.Name = "gre-tunnel"
@@ -575,22 +592,16 @@ func localStatus() tunnelStatus {
 			}
 		}
 	}
-	if out, err := runCmdTimeout(5*time.Second, "ip", "-4", "addr", "show", "dev", "gre-tunnel"); err == nil {
-		for _, line := range strings.Split(string(out), "\n") {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "inet ") {
-				st.Gre.Inner = strings.Fields(line)[1]
-				st.Gre.Exists = true
-				if st.Gre.Name == "" {
-					st.Gre.Name = "gre-tunnel"
-				}
-			}
+	if inner := v.inner["gre-tunnel"]; inner != "" {
+		st.Gre.Inner = inner
+		st.Gre.Exists = true
+		if st.Gre.Name == "" {
+			st.Gre.Name = "gre-tunnel"
 		}
 	}
 	// FRP / Backhaul role: which unit file exists / is active
-	for _, svc := range []string{"frps", "frpc", "backhaul-server", "backhaul-client"} {
-		if out, err := runCmdTimeout(5*time.Second, "systemctl", "is-active", svc); err == nil &&
-			strings.TrimSpace(string(out)) == "active" {
+	for _, svc := range baseUnits {
+		if v.active[svc] {
 			st.FrpUp = true
 			st.FrpSvc = svc
 			switch svc {
@@ -760,14 +771,13 @@ func localStatus() tunnelStatus {
 	}
 	// de-duplicate proxy ports (each proxy has local+remote for the same port)
 	st.ProxyPorts = uniqInts(st.ProxyPorts)
-	// quick ping to GRE peer inner ip
+	// ICMP to the GRE peer inner ip (metadata only; see health.go)
 	if st.Gre.Inner != "" {
-		target := grePeerInner(st.Gre.Inner)
-		if target != "" {
-			start := time.Now()
-			if _, err := runCmdTimeout(4*time.Second, "ping", "-c", "1", "-W", "2", target); err == nil {
-				st.PingOK = true
-				st.PingMs = fmt.Sprintf("%.0fms", float64(time.Since(start).Microseconds())/1000)
+		if target := grePeerInner(st.Gre.Inner); target != "" {
+			ic := v.icmpFor(target)
+			st.PingOK = ic.OK
+			if ic.OK {
+				st.PingMs = fmt.Sprintf("%.0fms", ic.Ms)
 			}
 		}
 	}

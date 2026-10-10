@@ -3000,6 +3000,10 @@ const I18N = {
     fleet_uptime: "Uptime",
     fleet_nodata: "Collecting data…",
     fleet_frp_only: "FRP only",
+    fleet_icmp_filtered: "ICMP filtered",
+    fleet_session_up: "session up",
+    fleet_updated: "updated",
+    fleet_ago: "ago",
     dial_title: "Route to the Iran hub", dial_hint: "How this server reaches Iran: over the GRE inner IP, directly to the hub's public IP, or Auto (GRE when it works, public IP otherwise).", dial_auto: "Auto", dial_gre: "GRE inner IP", dial_public: "Public IP", dial_public_btn: "Iran public IP",
     fleet_topo_aria: "Tunnel topology: {hub} connected to {n} servers",
     fleet_ring_aria: "{h} of {t} servers healthy",
@@ -3408,6 +3412,10 @@ const I18N = {
     fleet_uptime: "آپتایم",
     fleet_nodata: "در حال جمع‌آوری داده…",
     fleet_frp_only: "فقط FRP",
+    fleet_icmp_filtered: "ICMP فیلتر است",
+    fleet_session_up: "نشست برقرار",
+    fleet_updated: "به‌روز شد",
+    fleet_ago: "پیش",
     dial_title: "مسیر اتصال به هاب ایران", dial_hint: "این سرور از چه مسیری به ایران وصل شود: IP داخلی GRE، مستقیم به IP عمومی هاب، یا خودکار (اگر GRE کار می‌کند همان، وگرنه IP عمومی).", dial_auto: "خودکار", dial_gre: "IP داخلی GRE", dial_public: "IP عمومی", dial_public_btn: "IP عمومی ایران",
     fleet_topo_aria: "نقشه‌ی تونل: {hub} متصل به {n} سرور",
     fleet_ring_aria: "{h} از {t} سرور سالم",
@@ -3730,7 +3738,7 @@ function renderPeers(peers) {
           <div class="det-card-head">${ICO_GRE} <span>GRE Tunnel</span></div>
           <div class="det-row"><span class="det-k">Interface</span><span class="det-v">${stBadge(isBh ? true : p.gre_up, greIfLabel)}</span></div>
           <div class="det-row"><span class="det-k">GRE Inner</span><span class="det-v mono">${isBh ? 'N/A' : (esc(p.local_gre || '?') + ' ⇄ ' + esc(p.peer_gre || '?'))}</span></div>
-          <div class="det-row"><span class="det-k">Ping / Latency</span><span class="det-v">${isBh ? '<span class="badge ok">Direct</span>' : stBadge(p.ping_ok, p.ping_ms || 'no answer')}</span></div>
+          <div class="det-row"><span class="det-k">Ping / Latency</span><span class="det-v">${isBh ? '<span class="badge ok">Direct</span>' : pingBadge(p)}</span></div>
         </div>
         <div class="det-card">
           <div class="det-card-head">${(isBh || isGreBh) ? '⚡' : ICO_FRP} <span>${svcTitle}</span></div>
@@ -3796,7 +3804,7 @@ function renderTunnel(st) {
         <div class="det-card">
           <div class="det-card-head">${ICO_GRE} <span>GRE Tunnel</span></div>
           <div class="det-row"><span class="det-k">Interface</span><span class="det-v">${badge(st.gre.exists, (st.gre.name || 'gre-tunnel') + ' ' + (st.gre.inner || ''))}</span></div>
-          <div class="det-row"><span class="det-k">Ping / Latency</span><span class="det-v">${badge(st.ping_ok, st.ping_ms || 'no answer')}</span></div>
+          <div class="det-row"><span class="det-k">Ping / Latency</span><span class="det-v">${pingBadge(st)}</span></div>
         </div>
         <div class="det-card">
           <div class="det-card-head">${ICO_FRP} <span>FRP Service</span></div>
@@ -3849,7 +3857,7 @@ function renderTunChips(st) {
       key: 'base',
       name: 'main',
       up: !!(st.gre.exists || st.frp_up),
-      ping: st.ping_ok ? (st.ping_ms || 'ok') : 'down',
+      ping: pingText(st),
       sub: esc(st.frp_svc || 'frp') + ' :' + esc(st.frp_port || st.bind_port || '?'),
     });
   }
@@ -3861,7 +3869,7 @@ function renderTunChips(st) {
       key: 'peer-' + (p.id ?? i),
       name: p.name || ('peer-' + (p.id ?? (i + 1))),
       up,
-      ping: p.ping_ok ? (p.ping_ms || 'ok') : 'down',
+      ping: pingText(p),
       sub: traffic || ((p.ports || []).join(', ') || '—'),
     });
   });
@@ -4486,15 +4494,15 @@ async function refreshDash() {
     if (multi) {
       // multi-peer: best ping across legs, sub lists per-peer names
       let best = null;
-      peers.forEach(p => { if (p.ping_ok && p.ping_ms) { const v = parseFloat(p.ping_ms); if (best == null || v < best) best = v; } });
+      peers.forEach(p => { const v = (p.ping_ok && p.ping_ms) ? parseFloat(p.ping_ms) : (p.health_state === 'healthy' && p.latency_ms >= 0 ? p.latency_ms : null); if (v != null && (best == null || v < best)) best = v; });
       set('kpiLinksSub', peers.map(p => (p.gre_up || p.frp_up ? '● ' : '○ ') + (p.name || ('peer-' + p.id))).join(' · '));
       set('kpiPing', best != null ? Math.round(best) + 'ms' : NA);
       setHTML('kpiPingSub', best == null ? 'no answer' : best < 80 ? '<span class="badge ok"><span class="dot"></span>Optimal</span>' : best < 200 ? '<span class="badge ok"><span class="dot"></span>Good</span>' : '<span class="badge warn"><span class="dot"></span>High</span>');
     } else {
       set('kpiLinksSub', (f.svc || 'no frp') + ((f.proxies || []).length ? ' · ' + f.proxies.length + ' proxies' : '') + ' · ' + (g.inner || 'no gre ip'));
-      const ms = d.ping_ok && d.ping ? parseFloat(d.ping) : null;
-      set('kpiPing', d.ping_ok && d.ping ? d.ping : NA);
-      setHTML('kpiPingSub', ms == null ? 'no answer' : ms < 80 ? '<span class="badge ok"><span class="dot"></span>Optimal</span>' : ms < 200 ? '<span class="badge ok"><span class="dot"></span>Good</span>' : '<span class="badge warn"><span class="dot"></span>High</span>');
+      const ms = d.ping_ok && d.ping ? parseFloat(d.ping) : (d.health_state === 'healthy' && d.latency_ms >= 0 ? d.latency_ms : null);
+      set('kpiPing', d.ping_ok && d.ping ? d.ping : (ms != null ? Math.round(ms) + 'ms' : NA));
+      setHTML('kpiPingSub', (ms == null ? 'no answer' : ms < 80 ? '<span class="badge ok"><span class="dot"></span>Optimal</span>' : ms < 200 ? '<span class="badge ok"><span class="dot"></span>Good</span>' : '<span class="badge warn"><span class="dot"></span>High</span>') + (d.icmp_filtered ? icmpChip() : ''));
     }
     const t = d.traffic || {};
     set('kpiTraffic', fmtBytes(t.total));
@@ -4812,20 +4820,39 @@ function drawActivityChart(hist, isDown) {
   ctx.fillStyle = '#ffffff'; ctx.fill();
 }
 
+// ICMP is metadata (health.go): a link whose control session is live is healthy
+// even when ICMP is filtered, so show its TCP latency plus a muted chip - never "no ping".
+function icmpChip() { return '<span class="qs-hint" style="margin-left:6px;opacity:.7">' + esc(tr('fleet_icmp_filtered', 'ICMP filtered')) + '</span>'; }
+function linkPing(o) {
+  if (o.ping_ok) return { ok: true, txt: o.ping_ms || 'ok', chip: '' };
+  if (o.health_state === 'healthy') {
+    const lat = (o.latency_ms != null && o.latency_ms >= 0) ? Math.round(o.latency_ms) + 'ms' : '';
+    return { ok: true, txt: lat || tr('fleet_session_up', 'session up'), chip: o.icmp_filtered ? icmpChip() : '' };
+  }
+  return { ok: false, txt: '', chip: '' };
+}
+function pingText(o) { const p = linkPing(o); return p.ok ? p.txt : 'down'; }
+function reasonsTip(o) { return (o.health_state && o.health_state !== 'healthy' && (o.reasons || []).length) ? esc(o.reasons.join(' \u00b7 ')) : ''; }
+function pingBadge(o) {
+  const p = linkPing(o), tip = reasonsTip(o);
+  return '<span class="badge ' + (p.ok ? 'ok' : 'err') + '"' + (tip ? ' title="' + tip + '"' : '') + '><span class="dot"></span>' + esc(p.ok ? p.txt : 'no answer') + '</span>' + p.chip;
+}
+function fleetMs(n) { return n.ping_ms >= 0 ? n.ping_ms : (n.latency_ms >= 0 ? n.latency_ms : -1); }
 function dashPeersCard(peers) {
   if (!peers || !peers.length) return '';
   const rows = peers.map(p => {
     const up = !!(p.gre_up || p.frp_up);
     const nm = p.name || ('peer-' + p.id);
-    const pingTxt = p.ping_ok ? (p.ping_ms || 'ok') : tr('status_down', 'down');
-    const pingCls = p.ping_ok ? 'ok' : 'err';
+    const pg = linkPing(p), pgTip = reasonsTip(p);
+    const pingTxt = pg.ok ? pg.txt : tr('status_down', 'down');
+    const pingCls = pg.ok ? 'ok' : 'err';
     const statusTxt = up ? (tr('x012', "tunnel up")) : tr('status_down', 'down');
     return `<div class="dash-peer-row" data-goto-peer="${p.id}" title="${tr('x013', "Open full card in Tunnel tab")}">`
       + `<span class="ent-st ${up ? 'on' : 'off'}"><i></i></span>`
       + `<b style="color:var(--tx)">${esc(nm)}</b><span class="qs-hint mono">#${p.id}</span>`
       + `<span class="badge ${up ? 'ok' : 'err'}"><span class="dot"></span>${statusTxt}</span>`
       + `<span class="det-v mono">${esc(p.remote_pub || '—')}</span>`
-      + `<span class="qs-hint">${esc((p.ports || []).join(', ') || '—')} · </span><span class="badge ${pingCls}"><span class="dot"></span>${esc(pingTxt)}</span>`
+      + `<span class="qs-hint">${esc((p.ports || []).join(', ') || '—')} · </span><span class="badge ${pingCls}"${pgTip ? ` title="${pgTip}"` : ''}><span class="dot"></span>${esc(pingTxt)}</span>${pg.chip}`
       + `</div>`;
   }).join('');
   return `<div class="det-card u-col-full"><div class="det-head"><span class="det-ico">${ICO_SRV}</span>${esc(tr('card_peers_title', 'Peer Tunnels'))} (${peers.length})</div><div>${rows}</div></div>`;
@@ -7109,8 +7136,8 @@ const SUP_DELAY_MS = 30000;
 const SUP = { since: 0, shown: false, busy: false };
 function supHealthy(s) {
   const L = (s && s.local) || {}; const g = L.gre || {};
-  const localOk = !!L.frp_up && (g.exists ? !!L.ping_ok : /foreign/i.test(L.role || ''));
-  const peerOk = ((s && s.peers) || []).some(p => p.frp_up && p.ping_ok);
+  const localOk = !!L.frp_up && (g.exists ? !!(L.ping_ok || L.health_state === 'healthy') : /foreign/i.test(L.role || ''));
+  const peerOk = ((s && s.peers) || []).some(p => p.frp_up && (p.ping_ok || p.health_state === 'healthy'));
   return localOk || peerOk;
 }
 function supObserve(s) {
@@ -7189,7 +7216,7 @@ function fleetTopo(nodes, hubIp) {
     const ny = padY + 15 + i * rowH, c = nd.health;
     const path = 'M' + (hx + 28) + ' ' + hy + ' C' + (hx + 110) + ' ' + hy + ' ' + (nx - 90) + ' ' + ny + ' ' + (nx - 26) + ' ' + ny;
     links += '<path d="' + path + '" class="tp-link tp-' + c + '"/>';
-    const ms = nd.ping_ms >= 0 ? Math.round(nd.ping_ms) + ' ms' : '—';
+    const ms = fleetMs(nd) >= 0 ? Math.round(fleetMs(nd)) + ' ms' : '—';
     dots += '<g class="tp-node tp-' + c + '"><circle cx="' + nx + '" cy="' + ny + '" r="22" class="tp-ring"/><circle cx="' + nx + '" cy="' + ny + '" r="6" class="tp-core"/>'
       + '<text x="' + (nx + 32) + '" y="' + (ny - 3) + '" class="tp-name"><title>' + esc(nd.name) + '</title>' + esc(nd.name.length > 17 ? nd.name.slice(0, 16) + '…' : nd.name) + '</text>'
       + '<text x="' + (nx + 32) + '" y="' + (ny + 13) + '" class="tp-sub">' + esc(tr('fleet_' + c, c)) + ' · ' + ms + (nd.frp_only ? ' · ' + esc(tr('fleet_frp_only', 'FRP only')) : '') + '</text></g>';
@@ -7215,15 +7242,15 @@ function fleetRender(d) {
   const sum = $('fleetSum');
   sum.textContent = h === t ? tr('fleet_all_ok', 'All servers healthy') : (d.down === t ? tr('fleet_all_down', 'All servers are down') : fleetFmt('fleet_some', { n: bad, t }));
   sum.style.color = FLEET_COL[state];
-  $('fleetMeta').textContent = fleetFmt('fleet_meta', { time: String(d.checked || '').slice(11, 19) + ' UTC', s: d.interval_s || 15 });
+  $('fleetMeta').textContent = fleetFmt('fleet_meta', { time: String(d.checked || '').slice(11, 19) + ' UTC', s: d.interval_s || 15 }) + (d.snapshot_age_ms >= 0 ? ' · ' + tr('fleet_updated', 'updated') + ' ' + Math.round(d.snapshot_age_ms / 1000) + 's ' + tr('fleet_ago', 'ago') : '');
   $('fleetTopo').innerHTML = fleetTopo(nodes, d.hub);
   $('fleetGrid').innerHTML = nodes.map(n => {
-    const st = n.stats || {}, ms = n.ping_ms >= 0 ? Math.round(n.ping_ms) : null;
+    const st = n.stats || {}, ms = fleetMs(n) >= 0 ? Math.round(fleetMs(n)) : null;
     const eng = n.engine === 'backhaul' ? 'Backhaul' : n.engine === 'gre-backhaul' ? 'GRE+Backhaul' : 'FRP';
     const cls = n.health === 'healthy' ? 'ok' : n.health === 'degraded' ? 'warn' : 'err';
-    return '<article class="fl-card fl-' + n.health + '" aria-label="' + esc(n.name) + '">'
+    return '<article class="fl-card fl-' + n.health + '" aria-label="' + esc(n.name) + '"' + (reasonsTip(n) ? ' title="' + reasonsTip(n) + '"' : '') + '>'
       + '<header class="fl-head"><span class="fl-name" title="' + esc(n.name) + '">' + esc(n.name) + '</span><span class="badge ' + cls + '"><span class="dot"></span>' + esc(tr('fleet_' + n.health, n.health)) + '</span></header>'
-      + '<div class="fl-ip mono">' + esc(n.remote_pub || '—') + ' · ' + esc(eng) + (n.transport ? ' · ' + esc(n.transport) : '') + (n.frp_only ? ' · ' + esc(tr('fleet_frp_only', 'FRP only')) : '') + '</div>'
+      + '<div class="fl-ip mono">' + esc(n.remote_pub || '—') + ' · ' + esc(eng) + (n.transport ? ' · ' + esc(n.transport) : '') + (n.frp_only ? ' · ' + esc(tr('fleet_frp_only', 'FRP only')) : '') + (n.icmp_filtered ? ' · ' + esc(tr('fleet_icmp_filtered', 'ICMP filtered')) : '') + '</div>'
       + '<div class="fl-ms"><b>' + (ms != null ? ms : '—') + '</b><span>ms</span></div>'
       + fleetSpark(n.history)
       + '<footer class="fl-stats"><div><span>' + esc(tr('fleet_avg', 'Avg')) + '</span><b>' + (st.samples && st.avg_ms ? Math.round(st.avg_ms) + ' ms' : '—') + '</b></div>'
@@ -7408,7 +7435,7 @@ function navBadge(tab, n, kind, titleKey) {
 }
 function uiObserve(s) {
   const peers = (s && s.peers) || [], L = (s && s.local) || {};
-  let bad = peers.filter(p => !(p.gre_up && p.frp_up && p.ping_ok)).length;
+  let bad = peers.filter(p => p.health_state ? p.health_state !== 'healthy' : !(p.gre_up && p.frp_up && p.ping_ok)).length;
   const anyDown = peers.some(p => !p.gre_up && !p.frp_up);
   if (!peers.length && L.gre && L.gre.exists && !L.frp_up) bad = 1;
   navBadge('tunnel', bad, (anyDown || (!peers.length && bad)) ? 'err' : 'warn', 'badge_tunnel');

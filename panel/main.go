@@ -5,6 +5,7 @@ package main
 // setup in setup.go, dashboard metrics in dashboard.go.
 
 import (
+	"context"
 	"bytes"
 	"compress/gzip"
 	"crypto/rand"
@@ -302,6 +303,7 @@ func main() {
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	log.Printf("gre-panel listening on %s under /%s", addr, cfg.BasePath)
+	startSnapshotCollector(context.Background())
 	go startHTTPSListener()
 	go startAutoPilotMonitor()
 	go startPeerSyncWorker()
@@ -328,10 +330,11 @@ func main() {
 		}
 	}
 	srv := &http.Server{
-		Handler:           metricsMiddleware(securityMiddleware(mux)),
+		Handler:           panelChain(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	applyServerLimits(srv)
 	log.Fatal(srv.Serve(ln))
 }
 

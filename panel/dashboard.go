@@ -5,11 +5,11 @@ package main
 // and the frontend renders it as N/A (never crashes).
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -34,19 +34,24 @@ type cpuSample struct {
 }
 
 func handleDashboard(w http.ResponseWriter, r *http.Request) {
-	st := localStatus()
-	traffic := greTraffic()
-	recordTrafficSample(traffic)
-	peers := livePeers()
+	// Everything host-derived comes from the shared snapshot: this handler never forks.
+	snap := currentSnapshot()
+	setSnapshotAgeHeader(w, snap)
+	st := snap.Local
+	traffic := snap.Traffic
+	if traffic == nil {
+		traffic = map[string]any{"up": nil, "down": nil, "total": nil}
+	}
+	peers := snap.PeersAged()
 	// Rollup uses the same per-tunnel verdict as the fleet graph (fleetHealth):
 	// a live FRP session is healthy even when the GRE inner address has no ping.
 	// The main tunnel counts as one more spoke of the hub.
 	anyUp := st.Gre.Exists || st.FrpUp
 	health := "DOWN"
-	all := peers
-	if m := mainTunnelLive(); m != nil {
-		all = append([]peerLive{*m}, peers...)
-	}
+	var reasons []string
+	icmpFiltered := false
+	latMs, latKind := -1.0, ""
+	all := snap.All()
 	if len(all) > 0 {
 		healthy, up := 0, 0
 		anyUp = false
@@ -61,6 +66,15 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 			case fleetDeg:
 				up++
 			}
+			if p.HealthState != stateHealthy {
+				for _, rs := range p.Reasons {
+					reasons = append(reasons, p.Name+": "+rs)
+				}
+			}
+			icmpFiltered = icmpFiltered || p.ICMPFiltered
+			if p.LatencyKind != "" && (latKind == "" || p.ID == mainTunnelID) {
+				latMs, latKind = p.LatencyMs, p.LatencyKind
+			}
 		}
 		switch {
 		case healthy == len(all):
@@ -69,11 +83,23 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 			health = "DEGRADED"
 		}
 	} else {
-		if st.Gre.Exists && st.FrpUp && st.PingOK {
-			health = "HEALTHY"
-		} else if st.Gre.Exists || st.FrpUp {
-			health = "DEGRADED"
+		pingMs := parsePingMs(st.PingMs)
+		h := ComputeHealth(LinkSignals{
+			ServiceActive: st.FrpUp, GreIfUp: st.Gre.Exists, Session: snap.LocalSession, TCPRTTms: snap.LocalRTT,
+			ICMPOK: st.PingOK, ICMPms: pingMs, ICMPFresh: st.PingOK || snap.LocalSession,
+		})
+		health = map[string]string{stateHealthy: "HEALTHY", stateDegraded: "DEGRADED", stateDown: "DOWN"}[h.State]
+		if !(st.Gre.Exists || st.FrpUp) {
+			health = "DOWN"
 		}
+		reasons, icmpFiltered, latMs, latKind = h.Reasons, h.ICMPFiltered, h.LatencyMs, h.LatencyKind
+	}
+	if reasons == nil {
+		reasons = []string{}
+	}
+	snapAt := ""
+	if !snap.At.IsZero() {
+		snapAt = snap.At.UTC().Format(time.RFC3339)
 	}
 	peerCfg := loadPeerConfig()
 	carrierCfg := loadCarrierConfig()
@@ -97,8 +123,15 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"peers":          peers,
 		"ping_ok":        st.PingOK,
 		"ping":           nilIfEmpty(st.PingMs),
+		"health_state":   strings.ToLower(health),
+		"icmp_filtered":  icmpFiltered,
+		"reasons":        reasons,
+		"latency_ms":     latMs,
+		"latency_kind":   latKind,
+		"snapshot_age_ms": snap.AgeMs(),
+		"snapshot_at":    nilIfEmpty(snapAt),
 		"role":           nilIfEmpty(st.Role),
-		"local_pub":      nilIfEmpty(detectPublicIP()),
+		"local_pub":      nilIfEmpty(snap.PublicIP),
 		"active_engine":  engine,
 		"active_carrier": carrierCfg.ActiveCarrier,
 		"auto_failover":  peerCfg.AutoPilotEnabled,
@@ -118,9 +151,9 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		},
 		"traffic": traffic,
 		"history": trafficHistory(r.URL.Query().Get("range")),
-		"uptime":  uptimeInfo(st),
+		"uptime":  uptimeInfo(snap.FrpSince),
 		"system":  systemInfo(),
-		"conns":   activeConns(),
+		"conns":   snap.ActiveConns,
 		"checked": time.Now().UTC().Format(time.RFC3339),
 	}
 	writeJSON(w, d)
@@ -219,12 +252,18 @@ func isTunnelInterface(ifname string) bool {
 // ---- traffic: rx/tx bytes summed across tunnel interfaces ----
 // Multi-peer: sum counters of every registered GRE and Backhaul interface.
 func greTraffic() map[string]any {
+	data, _ := os.ReadFile("/proc/net/dev")
+	return greTrafficFrom(string(data))
+}
+
+// greTrafficFrom is greTraffic over an already read /proc/net/dev (the snapshot
+// collector reads it once per tick for both peer counters and the totals).
+func greTrafficFrom(devData string) map[string]any {
 	var rawUp, rawDown uint64
 	var have bool
 
-	data, err := os.ReadFile("/proc/net/dev")
-	if err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
+	if devData != "" {
+		for _, line := range strings.Split(devData, "\n") {
 			line = strings.TrimSpace(line)
 			if !strings.Contains(line, ":") {
 				continue
@@ -290,7 +329,7 @@ func greTraffic() map[string]any {
 
 // ---- uptime: system + panel + frp service ----
 
-func uptimeInfo(st tunnelStatus) map[string]any {
+func uptimeInfo(frpSince string) map[string]any {
 	out := map[string]any{"system": nil, "panel": nil, "frp_since": nil}
 	if data, err := os.ReadFile("/proc/uptime"); err == nil {
 		if secs, err := strconv.ParseFloat(strings.Fields(string(data))[0], 64); err == nil {
@@ -298,13 +337,8 @@ func uptimeInfo(st tunnelStatus) map[string]any {
 		}
 	}
 	out["panel"] = int64(time.Since(panelStartedAt).Seconds())
-	if st.FrpSvc != "" {
-		if ts, err := exec.Command("systemctl", "show", st.FrpSvc,
-			"-p", "ActiveEnterTimestamp", "--value").CombinedOutput(); err == nil {
-			if s := strings.TrimSpace(string(ts)); s != "" && s != "n/a" {
-				out["frp_since"] = s
-			}
-		}
+	if frpSince != "" {
+		out["frp_since"] = frpSince
 	}
 	return out
 }
@@ -445,20 +479,43 @@ func readCPU() (cpuSample, bool) {
 // ---- connections: established TCP/UDP via ss ----
 
 func activeConns() any {
-	out, err := runCmdTimeout(5*time.Second, "ss", "-tun", "state", "established")
-	if err != nil {
+	n := 0
+	have := false
+	for _, f := range []string{"net/tcp", "net/tcp6", "net/udp", "net/udp6"} {
+		c, ok := countEstablished(filepath.Join(procRoot, f))
+		if ok {
+			have = true
+			n += c
+		}
+	}
+	if !have {
 		return nil
 	}
+	return n
+}
+
+// countEstablished streams a /proc/net/{tcp,udp}[6] table and counts rows in
+// state 01 (ESTABLISHED / connected UDP) without holding the file in memory.
+func countEstablished(path string) (int, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 4096), 64*1024)
 	n := 0
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "Netid") {
+	for first := true; sc.Scan(); {
+		if first { // header row
+			first = false
 			continue
 		}
-		n++
+		fields := strings.Fields(sc.Text())
+		if len(fields) > 3 && fields[3] == "01" {
+			n++
+		}
 	}
-	// ss always prints a header; n counts real connections.
-	return n
+	return n, true
 }
 
 // ---- traffic history: cumulative rx/tx sampled into a ring on disk ----
