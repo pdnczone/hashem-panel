@@ -304,6 +304,7 @@ func main() {
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	log.Printf("gre-panel listening on %s under /%s", addr, cfg.BasePath)
 	startSnapshotCollector(context.Background())
+	startSdWatchdog(context.Background())
 	go startHTTPSListener()
 	go startAutoPilotMonitor()
 	go startPeerSyncWorker()

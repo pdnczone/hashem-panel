@@ -461,3 +461,43 @@ Deviations from the spec worth knowing:
 
 Deferred: C2.6 (systemd limits, cgroup, watchdog), C2.7 (frontend polling
 backoff), Plan A fixes/UI/CLI/netns lab, spoke-side probes, x/net/icmp.
+
+## C2.6+C2.7 status (process isolation + frontend polling) — 2026-10-10
+
+C2.7 was ~90% done before this run: `makePoller` already pauses hidden tabs,
+backs off exponentially (cap 60 s), skips overlapping requests and resumes on
+`visibilitychange`. Added the one missing guard: `supTick` (support popup)
+now returns early on `document.hidden`. Log-follow keeps its own interval
+(user-toggled, bounded, already hidden-gated). A string guard
+(`TestIndexPollingPolicy`) pins the policy in place.
+
+C2.6 shipped:
+- `panel_limits_for_ram` (hashem.sh): RAM tiers -> MemoryHigh/MemoryMax:
+
+  | host RAM | MemoryHigh | MemoryMax |
+  |---|---|---|
+  | <=1250 MB | 280M | 350M |
+  | <=2560 MB | 450M | 550M |
+  | <=4200 MB | 700M | 850M |
+  | above | 1G | 1.2G |
+
+  Autodetects from /proc/meminfo, falls back to 1024 MB.
+- `apply_panel_unit_limits`: idempotent per-directive setter
+  (`unit_set_directive`, keeps user extras): OOMScoreAdjust=-900, Nice=-5,
+  CPUWeight=200, Restart=always/RestartSec=3, LimitNOFILE=1048576,
+  LimitNPROC=512000, TasksMax=4096, WatchdogSec=30, NotifyAccess=main,
+  StartLimitIntervalSec=0 + the RAM-scaled memory caps. Wired into
+  `install_panel`; FRP templates (frps/frpc/peer frps/backhaul x2/WSS front)
+  gained CPUWeight=100, and the Go `ensureFRPServiceUnits` patcher adds it to
+  existing units without touching ExecStart.
+- `hashem panel-limits [--apply] [--mem MB]`: print (default) or apply.
+  `--apply` always uses the live host value; `--mem` is print-path only so a
+  synthetic tier can never be written to a real unit.
+- sd_notify watchdog (`panel/sdnotify.go`): READY=1 once + WATCHDOG=1 every
+  10 s (WatchdogSec=30), silent no-op without NOTIFY_SOCKET or with
+  HASHEM_NO_SDNOTIFY=1; tested against a temp unixgram socket.
+- `tests/test_panel_limits.sh`: tiers, idempotency, extras preserved,
+  re-tier replaces, FRP weight.
+
+Deferred: GOMEMLIMIT/GOGC (needs real-hub data), /api/summary merge,
+cgroup tuning from a loaded hub via /api/selfstats.

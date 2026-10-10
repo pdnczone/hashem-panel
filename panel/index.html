@@ -7153,6 +7153,7 @@ function supBlocked() {
   return false;
 }
 async function supTick() {
+  if (document.hidden) return; // C2.7: support popup never polls a hidden tab
   if (SUP.shown || SUP.busy || !SUP.since || Date.now() - SUP.since < SUP_DELAY_MS || supBlocked()) return;
   SUP.busy = true;
   try {

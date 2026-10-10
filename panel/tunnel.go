@@ -1095,7 +1095,9 @@ remotePort = %d
 }
 
 // ensureFRPServiceUnits enforces high-concurrency systemd limits (LimitNOFILE, TasksMax, Restart=always)
-// to prevent connection drops under heavy concurrent load.
+// to prevent connection drops under heavy concurrent load. FRP units keep
+// CPUWeight=100 (below the panel's 200) so the UI stays responsive when the
+// box is saturated (C2.6).
 func ensureFRPServiceUnits(svcName string) {
 	if runtime.GOOS == "windows" {
 		return
@@ -1109,6 +1111,10 @@ func ensureFRPServiceUnits(svcName string) {
 	changed := false
 	if !strings.Contains(content, "LimitNOFILE") {
 		content = strings.Replace(content, "[Service]", "[Service]\nLimitNOFILE=1048576\nLimitNPROC=512000\nTasksMax=infinity\nStartLimitIntervalSec=0", 1)
+		changed = true
+	}
+	if !strings.Contains(content, "CPUWeight=") {
+		content = strings.Replace(content, "[Service]", "[Service]\nCPUWeight=100", 1)
 		changed = true
 	}
 	if strings.Contains(content, "Restart=on-failure") {

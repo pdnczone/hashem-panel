@@ -2002,6 +2002,7 @@ ExecStart=${INSTALL_DIR}/backhaul -c ${CONF_FILE}
 Restart=always
 RestartSec=3s
 LimitNOFILE=1048576
+CPUWeight=100
 
 [Install]
 WantedBy=multi-user.target
@@ -2029,6 +2030,7 @@ ExecStart=${INSTALL_DIR}/backhaul -c ${CONF_FILE}
 Restart=always
 RestartSec=3s
 LimitNOFILE=1048576
+CPUWeight=100
 
 [Install]
 WantedBy=multi-user.target
@@ -2582,6 +2584,7 @@ User=root
 Restart=always
 RestartSec=3s
 LimitNOFILE=1048576
+CPUWeight=100
 ExecStart=${PBIN} tls-proxy -listen 0.0.0.0:${FPORT} -target 127.0.0.1:${CPORT}
 
 [Install]
@@ -2664,6 +2667,7 @@ StartLimitIntervalSec=0
 LimitNOFILE=1048576
 LimitNPROC=512000
 TasksMax=infinity
+CPUWeight=100
 ExecStart=${INSTALL_DIR}/frps -c ${CONFIG_DIR}/frps.toml
 
 [Install]
@@ -2901,6 +2905,7 @@ StartLimitIntervalSec=0
 LimitNOFILE=1048576
 LimitNPROC=512000
 TasksMax=infinity
+CPUWeight=100
 ExecStartPre=-/bin/sh -c "if [ -x /usr/local/bin/hashem ]; then timeout 30 /usr/local/bin/hashem dial-select >/dev/null 2>&1; fi; true"
 ExecStart=${INSTALL_DIR}/frpc -c ${CONFIG_DIR}/frpc.toml
 
@@ -3488,6 +3493,7 @@ StartLimitIntervalSec=0
 LimitNOFILE=1048576
 LimitNPROC=512000
 TasksMax=infinity
+CPUWeight=100
 ExecStart=${INSTALL_DIR}/frps -c ${CONFIG_DIR}/frps${SUF}.toml
 
 [Install]
@@ -5369,6 +5375,93 @@ cli_update_channel() {
     return 0
 }
 
+# RAM-scaled limits for the gre-panel unit (C2.6). Pure: MEM_MB in, directives out.
+# The panel serves the UI, not traffic: it must stay responsive but never eat
+# a small hub. Thresholds from the load lab (panel RSS well under 150MB at
+# N=20; caps leave headroom for spikes + Go runtime + page cache pressure).
+panel_limits_for_ram() { # $1 = total RAM in MB (defaults: autodetect, floor 512)
+    local mem="${1:-}"
+    [[ "$mem" =~ ^[0-9]+$ && "$mem" -gt 0 ]] || mem=$(awk '/^MemTotal:/ {printf "%d", $2 / 1024}' /proc/meminfo 2>/dev/null)
+    [[ "$mem" =~ ^[0-9]+$ && "$mem" -gt 0 ]] || mem=1024
+    if (( mem <= 1250 )); then
+        echo "280M 350M"
+    elif (( mem <= 2560 )); then
+        echo "450M 550M"
+    elif (( mem <= 4200 )); then
+        echo "700M 850M"
+    else
+        echo "1G 1.2G"
+    fi
+}
+
+# Idempotent: ensure one "Key=Value" directive under [Service] in a unit file
+# (replace if a different value exists, add if missing, keep user extras).
+unit_set_directive() { # $1=file $2=key $3=value
+    local f="$1" k="$2" v="$3"
+    [[ -f "$f" ]] || return 1
+    if grep -qE "^${k}=" "$f"; then
+        sed -i -E "s|^${k}=.*|${k}=${v}|" "$f"
+    else
+        sed -i "0,/^\\[Service\\]/s//[Service]\n${k}=${v}/" "$f"
+    fi
+}
+
+# Apply panel isolation limits to a unit file (no daemon-reload, no restart:
+# callers do that once). $2 = "HIGH MAX" from panel_limits_for_ram.
+apply_panel_unit_limits() { # $1=unit file [$2="HIGH MAX"]
+    local f="$1" lim="${2:-$(panel_limits_for_ram)}" high max
+    high="${lim%% *}"; max="${lim##* }"
+    [[ -f "$f" ]] || return 1
+    for kv in "OOMScoreAdjust=-900" "Nice=-5" "CPUWeight=200" "Restart=always" \
+              "RestartSec=3" "LimitNOFILE=1048576" "LimitNPROC=512000" \
+              "TasksMax=4096" "MemoryHigh=${high}" "MemoryMax=${max}" \
+              "WatchdogSec=30" "NotifyAccess=main" "StartLimitIntervalSec=0"; do
+        unit_set_directive "$f" "${kv%%=*}" "${kv#*=}"
+    done
+}
+
+# FRP units get a LOWER CPUWeight than the panel (C2.6): tunnels keep full
+# throughput but the UI stays responsive when the box is saturated.
+apply_frp_unit_weight() { # $1=unit file
+    unit_set_directive "$1" "CPUWeight" "100"
+}
+
+cli_panel_limits() { # [--apply] [--mem MB]: print (default) or apply panel limits
+    local apply=0 mem=""
+    while [[ $# -gt 0 ]]; do case "$1" in
+        --apply) apply=1; shift ;;
+        --mem) mem="$2"; shift 2 ;;
+        *) shift ;;
+    esac; done
+    if (( apply == 1 )); then
+        # --apply always uses the live host value: a synthetic --mem must never
+        # be written to a real unit file.
+        mem=$(awk '/^MemTotal:/ {printf "%d", $2 / 1024}' /proc/meminfo 2>/dev/null)
+    fi
+    [[ -n "$mem" ]] || mem=$(awk '/^MemTotal:/ {printf "%d", $2 / 1024}' /proc/meminfo 2>/dev/null)
+    local lim high max
+    lim=$(panel_limits_for_ram "$mem"); high="${lim%% *}"; max="${lim##* }"
+    local unit=/etc/systemd/system/gre-panel.service
+    if (( apply == 0 )); then
+        echo "Host RAM: ${mem:-unknown} MB -> MemoryHigh=${high} MemoryMax=${max}"
+        echo "Unit: ${unit}"
+        if [[ -f "$unit" ]]; then
+            for k in OOMScoreAdjust Nice CPUWeight MemoryHigh MemoryMax WatchdogSec LimitNOFILE; do
+                v=$(grep -E "^${k}=" "$unit" 2>/dev/null | cut -d= -f2-)
+                echo "  ${k}=${v:-(missing)}"
+            done
+        else
+            echo "  (unit file not present)"
+        fi
+        return 0
+    fi
+    [[ -f "$unit" ]] || { echo -e "${RED}[!] ${unit} not found — install the panel first.${NC}"; return 1; }
+    apply_panel_unit_limits "$unit" "$lim"
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl restart gre-panel 2>/dev/null || true
+    echo -e "${GREEN}[✔️] Panel limits applied (RAM ${mem}MB -> ${high}/${max}).${NC}"
+}
+
 install_panel() {
     echo -e "${CYAN}[*] Installing Hashem web panel...${NC}"
     ensure_doctor_tools
@@ -5516,6 +5609,7 @@ ExecStart=${PANEL_BIN}
 [Install]
 WantedBy=multi-user.target
 EOF
+    apply_panel_unit_limits /etc/systemd/system/gre-panel.service
 
     ensure_panel_pass
     systemctl daemon-reload
@@ -7898,6 +7992,7 @@ if [[ $# -gt 0 ]]; then
             while [[ $# -gt 0 ]]; do case "$1" in --id) ID="$2"; shift 2 ;; *) shift ;; esac; done
             peer_token "$ID" ;;
         status) check_status ;;
+        panel-limits) shift; cli_panel_limits "$@" ;;
         doctor|test|diagnose) shift; cli_doctor "$@" ;;
         stress-test|test-load|stress) shift; cli_stress_test "$@" ;;
         panel-tls) shift; panel_tls_issue "$@" ;;
