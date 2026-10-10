@@ -17,7 +17,7 @@ Small commits, one concern each. No production servers are touched.
 - [x] 2.2 Move `spoof_test.py` to `tools/`, fix references
 
 ## Phase 3 - Security
-- [ ] 3.1 Login rate-limit + lockout with backoff per IP
+- [x] 3.1 Login lockout escalates per repeat offender (15m x2 up to 24h, decays after 24h), Retry-After header (5-failure lockout already existed)
 - [ ] 3.2 Audit log of mutating API calls (append-only JSONL, rotated, redacted) + API endpoint
 - [ ] 3.3 TOTP 2FA (RFC 6238, optional, off by default)
 - [ ] 3.4 Session idle timeout setting

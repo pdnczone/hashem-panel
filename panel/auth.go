@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,7 +26,16 @@ const (
 	loginFailWindow = 15 * time.Minute
 	loginLockoutDur = 15 * time.Minute
 	loginMaxFails   = 5
+	// repeat offenders: every further lockout doubles, up to maxLockoutDur;
+	// strikes are forgotten after strikeDecay without a new lockout.
+	maxLockoutDur = 24 * time.Hour
+	strikeDecay   = 24 * time.Hour
 )
+
+type lockStrike struct {
+	n    int
+	last time.Time
+}
 
 type ipAttempts struct {
 	fails       []time.Time
@@ -33,15 +43,48 @@ type ipAttempts struct {
 }
 
 var (
-	attemptMu sync.Mutex
-	attempts  = map[string]*ipAttempts{}
+	attemptMu   sync.Mutex
+	attempts    = map[string]*ipAttempts{}
+	lockStrikes = map[string]*lockStrike{}
 )
+
+// lockoutFor returns the lockout length for the n-th consecutive lockout.
+func lockoutFor(n int) time.Duration {
+	if n < 1 {
+		return loginLockoutDur
+	}
+	d := loginLockoutDur
+	for i := 1; i < n; i++ {
+		d *= 2
+		if d >= maxLockoutDur {
+			return maxLockoutDur
+		}
+	}
+	return d
+}
+
+// lockRemaining reports how long ip stays locked (0 when not locked).
+func lockRemaining(ip string) time.Duration {
+	attemptMu.Lock()
+	defer attemptMu.Unlock()
+	if a, ok := attempts[ip]; ok {
+		if d := time.Until(a.lockedUntil); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
 
 func clientIP(r *http.Request) string {
 	return ClientIP(r)
 }
 
 func pruneAttemptsLocked(now time.Time) {
+	for ip, st := range lockStrikes { // bound memory: forget decayed strikes
+		if now.Sub(st.last) > strikeDecay {
+			delete(lockStrikes, ip)
+		}
+	}
 	cutoff := now.Add(-loginFailWindow)
 	for ip, a := range attempts {
 		if now.Before(a.lockedUntil) {
@@ -85,13 +128,20 @@ func recordLoginFailure(ip string) {
 	a.fails = append(a.fails, now)
 	shouldLog := false
 	if len(a.fails) >= loginMaxFails && (a.lockedUntil.IsZero() || !now.Before(a.lockedUntil)) {
-		a.lockedUntil = now.Add(loginLockoutDur)
+		st := lockStrikes[ip]
+		if st == nil || now.Sub(st.last) > strikeDecay {
+			st = &lockStrike{}
+			lockStrikes[ip] = st
+		}
+		st.n++
+		st.last = now
+		a.lockedUntil = now.Add(lockoutFor(st.n))
 		shouldLog = true
 	}
 	attemptMu.Unlock()
 
 	if shouldLog {
-		recordError("E-AUTH-02", "login", "brute-force lockout for IP "+ip+" (5 failures)")
+		recordError("E-AUTH-02", "login", "brute-force lockout for IP "+ip+" (5 failures, strike escalates)")
 		LogSecurityAudit("lockout_triggered", "unknown", ip, "5 failed attempts within window")
 	}
 }
@@ -99,6 +149,7 @@ func recordLoginFailure(ip string) {
 func recordLoginSuccess(ip string) {
 	attemptMu.Lock()
 	delete(attempts, ip)
+	delete(lockStrikes, ip)
 	attemptMu.Unlock()
 }
 
@@ -173,6 +224,7 @@ func requireAuth(next http.HandlerFunc) http.HandlerFunc {
 func handleLogin(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	if checkLocked(ip) {
+		w.Header().Set("Retry-After", strconv.Itoa(int(lockRemaining(ip).Seconds())+1))
 		writeAPIError(w, r, "E-AUTH-02", "Too many failed attempts. Temporarily locked.")
 		return
 	}
