@@ -255,8 +255,8 @@ type connectResult struct {
 // the control port on the peer's GRE inner address, then on its public address.
 // A completed handshake or an immediate refusal both prove the path answers and
 // give a round-trip time (the spoke runs a client, not a listener, so refusal is
-// the normal case). It never sets Session. Collector-only: never call from a
-// request handler.
+// the normal case). It never sets Session. Safe from request paths too: the
+// dial is capped at connectProbeTimeout and it never forks (dialFn only).
 func connectProbe(q ctrlQuery) connectResult {
 	for _, host := range []string{q.PeerGre, q.RemotePub} {
 		if host == "" || q.Port <= 0 {

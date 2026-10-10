@@ -25,6 +25,12 @@ func TestIndexPollingPolicy(t *testing.T) {
 		"function renderRevPath(entries)":              1, // reverse-path cards
 		"function revFix(peerId, apply)":               1, // dry-run / apply buttons
 		"docRevPathBox":                                2, // card container (markup + render)
+		"function renderTunnelHealth(res)":             1, // Tunnel Health rows
+		"function runTunnelHealthClick()":              1, // "Test all tunnels" button
+		"/api/tunnel-health?cached=1":                  1, // open = cached read, never probes
+		"/api/tunnel-health/run":                       1, // on-demand POST
+		"tunnelHealthCard":                             1, // card markup
+		"id=\"thRunBtn\"":                              1, // button markup
 	} {
 		if got := strings.Count(s, want); got < min {
 			t.Errorf("%q found %d times, want at least %d", want, got, min)

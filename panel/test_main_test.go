@@ -36,6 +36,8 @@ func TestMain(m *testing.M) {
 	// The spoke half of the reverse-path matrix dials a spoke panel over
 	// HTTP; tests must opt in explicitly. Nothing here ever reaches the net.
 	spokeFetcher = func(p peerRecord) *SpokeProbeReport { return nil }
+	// The post-switch health run sleeps then probes; tests opt in explicitly.
+	tunnelHealthAutoRun = false
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)

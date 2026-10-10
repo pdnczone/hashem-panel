@@ -275,6 +275,8 @@ func main() {
 	mux.HandleFunc("POST "+base+"/api/carrier", requireAuth(requireCSRF(handleCarrierPost)))
 	mux.HandleFunc("GET "+base+"/api/fleet", requireAuth(handleFleet))
 	mux.HandleFunc("GET "+base+"/api/selfstats", requireAuth(handleSelfStats))
+	mux.HandleFunc("GET "+base+"/api/tunnel-health", requireAuth(handleTunnelHealthGet))
+	mux.HandleFunc("POST "+base+"/api/tunnel-health/run", requireAuth(requireCSRF(handleTunnelHealthRun)))
 	mux.HandleFunc("GET "+base+"/api/revpath", requireAuth(handleRevPathGet))
 	mux.HandleFunc("POST "+base+"/api/revpath/run", requireAuth(requireCSRF(handleRevPathRun)))
 	mux.HandleFunc("POST "+base+"/api/revpath/fix", requireAuth(requireCSRF(handleRevPathFix)))

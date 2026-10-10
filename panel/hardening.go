@@ -45,7 +45,7 @@ func exemptDeadlines(w http.ResponseWriter, read bool) {
 var longRunningGET = []string{
 	"/api/logs", "/api/doctor", "/api/update", "/api/version", "/api/releases", "/api/benchmark",
 	"/api/watchdog/backup-download", "/api/support", "/api/revpath", "/api/tls", "/api/perf",
-	"/api/dial", "/api/rescue", "/api/carrier", "/api/peer",
+	"/api/dial", "/api/rescue", "/api/carrier", "/api/peer", "/api/tunnel-health",
 }
 
 func isLongRunning(r *http.Request) bool {

@@ -1126,6 +1126,9 @@ remotePort = %d
 		}()
 	}
 
+	// Fire-and-forget health test of the new engine; never delays the response.
+	go runTunnelHealthOnce()
+
 	return outMsg.String(), nil
 }
 

@@ -1203,6 +1203,18 @@
           <div class="qs-hint" id="tuneHint">Optimize: FQ+BBR + 16MB TCP buffers + MTU 1380 + MSS clamp 1340 + keepalive. Backs up current settings first — Restore brings them back.</div>
         </div>
 
+        <!-- Tunnel Health: per-tunnel PASS / FAIL / UNREACHABLE (service + session + data) -->
+        <div class="tunnel-card" id="tunnelHealthCard">
+          <div class="tc-header">
+            <p class="tc-title">Tunnel Health</p>
+            <span class="qs-hint" id="thMeta">not tested yet</span>
+          </div>
+          <div id="thBox"><div class="qs-hint">Click &quot;Test all tunnels&quot; to check the service, control session and a data probe of every tunnel.</div></div>
+          <div class="u-flex-gap-8 u-mt-4">
+            <button class="hashem-btn hashem-btn-secondary" id="thRunBtn">Test all tunnels</button>
+          </div>
+        </div>
+
         <!-- Live Tunnel Engine Switcher -->
         <div class="tunnel-card u-mt-4" id="liveEngineCard" style="border:1px solid rgba(56,189,248,0.25); background:linear-gradient(180deg, rgba(15,23,42,0.6) 0%, rgba(9,14,26,0.8) 100%);">
           <div class="tc-header">
@@ -2631,7 +2643,7 @@ function goTab(name) {
   const dr = $('drawerNav');
   if (dr) dr.querySelectorAll('[data-tab]').forEach(markTab);
   if (name === 'perf') { loadPerf(); loadCarrier(); }
-  if (name === 'tunnel') { loadCarrier(); loadFleet(); }
+  if (name === 'tunnel') { loadCarrier(); loadFleet(); loadTunnelHealth(); }
   if (name === 'watchdog') loadWatchdog();
   if (name === 'doctor') loadDoctor();
   if (name === 'benchmark') loadBenchmark();
@@ -6982,6 +6994,47 @@ async function revFix(peerId, apply) {
     if (r.after) await loadDoctor(false);
   } catch (e) { if (out) out.textContent = e.message; reportErr('revpath', e); }
 }
+
+// ---- Tunnel Health: cached result on open, POST on demand ----
+function thBadge(v) {
+  if (v === 'PASS') return '<span class="badge ok"><span class="dot"></span>PASS</span>';
+  if (v === 'FAIL') return '<span class="badge err"><span class="dot"></span>FAIL</span>';
+  return '<span class="badge warn"><span class="dot"></span>' + esc(v || 'UNREACHABLE') + '</span>';
+}
+function renderTunnelHealth(res) {
+  const box = $('thBox'), meta = $('thMeta');
+  if (!box) return;
+  const rows = (res && res.tunnels) || [];
+  if (!rows.length) {
+    if (meta) meta.textContent = res && res.checked ? 'no tunnels found' : 'not tested yet';
+    return;
+  }
+  if (meta) meta.textContent = 'checked: ' + (res.checked || '?');
+  box.innerHTML = rows.map(t => {
+    const l = t.layers || {};
+    const lat = t.latency_ms >= 0 ? t.latency_ms + ' ms' + (t.latency_kind ? ' (' + esc(t.latency_kind) + ')' : '') : '—';
+    return '<div class="det-card u-col-full"><div class="det-head"><span>' + esc(t.name || ('tunnel-' + t.id))
+      + ' · ' + esc(t.engine) + '</span>' + thBadge(t.verdict) + '</div>'
+      + '<div class="qs-hint">' + esc(t.reason || '') + '</div>'
+      + '<div class="qs-hint">service: ' + esc(l.service || '?') + ' · session: ' + esc(l.session || '?')
+      + ' · data: ' + esc(l.data || '?') + ' · latency: ' + lat + '</div></div>';
+  }).join('');
+}
+async function loadTunnelHealth() {
+  try { renderTunnelHealth(await api('/api/tunnel-health?cached=1')); }
+  catch (e) { reportErr('tunnel-health', e); }
+}
+async function runTunnelHealthClick() {
+  const btn = $('thRunBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Testing…'; }
+  try { renderTunnelHealth(await api('/api/tunnel-health/run', {})); }
+  catch (e) { toastErr('Tunnel health test failed', e.message || e); reportErr('tunnel-health', e); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = 'Test all tunnels'; } }
+}
+(function initTunnelHealthEvents() {
+  const b = $('thRunBtn');
+  if (b) b.addEventListener('click', runTunnelHealthClick);
+})();
 
 async function runDoctor() {
   if (doctorRunning) return;
