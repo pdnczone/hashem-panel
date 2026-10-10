@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="v1.0.0 (Unlocked & Fixed)"
+SCRIPT_VERSION="v1.0.0 modif"
 service_dir="/etc/systemd/system"
 config_dir="/root/backhaul-core"
 CERT_DIR="/root/backhaul-core/cert_files"
