@@ -501,6 +501,7 @@ func snapshotTick() bool {
 	snapPtr.Store(snap)
 	snapTicks.Add(1)
 	alertsOnSnapshot(snap)
+	historyOnSnapshot(snap)
 	return true
 }
 

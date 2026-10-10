@@ -26,7 +26,7 @@ Small commits, one concern each. No production servers are touched.
 
 ## Phase 4 - Operations
 - [x] 4.1 Alerts: webhook + Telegram on health STATE CHANGE only (baseline tick, per-link min gap, degraded opt-in, secrets masked in GET/errors), Settings card, test button
-- [ ] 4.2 Metrics history ring buffer (latency/loss/throughput) + API; Prometheus coverage review
+- [x] 4.2 24h in-memory link history (30s, ring, derived rx/tx rates, 64-link cap) + /api/history + Settings graph; Prometheus /metrics behind bearer token (404 until enabled)
 - [ ] 4.3 Config backup/restore (tar of /etc/gre-panel, secrets masked in listing), CLI + API
 
 ## Phase 5 - Anti-censorship

@@ -2201,6 +2201,22 @@
           <div id="passStrengthMeter" style="font-size:12px; margin-top:6px; margin-bottom:8px; color:var(--mu);"></div>
           <div><button class="hashem-btn hashem-btn-primary" id="savePass">Change password</button></div>
         </div>
+        <div class="tunnel-card" id="historyCard">
+          <div class="tc-header"><p class="tc-title">Link history (last hours)</p></div>
+          <div class="fg"><label for="histLink">Link</label><select class="hashem-input" id="histLink"></select></div>
+          <div class="fg"><label for="histHours">Window</label><select class="hashem-input" id="histHours"><option value="1">1 hour</option><option value="6">6 hours</option><option value="24">24 hours</option></select></div>
+          <svg id="histSvg" viewBox="0 0 300 60" preserveAspectRatio="none" style="width:100%;height:80px;background:var(--bg2,transparent);border-radius:6px" role="img" aria-label="Latency history"></svg>
+          <div class="ent-help" id="histSum">Sampled every 30 s, kept in memory for 24 h (cleared on panel restart).</div>
+        </div>
+        <div class="tunnel-card" id="metricsCard">
+          <div class="tc-header"><p class="tc-title">Prometheus metrics</p></div>
+          <div class="ent-help" id="metricsState">Disabled. Rotate a token to enable <code>GET …/metrics</code> for your scraper (header <code>Authorization: Bearer &lt;token&gt;</code>). The token is shown once.</div>
+          <pre class="ent-help hidden" id="metricsTok" style="user-select:all"></pre>
+          <div>
+            <button class="hashem-btn hashem-btn-primary" id="metricsRotate">Generate / rotate token</button>
+            <button class="hashem-btn hashem-btn-secondary" id="metricsOff">Disable</button>
+          </div>
+        </div>
         <div class="tunnel-card" id="alertsCard">
           <div class="tc-header"><p class="tc-title">External alerts</p></div>
           <div class="ent-help">Get a message when a tunnel goes down or recovers. Only state changes are sent (never every refresh), with a minimum gap per link so a flapping tunnel cannot spam you. The first reading after a restart is only a baseline.</div>
@@ -5415,7 +5431,7 @@ function doLogin() {
     try {
       await api('/api/login', {username: $('u').value, password: $('p').value, code: $('totpCode').value.trim()});
       $('p').value = ''; $('totpCode').value = ''; $('codeField').classList.add('hidden'); $('loginErr').textContent = '';
-      showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh();
+      showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); metricsRefresh(); histRefresh();
     } catch(e) {
       if (e.code === 'E-AUTH-09') { $('codeField').classList.remove('hidden'); $('totpCode').focus(); }
       $('loginErr').textContent = e.message;
@@ -5826,6 +5842,47 @@ function twofaRender() {
   $('twofaCancel').classList.toggle('hidden', twofa.step === 'idle');
   $('twofaBtn').textContent = twofa.step === 'setup' ? 'Confirm & enable' : twofa.step === 'disable' ? 'Disable 2FA' : (twofa.enabled ? 'Disable 2FA…' : 'Enable 2FA');
 }
+async function metricsRefresh() {
+  try { const r = await api('/api/metrics-token'); $('metricsState').firstChild && ($('metricsState').textContent = r.enabled ? 'Enabled. Scrape GET …/metrics with the bearer token (rotate to get a new one; the old one stops working).' : 'Disabled. Generate a token to enable GET …/metrics for your scraper (Authorization: Bearer <token>). The token is shown once.'); } catch(e) {}
+}
+$('metricsRotate').onclick = async () => {
+  if (!await entConfirm('Rotate metrics token?', 'The previous token stops working immediately. The new one is shown once.', 'Rotate')) return;
+  try { const r = await api('/api/metrics-token', {action: 'rotate'}); const p = $('metricsTok'); p.textContent = r.token; p.classList.remove('hidden'); metricsRefresh(); }
+  catch(e) { toastErr('metrics token', e.message); }
+};
+$('metricsOff').onclick = async () => {
+  try { await api('/api/metrics-token', {action: 'disable'}); $('metricsTok').classList.add('hidden'); toastOk('metrics endpoint disabled'); metricsRefresh(); }
+  catch(e) { toastErr('metrics token', e.message); }
+};
+async function histRefresh() {
+  try {
+    const idx = await api('/api/history');
+    const sel = $('histLink'), cur = sel.value;
+    sel.innerHTML = (idx.links || []).map(n => '<option>' + esc(n) + '</option>').join('');
+    if (cur && (idx.links || []).includes(cur)) sel.value = cur;
+    await histDraw();
+  } catch(e) {}
+}
+async function histDraw() {
+  const name = $('histLink').value, svg = $('histSvg');
+  if (!name) { svg.innerHTML = ''; $('histSum').textContent = 'No links yet.'; return; }
+  try {
+    const r = await api('/api/history?link=' + encodeURIComponent(name) + '&hours=' + $('histHours').value);
+    const pts = r.points || [];
+    if (pts.length < 2) { svg.innerHTML = ''; $('histSum').textContent = 'Collecting data… (' + pts.length + ' point' + (pts.length === 1 ? '' : 's') + ')'; return; }
+    const t0 = pts[0].t, t1 = pts[pts.length - 1].t, span = Math.max(1, t1 - t0);
+    const lat = pts.filter(p => p.ms >= 0), maxMs = Math.max(1, ...lat.map(p => p.ms));
+    const X = p => ((p.t - t0) / span * 300).toFixed(1), Y = p => (58 - p.ms / maxMs * 54).toFixed(1);
+    let path = '', pen = false;
+    for (const p of pts) { if (p.ms < 0) { pen = false; continue; } path += (pen ? 'L' : 'M') + X(p) + ',' + Y(p); pen = true; }
+    const down = pts.map(p => p.state === 0 ? '<rect x="' + X(p) + '" y="0" width="2" height="60" fill="rgba(239,68,68,.35)"/>' : '').join('');
+    svg.innerHTML = down + '<path d="' + path + '" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"/>';
+    const avg = lat.length ? (lat.reduce((a, p) => a + p.ms, 0) / lat.length).toFixed(1) : 'n/a';
+    const upPct = (pts.filter(p => p.state > 0).length / pts.length * 100).toFixed(1);
+    $('histSum').textContent = 'avg latency ' + avg + ' ms · max ' + (lat.length ? maxMs.toFixed(1) : 'n/a') + ' ms · up ' + upPct + '% · ' + pts.length + ' samples (red = down)';
+  } catch(e) {}
+}
+$('histLink').onchange = histDraw; $('histHours').onchange = histDraw;
 async function alertsRefresh() {
   try {
     const r = await api('/api/alerts');
@@ -7277,7 +7334,7 @@ if ($('docIperfBtn')) $('docIperfBtn').onclick = toggleIperf;
 
 // boot: if already logged in, status works; else show login
 (async () => {
-  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); }
+  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); metricsRefresh(); histRefresh(); }
   catch(e) { showLogin(); }
 })();
 // light pollers: skip when the tab is in the background (background tabs
