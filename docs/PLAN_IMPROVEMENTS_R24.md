@@ -25,7 +25,7 @@ Small commits, one concern each. No production servers are touched.
 - [x] 3.6 install.sh: canonical copy or 2-host mirror quorum or HASHEM_SHA256 pin, else fail closed (panel updater already verified checksums.txt fail-closed); tests/test_install_verify.sh
 
 ## Phase 4 - Operations
-- [ ] 4.1 Alerts: webhook + Telegram on state change only (debounced), config via panel
+- [x] 4.1 Alerts: webhook + Telegram on health STATE CHANGE only (baseline tick, per-link min gap, degraded opt-in, secrets masked in GET/errors), Settings card, test button
 - [ ] 4.2 Metrics history ring buffer (latency/loss/throughput) + API; Prometheus coverage review
 - [ ] 4.3 Config backup/restore (tar of /etc/gre-panel, secrets masked in listing), CLI + API
 

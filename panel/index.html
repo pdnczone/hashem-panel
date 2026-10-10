@@ -2201,6 +2201,19 @@
           <div id="passStrengthMeter" style="font-size:12px; margin-top:6px; margin-bottom:8px; color:var(--mu);"></div>
           <div><button class="hashem-btn hashem-btn-primary" id="savePass">Change password</button></div>
         </div>
+        <div class="tunnel-card" id="alertsCard">
+          <div class="tc-header"><p class="tc-title">External alerts</p></div>
+          <div class="ent-help">Get a message when a tunnel goes down or recovers. Only state changes are sent (never every refresh), with a minimum gap per link so a flapping tunnel cannot spam you. The first reading after a restart is only a baseline.</div>
+          <label class="ent-help"><input type="checkbox" id="alEnabled"> Enable alerts</label>
+          <div class="fg"><label for="alWebhook">Webhook URL (Slack/Discord/ntfy/any JSON endpoint)</label><input class="hashem-input" id="alWebhook" placeholder="https://hooks.example.com/…" autocomplete="off"></div>
+          <label class="ent-help"><input type="checkbox" id="alTelegram"> Also send to Telegram <span id="alTgNote"></span></label>
+          <label class="ent-help"><input type="checkbox" id="alDegraded"> Also alert on degraded ⇄ healthy</label>
+          <div class="fg"><label for="alGap">Minimum seconds between alerts per link</label><input class="hashem-input" id="alGap" type="number" min="10" max="86400" value="120"></div>
+          <div>
+            <button class="hashem-btn hashem-btn-primary" id="alSave">Save</button>
+            <button class="hashem-btn hashem-btn-secondary" id="alTest">Send test</button>
+          </div>
+        </div>
         <div class="tunnel-card" id="idleCard">
           <div class="tc-header"><p class="tc-title">Session idle timeout</p></div>
           <div class="ent-help">Sign out automatically after this many minutes without clicks or key presses. Background refresh does not count as activity. 0 = off.</div>
@@ -5402,7 +5415,7 @@ function doLogin() {
     try {
       await api('/api/login', {username: $('u').value, password: $('p').value, code: $('totpCode').value.trim()});
       $('p').value = ''; $('totpCode').value = ''; $('codeField').classList.add('hidden'); $('loginErr').textContent = '';
-      showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh();
+      showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh();
     } catch(e) {
       if (e.code === 'E-AUTH-09') { $('codeField').classList.remove('hidden'); $('totpCode').focus(); }
       $('loginErr').textContent = e.message;
@@ -5813,6 +5826,25 @@ function twofaRender() {
   $('twofaCancel').classList.toggle('hidden', twofa.step === 'idle');
   $('twofaBtn').textContent = twofa.step === 'setup' ? 'Confirm & enable' : twofa.step === 'disable' ? 'Disable 2FA' : (twofa.enabled ? 'Disable 2FA…' : 'Enable 2FA');
 }
+async function alertsRefresh() {
+  try {
+    const r = await api('/api/alerts');
+    $('alEnabled').checked = !!r.enabled; $('alWebhook').value = r.webhook_url || '';
+    $('alTelegram').checked = !!r.telegram; $('alDegraded').checked = !!r.notify_degraded; $('alGap').value = r.min_gap_sec || 120;
+    $('alTgNote').textContent = r.telegram_configured ? '' : '(set bot token + chat id in the Watchdog tab first)';
+  } catch(e) {}
+}
+$('alSave').onclick = async () => {
+  try {
+    await api('/api/alerts', {enabled: $('alEnabled').checked, webhook_url: $('alWebhook').value.trim(), telegram: $('alTelegram').checked,
+      notify_degraded: $('alDegraded').checked, min_gap_sec: parseInt($('alGap').value || '120', 10)});
+    toastOk('alert settings saved'); alertsRefresh();
+  } catch(e) { toastErr('alerts', e.message); }
+};
+$('alTest').onclick = async () => {
+  try { await api('/api/alerts', {action: 'test'}); toastOk('test alert sent'); }
+  catch(e) { toastErr('test alert failed', e.message); }
+};
 async function idleRefresh() { try { const r = await api('/api/session-settings'); $('idleMin').value = r.idle_minutes; } catch(e) {} }
 $('idleSave').onclick = async () => {
   try { await api('/api/session-settings', {idle_minutes: parseInt($('idleMin').value || '0', 10)}); toastOk('idle timeout saved'); }
@@ -7245,7 +7277,7 @@ if ($('docIperfBtn')) $('docIperfBtn').onclick = toggleIperf;
 
 // boot: if already logged in, status works; else show login
 (async () => {
-  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); }
+  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); }
   catch(e) { showLogin(); }
 })();
 // light pollers: skip when the tab is in the background (background tabs

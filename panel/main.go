@@ -266,6 +266,8 @@ func main() {
 	mux.HandleFunc("GET "+base+"/api/audit", requireAuth(handleAuditGet))
 	mux.HandleFunc("GET "+base+"/api/session-settings", requireAuth(handleSessionSettingsGet))
 	mux.HandleFunc("POST "+base+"/api/session-settings", requireAuth(requireCSRF(handleSessionSettingsPost)))
+	mux.HandleFunc("GET "+base+"/api/alerts", requireAuth(handleAlertsGet))
+	mux.HandleFunc("POST "+base+"/api/alerts", requireAuth(requireCSRF(handleAlertsPost)))
 	mux.HandleFunc("GET "+base+"/api/2fa", requireAuth(handle2FAStatus))
 	mux.HandleFunc("POST "+base+"/api/2fa/setup", requireAuth(requireCSRF(handle2FASetup)))
 	mux.HandleFunc("POST "+base+"/api/2fa/enable", requireAuth(requireCSRF(handle2FAEnable)))
