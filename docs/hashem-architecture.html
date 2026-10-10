@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hashem — Architecture Report (stable-r148)</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Vazirmatn','Segoe UI',Tahoma,sans-serif;background:#020617;color:#e2e8f0;min-height:100vh;padding:2rem;line-height:1.7}
+.mono{font-family:ui-monospace,'JetBrains Mono',Consolas,monospace;direction:ltr;unicode-bidi:embed}
+.container{max-width:1240px;margin:0 auto}
+.header-row{display:flex;align-items:center;gap:1rem;margin-bottom:.4rem}
+.pulse{width:12px;height:12px;background:#22d3ee;border-radius:50%;animation:p 2s infinite}
+@keyframes p{0%,100%{opacity:1}50%{opacity:.4}}
+h1{font-size:1.6rem;font-weight:700}
+.sub{color:#94a3b8;font-size:.9rem;margin-right:1.7rem}
+nav{display:flex;flex-wrap:wrap;gap:.5rem;margin:1.5rem 0}
+nav button{background:#0f172a;border:1px solid #1e293b;color:#94a3b8;padding:.5rem 1rem;border-radius:.6rem;cursor:pointer;font:inherit;font-size:.85rem}
+nav button.on,nav button:hover{border-color:#22d3ee;color:#22d3ee}
+section{display:none}
+section.on{display:block}
+.box{background:rgba(15,23,42,.55);border:1px solid #1e293b;border-radius:1rem;padding:1.4rem;margin-bottom:1.2rem;overflow-x:auto}
+h2{font-size:1.1rem;margin-bottom:.8rem;color:#f8fafc}
+h3{font-size:.95rem;margin:.9rem 0 .4rem;color:#cbd5e1}
+svg{width:100%;min-width:880px;display:block}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:1rem;margin-top:1rem}
+.card{background:rgba(15,23,42,.55);border:1px solid #1e293b;border-radius:.8rem;padding:1.1rem}
+.card h3{margin:0 0 .5rem;display:flex;align-items:center;gap:.5rem}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.cy{background:#22d3ee}.em{background:#34d399}.vi{background:#a78bfa}.am{background:#fbbf24}.ro{background:#fb7185}.sl{background:#94a3b8}
+ul{list-style:none;color:#94a3b8;font-size:.82rem}
+li{margin-bottom:.35rem}
+li b{color:#e2e8f0}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th,td{padding:.55rem .7rem;border-bottom:1px solid #1e293b;text-align:right;vertical-align:top}
+th{color:#94a3b8;font-weight:600;background:#0b1220}
+td.mono,th.mono{text-align:left}
+.tag{display:inline-block;padding:.1rem .5rem;border-radius:.4rem;font-size:.72rem;font-weight:600}
+.on-t{background:rgba(52,211,153,.15);color:#34d399}
+.off-t{background:rgba(148,163,184,.15);color:#94a3b8}
+.warn-t{background:rgba(251,113,133,.15);color:#fb7185}
+.am-t{background:rgba(251,191,36,.15);color:#fbbf24}
+.flow{display:flex;flex-direction:column;gap:.4rem}
+.step{display:flex;gap:.8rem;align-items:flex-start;background:#0b1220;border:1px solid #1e293b;border-radius:.6rem;padding:.6rem .8rem;font-size:.82rem}
+.step .n{flex:0 0 1.6rem;height:1.6rem;border-radius:50%;background:#164e63;color:#22d3ee;text-align:center;font-weight:700;line-height:1.6rem;font-size:.8rem}
+.note{border-right:3px solid #fbbf24;background:rgba(251,191,36,.07);padding:.6rem .9rem;border-radius:.4rem;color:#fde68a;font-size:.82rem;margin:.8rem 0}
+.bad{border-right-color:#fb7185;background:rgba(251,113,133,.07);color:#fecdd3}
+.good{border-right-color:#34d399;background:rgba(52,211,153,.07);color:#a7f3d0}
+code{background:#0b1220;border:1px solid #1e293b;border-radius:.3rem;padding:0 .35rem;font-size:.78rem;direction:ltr;unicode-bidi:embed;display:inline-block}
+.footer{text-align:center;color:#475569;font-size:.75rem;margin-top:1.5rem}
+@media(max-width:700px){body{padding:1rem}}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header-row"><div class="pulse"></div><h1>هاشم — گزارش معماری</h1></div>
+  <p class="sub">نسخه‌ی پایدار <span class="mono">stable-r148</span> (commit <span class="mono">61bd634</span>) &nbsp;•&nbsp; فقط از روی کد و مستندات؛ هیچ اندازه‌گیری روی سرور زنده انجام نشده</p>
+
+  <nav id="nav">
+    <button data-t="arch" class="on">۱. نقشه‌ی معماری</button>
+    <button data-t="path">۲. مسیر داده</button>
+    <button data-t="join">۳. اتصال هاب و اسپک</button>
+    <button data-t="auto">۴. اتوماسیون</button>
+    <button data-t="def">۵. پیش‌فرض‌ها و کارایی</button>
+    <button data-t="gaps">۶. نقاط ضعف معماری</button>
+  </nav>
+
+  <!-- ===================== 1. ARCH ===================== -->
+  <section id="arch" class="on">
+    <div class="box">
+      <h2>لایه‌ها و اجزای هاشم</h2>
+      <svg viewBox="0 0 1000 640" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="ah" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#64748b"/></marker>
+          <pattern id="g" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0L0 0 0 40" fill="none" stroke="#1e293b" stroke-width=".5"/></pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#g)"/>
+
+        <!-- boundaries -->
+        <rect x="20" y="20" width="450" height="600" rx="12" fill="rgba(251,191,36,.04)" stroke="#fbbf24" stroke-dasharray="8,4"/>
+        <text x="34" y="40" fill="#fbbf24" font-size="11" font-weight="600">Iran hub (frps)</text>
+        <rect x="530" y="20" width="450" height="600" rx="12" fill="rgba(34,211,238,.04)" stroke="#22d3ee" stroke-dasharray="8,4"/>
+        <text x="544" y="40" fill="#22d3ee" font-size="11" font-weight="600">Foreign spoke (frpc)  × N</text>
+
+        <!-- users -->
+        <rect x="150" y="56" width="190" height="44" rx="6" fill="rgba(30,41,59,.6)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="245" y="76" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">Users (Iran)</text>
+        <text x="245" y="91" fill="#94a3b8" font-size="9" text-anchor="middle">hub public IP : reverse ports</text>
+
+        <!-- hub layers -->
+        <rect x="50" y="130" width="390" height="70" rx="8" fill="rgba(6,78,59,.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="245" y="152" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">L4 — frps  (per peer: frps / frps-N)</text>
+        <text x="245" y="170" fill="#94a3b8" font-size="9" text-anchor="middle">bindPort • kcpBindPort • quicBindPort(+1) • token • maxPoolCount</text>
+        <text x="245" y="186" fill="#94a3b8" font-size="9" text-anchor="middle">tcpMux (OFF default) • tls.force • heartbeatTimeout=90</text>
+
+        <rect x="50" y="225" width="390" height="70" rx="8" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="245" y="247" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">L3 — GRE tunnel  (gre-tunnel / gre-tN)</text>
+        <text x="245" y="265" fill="#94a3b8" font-size="9" text-anchor="middle">IP proto 47 • inner 10.x.x.1/30 • MTU 1380 • TTL 255</text>
+        <text x="245" y="281" fill="#94a3b8" font-size="9" text-anchor="middle">carrier: direct GRE  |  wss:8443 (TLS WebSocket front)</text>
+
+        <rect x="50" y="320" width="390" height="56" rx="8" fill="rgba(120,53,15,.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="245" y="343" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">Alt engine — Backhaul (independent of FRP)</text>
+        <text x="245" y="361" fill="#94a3b8" font-size="9" text-anchor="middle">tcp / tcpmux / ws / wss / wssmux / anytls / tun(ipx)</text>
+
+        <rect x="50" y="402" width="390" height="100" rx="8" fill="rgba(8,51,68,.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="245" y="424" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">Control plane (hub)</text>
+        <text x="245" y="442" fill="#94a3b8" font-size="9" text-anchor="middle">gre-panel :7777 (Go, 1 binary, secret base-path) • peers.json</text>
+        <text x="245" y="458" fill="#94a3b8" font-size="9" text-anchor="middle">hashem.sh (CLI+menu, single source of truth) • hashem-watchdog.timer</text>
+        <text x="245" y="474" fill="#94a3b8" font-size="9" text-anchor="middle">rescue • fleet • benchmark • doctor • terminal(WS+PTY, flag)</text>
+        <text x="245" y="490" fill="#94a3b8" font-size="9" text-anchor="middle">/etc/gre-panel/*.json  •  /etc/frp/frps*.toml</text>
+
+        <rect x="50" y="525" width="390" height="70" rx="8" fill="rgba(136,19,55,.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="245" y="547" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">Anti-censorship / hardening</text>
+        <text x="245" y="565" fill="#94a3b8" font-size="9" text-anchor="middle">DPI Shield (iptables HASHEM-DPI) • chaff (ICMP filler) • forced TLS</text>
+        <text x="245" y="581" fill="#94a3b8" font-size="9" text-anchor="middle">kernel tune: BBR, buffers, MSS clamp, reordering • login lockout</text>
+
+        <!-- spoke layers -->
+        <rect x="560" y="130" width="390" height="70" rx="8" fill="rgba(6,78,59,.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="755" y="152" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">L4 — frpc</text>
+        <text x="755" y="170" fill="#94a3b8" font-size="9" text-anchor="middle">serverAddr = hub GRE inner IP  (or public IP via dial fallback)</text>
+        <text x="755" y="186" fill="#94a3b8" font-size="9" text-anchor="middle">poolCount=20 • tcp+udp proxy per port • tcpMux must match hub</text>
+
+        <rect x="560" y="225" width="390" height="70" rx="8" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="755" y="247" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">L3 — GRE (mirror)</text>
+        <text x="755" y="265" fill="#94a3b8" font-size="9" text-anchor="middle">inner 10.x.x.2/30 • same carrier as hub</text>
+
+        <rect x="560" y="320" width="390" height="56" rx="8" fill="rgba(8,51,68,.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="755" y="343" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">dial / watchdog / panel (spoke)</text>
+        <text x="755" y="361" fill="#94a3b8" font-size="9" text-anchor="middle">hashem dial auto • hashem-watchdog.timer (60s) • panel :7777/:7778</text>
+
+        <rect x="560" y="402" width="390" height="100" rx="8" fill="rgba(30,41,59,.6)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="755" y="424" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">Backend services (local)</text>
+        <text x="755" y="442" fill="#94a3b8" font-size="9" text-anchor="middle">Xray / x-ui / Marzban / Pasarguard</text>
+        <text x="755" y="458" fill="#94a3b8" font-size="9" text-anchor="middle">127.0.0.1:port  (localPort in frpc.toml)</text>
+        <text x="755" y="474" fill="#94a3b8" font-size="9" text-anchor="middle">Hands-off: hashem never edits x-ui / inbounds</text>
+
+        <!-- arrows -->
+        <line x1="245" y1="100" x2="245" y2="128" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#ah)"/>
+        <text x="258" y="118" fill="#94a3b8" font-size="9">TCP/UDP</text>
+        <line x1="245" y1="200" x2="245" y2="223" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#ah)"/>
+        <line x1="440" y1="260" x2="558" y2="260" stroke="#a78bfa" stroke-width="2" marker-end="url(#ah)"/>
+        <line x1="558" y1="270" x2="440" y2="270" stroke="#a78bfa" stroke-width="2" marker-end="url(#ah)"/>
+        <text x="499" y="253" fill="#c4b5fd" font-size="9" text-anchor="middle">GRE / WSS</text>
+        <line x1="440" y1="165" x2="558" y2="165" stroke="#34d399" stroke-width="1.5" stroke-dasharray="5,3"/>
+        <text x="499" y="157" fill="#6ee7b7" font-size="8" text-anchor="middle">FRP control</text>
+        <text x="499" y="180" fill="#6ee7b7" font-size="8" text-anchor="middle">(inside GRE)</text>
+        <line x1="755" y1="200" x2="755" y2="223" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#ah)"/>
+        <line x1="755" y1="378" x2="755" y2="400" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#ah)"/>
+        <text x="768" y="392" fill="#94a3b8" font-size="9">work conn → local</text>
+
+        <text x="500" y="625" fill="#64748b" font-size="9" text-anchor="middle">Hub پورت‌های کاربر را باز می‌کند؛ اسپک (خارج) به هاب وصل می‌شود و ترافیک را به سرویس محلی می‌رساند (Reverse Proxy)</text>
+      </svg>
+    </div>
+    <div class="cards">
+      <div class="card"><h3><span class="dot em"></span>ایده‌ی اصلی: Stacked Tunnels</h3>
+        <ul>
+          <li>لایه‌ی <b>L3 (GRE)</b> بسته‌های IP را کپسوله می‌کند؛ DPI ایران پروتکل ۴۷ را مسدود نمی‌کند ولی UDP/TCP مستقیم را می‌بُرد.</li>
+          <li>لایه‌ی <b>L4 (FRP)</b> داخل GRE اجرا می‌شود و پورت‌های کاربر را به سرویس محلی می‌رساند.</li>
+          <li>نتیجه: ترافیک کاربر هیچ‌وقت مستقیم بین ایران و خارج با پروتکل قابل‌شناسایی نمی‌رود.</li>
+        </ul></div>
+      <div class="card"><h3><span class="dot vi"></span>چند هاب-اسپک</h3>
+        <ul>
+          <li>یک هاب می‌تواند N اسپک داشته باشد: هر اسپک یک <span class="mono">gre-tN</span> و یک <span class="mono">frps-N</span> مستقل.</li>
+          <li>Peer #1 همان tunnel قدیمی <span class="mono">gre-tunnel + frps</span> است (legacy).</li>
+          <li>ثبت در <span class="mono">peers.json</span> روی هاب.</li>
+        </ul></div>
+      <div class="card"><h3><span class="dot am"></span>موتورها</h3>
+        <ul>
+          <li><b>frp</b>: GRE + FRP (پیش‌فرض و فعال).</li>
+          <li><b>gre-backhaul</b>: GRE + Backhaul (bundle <span class="mono">gh1_</span>).</li>
+          <li><b>backhaul</b>: بدون GRE (bundle <span class="mono">bh1_</span>).</li>
+          <li>bundle FRP: <span class="mono">hsh1_</span>.</li>
+        </ul></div>
+    </div>
+  </section>
+
+  <!-- ===================== 2. DATA PATH ===================== -->
+  <section id="path">
+    <div class="box">
+      <h2>مسیر یک بسته از کاربر تا سرویس</h2>
+      <svg viewBox="0 0 1000 300">
+        <defs><marker id="a2" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#64748b"/></marker></defs>
+        <rect width="100%" height="100%" fill="url(#g)"/>
+        <rect x="10" y="110" width="110" height="60" rx="6" fill="rgba(30,41,59,.6)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="65" y="136" fill="#fff" font-size="11" font-weight="600" text-anchor="middle">کاربر</text><text x="65" y="152" fill="#94a3b8" font-size="9" text-anchor="middle">VLESS/…</text>
+        <rect x="160" y="110" width="130" height="60" rx="6" fill="rgba(6,78,59,.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="225" y="134" fill="#fff" font-size="11" font-weight="600" text-anchor="middle">frps (hub)</text><text x="225" y="150" fill="#94a3b8" font-size="9" text-anchor="middle">remotePort :443…</text>
+        <rect x="330" y="110" width="130" height="60" rx="6" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="395" y="134" fill="#fff" font-size="11" font-weight="600" text-anchor="middle">GRE encap</text><text x="395" y="150" fill="#94a3b8" font-size="9" text-anchor="middle">proto 47, MTU 1380</text>
+        <rect x="500" y="110" width="130" height="60" rx="6" fill="rgba(136,19,55,.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="565" y="134" fill="#fff" font-size="11" font-weight="600" text-anchor="middle">اینترنت / DPI</text><text x="565" y="150" fill="#94a3b8" font-size="9" text-anchor="middle">فقط GRE می‌بیند</text>
+        <rect x="670" y="110" width="130" height="60" rx="6" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="735" y="134" fill="#fff" font-size="11" font-weight="600" text-anchor="middle">GRE decap</text><text x="735" y="150" fill="#94a3b8" font-size="9" text-anchor="middle">اسپک خارج</text>
+        <rect x="840" y="110" width="140" height="60" rx="6" fill="rgba(6,78,59,.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="910" y="134" fill="#fff" font-size="11" font-weight="600" text-anchor="middle">frpc → Xray</text><text x="910" y="150" fill="#94a3b8" font-size="9" text-anchor="middle">127.0.0.1:localPort</text>
+        <g stroke="#22d3ee" stroke-width="1.5" marker-end="url(#a2)">
+          <line x1="120" y1="140" x2="158" y2="140"/><line x1="290" y1="140" x2="328" y2="140"/><line x1="460" y1="140" x2="498" y2="140"/>
+          <line x1="630" y1="140" x2="668" y2="140"/><line x1="800" y1="140" x2="838" y2="140"/>
+        </g>
+        <text x="500" y="60" fill="#94a3b8" font-size="10" text-anchor="middle">«مسیر برگشت» همین مسیر است، معکوس — فقط یک اتصال کنترل FRP از اسپک به هاب برقرار می‌ماند</text>
+        <text x="500" y="250" fill="#fbbf24" font-size="10" text-anchor="middle">carrier=wss:8443 → GRE داخل یک WebSocket/TLS قرار می‌گیرد (برای وقتی که proto 47 هم مسدود باشد)</text>
+        <text x="500" y="270" fill="#fb7185" font-size="10" text-anchor="middle">rescue → وقتی TCP یک‌طرفه بسته است، جهت dial برعکس می‌شود (frps روی سمت بسته‌شده)</text>
+      </svg>
+    </div>
+    <div class="box">
+      <h2>چرا هر لایه وجود دارد (از اندازه‌گیری‌های ثبت‌شده در اسکیل)</h2>
+      <table>
+        <tr><th>رفتار شبکه‌ی ایران</th><th>اثر روی ترافیک مستقیم</th><th>داخل GRE</th></tr>
+        <tr><td>UDP flow-rate throttling</td><td>فقط ۳ بسته‌ی اول هر flow رد می‌شود؛ WireGuard/Hysteria/QUIC در ~۱ ثانیه می‌میرند</td><td>۰٪ افت</td></tr>
+        <tr><td>TCP پرحجم</td><td>بعد از ~۱۰۰–۱۳۰KB قطع می‌شود (iperf3)</td><td>تا ۶۰۰+ Mbps بدون retransmit</td></tr>
+        <tr><td>IPIP (proto 4)</td><td>۱۰۰٪ بسته</td><td>—</td></tr>
+        <tr><td>GRE (proto 47)</td><td>عبور می‌کند</td><td>—</td></tr>
+        <tr><td>SNI مسدود</td><td>RST تزریق می‌شود</td><td>SNI تمیز/Reality مشکلی ندارد</td></tr>
+      </table>
+      <div class="note">این جدول از قواعد ثبت‌شده در اسکیل <span class="mono">tunnel-panel-ops</span> آمده، نه از اندازه‌گیری امروز. طبق انتخاب شما هیچ اندازه‌گیری تازه‌ای روی سرور زنده انجام نشد.</div>
+    </div>
+  </section>
+
+  <!-- ===================== 3. JOIN ===================== -->
+  <section id="join">
+    <div class="box">
+      <h2>اتصال هاب و اسپک — چه چیزی بین دو سر باید یکسان باشد</h2>
+      <div class="flow">
+        <div class="step"><div class="n">1</div><div><b>روی هاب:</b> <code>hashem setup-iran --local-pub HUB --remote-pub SPOKE …</code> → می‌سازد: GRE، <span class="mono">frps.toml</span>، یونیت‌ها، پنل، و یک <b>bundle</b> <span class="mono">hsh1_…</span> چاپ می‌کند.</div></div>
+        <div class="step"><div class="n">2</div><div><b>bundle</b> = <span class="mono">hsh1_&lt;IRAN_PUB&gt;_&lt;FRP_PORT&gt;_&lt;IRAN_GRE&gt;_&lt;FOREIGN_GRE&gt;_&lt;TOKEN&gt;[_ports][_tr-…]</span></div></div>
+        <div class="step"><div class="n">3</div><div><b>روی اسپک:</b> <code>hashem setup-foreign --bundle hsh1_… --local-pub SPOKE</code> → GRE معکوس + <span class="mono">frpc.toml</span> با <span class="mono">serverAddr</span> = IP داخلی GRE هاب.</div></div>
+        <div class="step"><div class="n">4</div><div><b>dial fallback:</b> اگر GRE ping نشد، <span class="mono">frpc</span> خودش به IP عمومی هاب وصل می‌شود (<span class="mono">hashem dial auto</span>).</div></div>
+        <div class="step"><div class="n">5</div><div>اسپک بیشتر: <code>hashem add-peer …</code> روی هاب → <span class="mono">gre-tN + frps-N</span> جدید.</div></div>
+      </div>
+      <h3>باید دو سر یکسان باشد (و فقط بخشی در bundle هست)</h3>
+      <table>
+        <tr><th>تنظیم</th><th>در bundle؟</th><th>اگر ناهمخوان باشد</th></tr>
+        <tr><td class="mono">token</td><td><span class="tag on-t">بله</span></td><td>login ردّ می‌شود: <span class="mono">token doesn't match</span></td></tr>
+        <tr><td class="mono">FRP port</td><td><span class="tag on-t">بله</span></td><td>اتصال برقرار نمی‌شود</td></tr>
+        <tr><td class="mono">transport (tcp/kcp/quic/ws/wss)</td><td><span class="tag on-t">بله (_tr-)</span></td><td>اتصال برقرار نمی‌شود</td></tr>
+        <tr><td class="mono">tcpMux</td><td><span class="tag warn-t">خیر</span></td><td>login با <b>EOF</b> ردّ می‌شود — همان قطعی امروز</td></tr>
+        <tr><td class="mono">tls.force / tls.enable</td><td><span class="tag warn-t">خیر</span></td><td>handshake یا timeout</td></tr>
+        <tr><td class="mono">proxyProtocolVersion vs acceptProxyProtocol</td><td><span class="tag warn-t">خیر</span></td><td>tunnel سبز، ولی VPN کار نمی‌کند (EOF روی TLS کاربر)</td></tr>
+        <tr><td class="mono">poolCount / maxPoolCount</td><td><span class="tag warn-t">خیر</span></td><td>کندی یا «work connection pool is full»</td></tr>
+      </table>
+      <div class="note bad">این مهم‌ترین نقطه‌ی ضعف طراحی است: فقط token و پورت و transport هم‌گام می‌شوند؛ باقی تنظیمات حساس را اپراتور باید دو بار و دستی یکسان نگه دارد.</div>
+    </div>
+  </section>
+
+  <!-- ===================== 4. AUTOMATION ===================== -->
+  <section id="auto">
+    <div class="box">
+      <h2>اتوماسیون — چه کسی چه کاری را خودکار می‌کند</h2>
+      <svg viewBox="0 0 1000 260">
+        <defs><marker id="a3" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#64748b"/></marker></defs>
+        <rect width="100%" height="100%" fill="url(#g)"/>
+        <rect x="20" y="20" width="200" height="70" rx="8" fill="rgba(8,51,68,.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="120" y="45" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">hashem-watchdog.timer</text>
+        <text x="120" y="63" fill="#94a3b8" font-size="9" text-anchor="middle">هر ۶۰ ثانیه • flock</text>
+        <text x="120" y="78" fill="#94a3b8" font-size="9" text-anchor="middle">fail_threshold=2</text>
+        <rect x="270" y="20" width="200" height="70" rx="8" fill="rgba(6,78,59,.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="370" y="45" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">watchdog_check</text>
+        <text x="370" y="63" fill="#94a3b8" font-size="9" text-anchor="middle">ping → ss ESTAB → nc 22/7777</text>
+        <text x="370" y="78" fill="#94a3b8" font-size="9" text-anchor="middle">→ dial_connected → frp active</text>
+        <rect x="520" y="20" width="200" height="70" rx="8" fill="rgba(120,53,15,.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="620" y="45" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">تصمیم</text>
+        <text x="620" y="63" fill="#94a3b8" font-size="9" text-anchor="middle">down → هشدار تلگرام</text>
+        <text x="620" y="78" fill="#94a3b8" font-size="9" text-anchor="middle">auto_restart=false (پیش‌فرض)</text>
+        <rect x="770" y="20" width="210" height="70" rx="8" fill="rgba(136,19,55,.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="875" y="45" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">اقدام (اگر روشن)</text>
+        <text x="875" y="63" fill="#94a3b8" font-size="9" text-anchor="middle">restart_all_lite</text>
+        <text x="875" y="78" fill="#94a3b8" font-size="9" text-anchor="middle">+ بکاپ و restart دوره‌ای</text>
+        <g stroke="#22d3ee" stroke-width="1.5" marker-end="url(#a3)"><line x1="220" y1="55" x2="268" y2="55"/><line x1="470" y1="55" x2="518" y2="55"/><line x1="720" y1="55" x2="768" y2="55"/></g>
+
+        <rect x="20" y="130" width="300" height="110" rx="8" fill="rgba(30,41,59,.6)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="170" y="153" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">لایه‌های دیگر (پنل Go)</text>
+        <text x="170" y="172" fill="#94a3b8" font-size="9" text-anchor="middle">fleet sampler: ping هر peer، تاریخچه برای sparkline</text>
+        <text x="170" y="188" fill="#94a3b8" font-size="9" text-anchor="middle">linked: جلسه‌ی FRP برقرار = سالم، بدون ping</text>
+        <text x="170" y="204" fill="#94a3b8" font-size="9" text-anchor="middle">benchmark: carrier probe — فقط پیشنهاد، سوییچ دستی</text>
+        <text x="170" y="220" fill="#94a3b8" font-size="9" text-anchor="middle">doctor: BBR / MSS / forwarding + «Quick Repair»</text>
+
+        <rect x="350" y="130" width="300" height="110" rx="8" fill="rgba(136,19,55,.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="500" y="153" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">rescue (قطع یک‌طرفه)</text>
+        <text x="500" y="172" fill="#94a3b8" font-size="9" text-anchor="middle">تشخیص: چند dial + یک ping در دقیقه</text>
+        <text x="500" y="188" fill="#94a3b8" font-size="9" text-anchor="middle">۳ اخطار پیاپی → فقط بنر</text>
+        <text x="500" y="204" fill="#94a3b8" font-size="9" text-anchor="middle">فعال‌سازی با کلیک • کد <span class="mono">hrc1_</span></text>
+        <text x="500" y="220" fill="#94a3b8" font-size="9" text-anchor="middle">جهت dial برعکس (stcp/sudp visitors)</text>
+
+        <rect x="680" y="130" width="300" height="110" rx="8" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="830" y="153" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">dial / carrier / autotune</text>
+        <text x="830" y="172" fill="#94a3b8" font-size="9" text-anchor="middle">dial_watch_tick: GRE مرده → IP عمومی (خودکار)</text>
+        <text x="830" y="188" fill="#94a3b8" font-size="9" text-anchor="middle">carrier: دستی (direct|wss) — AutoPilot فقط لاگ</text>
+        <text x="830" y="204" fill="#94a3b8" font-size="9" text-anchor="middle">autotune: pool بر اساس تعداد اتصال (خاموش)</text>
+        <text x="830" y="220" fill="#94a3b8" font-size="9" text-anchor="middle">hashem-frp-restore: بعد از boot</text>
+      </svg>
+    </div>
+    <div class="cards">
+      <div class="card"><h3><span class="dot em"></span>خودکار و روشن</h3>
+        <ul><li>watchdog tick هر ۶۰ ثانیه (فقط هشدار)</li><li>dial fallback (GRE → public IP)</li><li>fleet/linked sampler</li><li>restore بعد از reboot</li></ul></div>
+      <div class="card"><h3><span class="dot am"></span>خودکار ولی نیازمند تأیید/روشن‌کردن</h3>
+        <ul><li>rescue: تشخیص خودکار، اجرا با کلیک</li><li>auto_restart / restart دوره‌ای</li><li>autotune pool</li><li>بکاپ زمان‌بندی‌شده</li></ul></div>
+      <div class="card"><h3><span class="dot ro"></span>عمداً دستی</h3>
+        <ul><li>carrier (direct/wss) — AutoPilot فقط پیشنهاد</li><li>tcpMux / TLS / enc / comp</li><li>x-ui / inbounds هرگز لمس نمی‌شود</li></ul></div>
+    </div>
+    <div class="note">پس از قطعی امروز: watchdog ۱۲۸ بار پیاپی «down» گفت ولی <b>علت</b> را نگفت (EOF/tcpMux). hint جدید <span class="mono">E-FRP-10</span> این را فقط در status/doctor نشان می‌دهد؛ هنوز در هشدار تلگرام نیست.</div>
+  </section>
+
+  <!-- ===================== 5. DEFAULTS ===================== -->
+  <section id="def">
+    <div class="box">
+      <h2>پیش‌فرض‌ها (از کد، نه حدس)</h2>
+      <table>
+        <tr><th>تنظیم</th><th>پیش‌فرض</th><th class="mono">کجا</th><th>چرا / اثر</th></tr>
+        <tr><td class="mono">transport.tcpMux</td><td><span class="tag off-t">OFF</span></td><td class="mono">perf.go / hashem.sh</td><td>طبق اندازه‌گیری ثبت‌شده، تقریباً نصف throughput روی GRE؛ باید دو سر یکسان باشد</td></tr>
+        <tr><td class="mono">proxy encryption</td><td><span class="tag off-t">OFF</span></td><td class="mono">perf.json</td><td>ترافیک VLESS از قبل رمز است؛ رمزنگاری دوباره فقط CPU می‌سوزاند</td></tr>
+        <tr><td class="mono">proxy compression</td><td><span class="tag off-t">OFF</span></td><td class="mono">perf.json</td><td>داده‌ی رمزشده فشرده نمی‌شود؛ هزینه‌ی CPU بدون سود</td></tr>
+        <tr><td class="mono">forced TLS</td><td><span class="tag off-t">OFF</span> <span class="tag am-t">در perf.json</span></td><td class="mono">perf.json</td><td>در سند skill «ON» بود؛ در کد فعلی OFF — ناهمخوانی مستندات (نکته‌ی ۶)</td></tr>
+        <tr><td class="mono">chaff</td><td><span class="tag off-t">off</span></td><td class="mono">perf.json</td><td>حلقه‌ی bash ping CPU می‌خورد؛ low/mid اختیاری</td></tr>
+        <tr><td class="mono">DPI Shield</td><td><span class="tag off-t">OFF</span></td><td class="mono">perf.json</td><td>iptables hashlimit روی پورت‌های reverse؛ ضد scan/flood</td></tr>
+        <tr><td class="mono">poolCount / maxPool</td><td>20 / 60</td><td class="mono">perf.go</td><td>جلوگیری از re-dial storm؛ بار بالا را از Performance tab بالا ببرید</td></tr>
+        <tr><td class="mono">watchdog auto_restart</td><td><span class="tag off-t">false</span></td><td class="mono">watchdog.json</td><td>restart خودکار زنجیره‌ای CPU هاب را تا ۷۰٪ می‌برد؛ فقط هشدار</td></tr>
+        <tr><td class="mono">carrier</td><td>direct (دستی)</td><td class="mono">carrier.json</td><td>فقط GRE خام؛ سوییچ خودکار ممنوع</td></tr>
+        <tr><td class="mono">FRP control port</td><td>تصادفی 20000–60000</td><td class="mono">setup</td><td>پرهیز از اثرانگشت ثابت ۷۰۰۰</td></tr>
+        <tr><td class="mono">GRE MTU</td><td>1380</td><td class="mono">gre unit</td><td>جلوگیری از fragmentation؛ MSS clamp کنار آن</td></tr>
+        <tr><td class="mono">Terminal (WS+PTY)</td><td><span class="tag off-t">OFF</span></td><td class="mono">panel.json</td><td>سطح حمله؛ فقط با flag</td></tr>
+      </table>
+      <div class="note good">فلسفه‌ی پیش‌فرض: «سرعت اول، کمترین CPU، کمترین سطح خودکار خطرناک» — هر چیزی که ممکن است حلقه‌ی ریستارت یا خرابی دوطرفه بسازد، خاموش است.</div>
+    </div>
+    <div class="box">
+      <h2>چه چیزی کارایی را بالا یا پایین می‌برد</h2>
+      <table>
+        <tr><th>اهرم</th><th>اثر بر سرعت</th><th>اثر بر CPU</th><th>ریسک</th></tr>
+        <tr><td class="mono">tcpMux ON</td><td><span class="tag warn-t">↓ حدود ۵۰٪ (ثبت‌شده)</span></td><td>پایین‌تر</td><td>اگر دو سر یکی نباشد: قطع کامل (EOF)</td></tr>
+        <tr><td class="mono">encryption / compression ON</td><td><span class="tag warn-t">↓</span></td><td><span class="tag warn-t">↑↑ روی ۱–۲ vCPU</span></td><td>بدون سود روی داده‌ی رمزشده</td></tr>
+        <tr><td class="mono">QUIC / KCP transport</td><td><span class="tag warn-t">↓↓ روی مسیر reordering‌دار (ثبت‌شده ~۵–۱۲ vs ۲۵۰–۳۰۰ Mbit)</span></td><td>متوسط</td><td>پیش از سوییچ حتماً benchmark</td></tr>
+        <tr><td class="mono">poolCount بالا (۱۰۰)</td><td>بهتر زیر بار</td><td><span class="tag warn-t">↑ re-dial storm هنگام jitter</span></td><td>روی هاب تا ۷۰٪ CPU</td></tr>
+        <tr><td class="mono">BBR + بافر ۱۶MB + reordering=25</td><td><span class="tag on-t">↑</span></td><td>—</td><td>کم</td></tr>
+        <tr><td class="mono">MTU 1380 + MSS clamp</td><td><span class="tag on-t">↑ (کمتر fragment)</span></td><td>—</td><td>کم</td></tr>
+        <tr><td class="mono">kernel DNAT بجای FRP (پورت ساده)</td><td><span class="tag on-t">↑↑</span></td><td><span class="tag on-t">↓</span></td><td>IP واقعی کلاینت پنهان می‌شود (MASQUERADE)</td></tr>
+        <tr><td class="mono">DPI Shield (hashlimit)</td><td>—</td><td>کم</td><td>حد خیلی پایین کاربر واقعی را می‌بُرد</td></tr>
+        <tr><td class="mono">chaff</td><td>—</td><td><span class="tag warn-t">↑ حلقه‌ی bash</span></td><td>برای چند peer زیاد می‌شود</td></tr>
+      </table>
+      <div class="note">همه‌ی اعداد بالا از اسکیل و کامنت‌های کد آمده‌اند. هیچ اندازه‌گیری تازه نگرفتم (طبق تصمیم شما)؛ برای عدد دقیق روی مسیر فعلی باید جداگانه در netns محلی benchmark کنیم.</div>
+    </div>
+  </section>
+
+  <!-- ===================== 6. GAPS ===================== -->
+  <section id="gaps">
+    <div class="box">
+      <h2>نقاط ضعف معماری (دیده‌شده در کد و در رخدادهای این هفته)</h2>
+      <table>
+        <tr><th>#</th><th>مسئله</th><th>شاهد</th><th>جهت اصلاح</th></tr>
+        <tr><td>1</td><td><b>پیکربندی دوطرفه هم‌گام نمی‌شود</b></td><td>قطعی امروز (tcpMux)، proxyProtocol، tls، pool</td><td>یک «منبع حقیقت» روی هاب + دریافت تنظیمات توسط اسپک (یا bundle v2 با فیلدهای بیشتر)</td></tr>
+        <tr><td>2</td><td><b>watchdog فقط «down» می‌گوید، نه چرا</b></td><td>۱۲۸ شکست پیاپی بدون علت</td><td>دسته‌بندی علت (GRE، توکن، EOF/mux، پورت) در هشدار</td></tr>
+        <tr><td>3</td><td><b>تغییر کانفیگ بدون ردپا</b></td><td>تست‌ها کانفیگ زنده را بازنویسی کردند و معلوم نبود چه کسی</td><td>لاگ منبع تغییر + بکاپ خودکار + rollback در UI</td></tr>
+        <tr><td>4</td><td><b>هسته‌ی ۸٬۴۸۶ خطی bash + ۱۸٬۲۲۰ خط Go</b> با منطق مشترک</td><td>۲۰۹ تابع در یک فایل؛ هر باگ دو جا تکرار می‌شود (مثلاً مسیر perf.json)</td><td>shellcheck در CI، تست واحد برای توابع کلیدی، یک API داخلی بجای shell-out</td></tr>
+        <tr><td>5</td><td><b>مسیرهای ثابت /etc/…</b></td><td>تست روی میزبان زنده نوشت (در این نسخه فقط بخش Go اصلاح شد)</td><td>همان الگوی <span class="mono">frpDir</span> در bash</td></tr>
+        <tr><td>6</td><td><b>مستندات و کد ناهمخوان</b></td><td>forced TLS در اسکیل ON، در کد OFF؛ لینک‌های docs/en شکسته بود</td><td>یک سند پیش‌فرض‌ها که از کد تولید شود</td></tr>
+        <tr><td>7</td><td><b>tls_enabled ↔ force_tls</b></td><td><span class="mono">tunnel.go:942</span> کلیدی می‌خواند که وجود ندارد</td><td>مهاجرت دوطرفه سپس اصلاح</td></tr>
+        <tr><td>8</td><td><b>نصب بدون checksum</b></td><td><span class="mono">install.sh</span> اسکریپت را از main و پروکسی ثالث اجرا می‌کند</td><td>امضا/checksum و pin به tag پایدار</td></tr>
+        <tr><td>9</td><td><b>یک هاب = نقطه‌ی شکست</b></td><td>frpc فقط یک serverAddr دارد</td><td>لیست چند هاب با failover</td></tr>
+        <tr><td>10</td><td><b>release از main و آپدیت از latest</b></td><td>پنل خودش را از <span class="mono">releases/latest</span> آپدیت می‌کند</td><td>کانال stable/dev جدا (الان با شاخه‌ی dev شروع شده)</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <p class="footer">Hashem • stable-r148 • report generated from source only (no live measurements) • branch <span class="mono">dev</span> ready for changes</p>
+</div>
+<script>
+document.getElementById('nav').addEventListener('click',function(e){
+  var b=e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('nav button').forEach(function(x){x.classList.toggle('on',x===b)});
+  document.querySelectorAll('section').forEach(function(s){s.classList.toggle('on',s.id===b.dataset.t)});
+  window.scrollTo({top:0,behavior:'smooth'});
+});
+</script>
+</body>
+</html>
