@@ -77,7 +77,7 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 		if _, err := exec.LookPath("journalctl"); err == nil {
 			out, err := exec.Command("journalctl", args...).CombinedOutput()
 			if err == nil && len(bytes.TrimSpace(out)) > 0 {
-				raw := string(out)
+				raw := redactLogSecrets(string(out))
 				writeJSON(w, map[string]any{"logs": raw, "lines": splitLogLines(raw), "svc": "stream", "findings": summarizeLogs(raw)})
 				return
 			}
@@ -109,7 +109,7 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 	if _, err := exec.LookPath("journalctl"); err == nil {
 		out, err := exec.Command("journalctl", "-u", unit, "-n", strconv.Itoa(lines), "--no-pager").CombinedOutput()
 		if err == nil {
-			raw := string(out)
+			raw := redactLogSecrets(string(out))
 			writeJSON(w, map[string]any{"logs": raw, "lines": splitLogLines(raw), "svc": svc, "findings": summarizeLogs(raw)})
 			return
 		}
@@ -117,7 +117,7 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 	// fallback: log files
 	for _, q := range []string{"/var/log/" + svc + ".log", "/root/" + svc + ".log"} {
 		if data, err := os.ReadFile(q); err == nil {
-			raw := string(data)
+			raw := redactLogSecrets(string(data))
 			writeJSON(w, map[string]any{"logs": raw, "lines": splitLogLines(raw), "svc": svc, "findings": summarizeLogs(raw)})
 			return
 		}

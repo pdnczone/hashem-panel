@@ -5,7 +5,7 @@ then `go vet` + `go test ./...` + `bash -n` on scripts, then commit and push to 
 Small commits, one concern each. No production servers are touched.
 
 ## Phase 1 - Correctness (Backhaul gap list, docs/audit/BACKHAUL_E2E_REPORT.md)
-- [ ] 1.1 Redact secrets (token, `invalid security token received: X`) in log endpoints (gap 10)
+- [x] 1.1 Redact secrets (token, `invalid security token received: X`) in log endpoints (gap 10)
 - [ ] 1.2 `switchTunnelEngine` stops swallowing errors; reports real failure (gaps 6, 7)
 - [ ] 1.3 Real TOML parsing for backhaul config instead of line scanner (gap 2)
 - [ ] 1.4 Per-peer backhaul units recognised in role detection (gap 4)
