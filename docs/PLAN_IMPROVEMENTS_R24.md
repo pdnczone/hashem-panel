@@ -10,7 +10,7 @@ Small commits, one concern each. No production servers are touched.
 - [x] 1.3 Real TOML parsing for backhaul config instead of line scanner (gap 2)
 - [x] 1.4 Per-peer backhaul units recognised in role detection (gap 4)
 - [x] 1.5 Doctor knows Backhaul: token mismatch / control-channel EOF / transport mismatch hints (gap 9)
-- [ ] 1.6 Watchdog/health use session state, not unit state, for Backhaul (gap 12)
+- [x] 1.6 Watchdog judges Backhaul by control-channel session (hashem.sh backhaul_session_ok + tests/test_watchdog_backhaul.sh); Go snapshot already uses ss sessions + probes
 
 ## Phase 2 - CI and quality
 - [ ] 2.1 GitHub Actions `ci.yml`: go vet, gofmt check, go test -race, bash -n, tests/*.sh (hermetic ones)

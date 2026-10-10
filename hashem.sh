@@ -5890,6 +5890,20 @@ except Exception:
     echo "$PEER"
 }
 
+# backhaul_session_ok <unit>: 0 unless the newest control-channel outcome in the
+# unit's journal is a failure. Backhaul restarts itself internally, so the unit
+# stays "active" across a dead session; the journal is the only signal.
+backhaul_session_ok() {
+    local unit="$1" line
+    while IFS= read -r line; do
+        case "${line,,}" in
+            *"control channel established successfully"*|*"control channel successfully established"*) return 0 ;;
+            *"failed to receive control channel response"*|*"invalid security token"*|*"failed to read from control channel"*|*"neither server nor client configuration"*) return 1 ;;
+        esac
+    done < <(journalctl -u "$unit" -n 80 --no-pager 2>/dev/null | tac)
+    return 0
+}
+
 watchdog_check() {
     init_watchdog_json
     local PEER_GRE
@@ -5909,7 +5923,21 @@ watchdog_check() {
 
     local FRP_NAME=""
     local FRP_OK=0
-    if [[ -f /etc/frp/frpc.toml ]] || systemctl list-unit-files 2>/dev/null | grep -q "^frpc\.service"; then
+    local BH_UNIT=""
+    if systemctl is-active --quiet backhaul-client 2>/dev/null; then
+        BH_UNIT="backhaul-client"
+    elif systemctl is-active --quiet backhaul-server 2>/dev/null; then
+        BH_UNIT="backhaul-server"
+    fi
+    if [[ -n "$BH_UNIT" ]] && ! systemctl is-active --quiet frpc 2>/dev/null && ! systemctl is-active --quiet frps 2>/dev/null; then
+        # Backhaul engine: unit state alone is not enough, check the session
+        FRP_NAME="$BH_UNIT"
+        if backhaul_session_ok "$BH_UNIT"; then
+            FRP_OK=1
+            # a healthy session proves the carrier works even if ICMP is filtered
+            [[ "$BH_UNIT" == "backhaul-client" ]] && GRE_OK=1
+        fi
+    elif [[ -f /etc/frp/frpc.toml ]] || systemctl list-unit-files 2>/dev/null | grep -q "^frpc\.service"; then
         FRP_NAME="frpc"
         systemctl is-active --quiet frpc 2>/dev/null && FRP_OK=1
     elif [[ -f /etc/frp/frps.toml ]] || systemctl list-unit-files 2>/dev/null | grep -q "^frps\.service"; then
@@ -5955,7 +5983,7 @@ except Exception:
     local DETAIL=""
     if [[ $GRE_OK -eq 1 && $FRP_OK -eq 1 ]]; then
         STATUS="up"
-        DETAIL="GRE ping OK ($PEER_GRE), FRP $FRP_NAME active"
+        DETAIL="GRE ping OK ($PEER_GRE), ${FRP_NAME:-FRP} active"
     else
         local ERR_PARTS=()
         if [[ $GRE_OK -ne 1 ]]; then
@@ -5966,7 +5994,7 @@ except Exception:
             fi
         fi
         if [[ $FRP_OK -ne 1 ]]; then
-            ERR_PARTS+=("FRP ${FRP_NAME:-service} inactive")
+            if [[ "$FRP_NAME" == backhaul-* ]]; then ERR_PARTS+=("Backhaul ${FRP_NAME} session down"); else ERR_PARTS+=("FRP ${FRP_NAME:-service} inactive"); fi
         fi
         DETAIL=$(IFS="; "; echo "${ERR_PARTS[*]}")
     fi
@@ -6059,7 +6087,7 @@ restart_all_lite() {
 
     # On foreign node (frpc client):
     local list=()
-    for u in /etc/systemd/system/gre-tunnel.service /etc/systemd/system/frpc.service; do
+    for u in /etc/systemd/system/gre-tunnel.service /etc/systemd/system/frpc.service /etc/systemd/system/backhaul-client.service; do
         [[ -f "$u" ]] || continue
         list+=("$(basename "$u")")
     done
