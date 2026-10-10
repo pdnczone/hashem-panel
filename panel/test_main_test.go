@@ -24,6 +24,7 @@ func TestMain(m *testing.M) {
 	configDir = dir
 	frpDir = filepath.Join(dir, "frp")
 	backhaulDir = filepath.Join(dir, "backhaul")
+	revpathSysctlConf = filepath.Join(dir, "sysctl.d", "99-hashem-revpath.conf")
 	runSystemctl = func(args ...string) error { return nil }
 	// Host commands that go through the runner fail by default; tests that
 	// need output install their own stub. Nothing here ever reaches the host.

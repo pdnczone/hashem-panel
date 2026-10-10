@@ -216,6 +216,9 @@ func main() {
 	if v := os.Getenv("GRE_BACKHAUL_DIR"); v != "" {
 		backhaulDir = v
 	}
+	if v := os.Getenv("GRE_SYSCTL_CONF"); v != "" {
+		revpathSysctlConf = v
+	}
 	loadOrInit()
 	ensureFreeHTTPPort()
 	if _, err := rand.Read(nonce[:]); err != nil {

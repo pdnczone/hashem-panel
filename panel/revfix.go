@@ -331,15 +331,20 @@ func fixRecord(peerID int, s FixStep, auto bool, v Verdict) {
 	r.LastVerdict = v
 }
 
+// revpathSysctlConf is the persist file for reverse-path sysctl fixes.
+// Tests point it at a throwaway dir (same pattern as frpDir/backhaulDir);
+// production keeps /etc/sysctl.d. Overridable with GRE_SYSCTL_CONF.
+var revpathSysctlConf = "/etc/sysctl.d/99-hashem-revpath.conf"
+
 // sysctlPersist writes key=value via sysctl -w and persists it to
-// /etc/sysctl.d/99-hashem-revpath.conf. Returns a rollback closure.
+// revpathSysctlConf. Returns a rollback closure.
 func sysctlPersist(key, value string) (rollback func(), err error) {
 	old, _ := runCmdTimeout(3*time.Second, "sysctl", "-n", key)
 	oldVal := strings.TrimSpace(string(old))
 	if _, err := runCmdTimeout(5*time.Second, "sysctl", "-w", key+"="+value); err != nil {
 		return nil, err
 	}
-	conf := "/etc/sysctl.d/99-hashem-revpath.conf"
+	conf := revpathSysctlConf
 	rb := func() {
 		_, _ = runCmdTimeout(5*time.Second, "sysctl", "-w", key+"="+oldVal)
 	}
