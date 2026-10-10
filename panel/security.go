@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -84,7 +83,9 @@ func requireCSRF(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		next(w, r)
+		rec := &statusRecorder{ResponseWriter: w}
+		next(rec, r)
+		auditMutation(r, rec.status)
 	}
 }
 
@@ -290,7 +291,8 @@ func LogSecurityAudit(event, user, ip, details string) {
 
 	log.Printf("[AUDIT] %s", strings.TrimSpace(entry))
 
-	auditPath := filepath.Join(configDir, "security-audit.log")
+	auditPath := auditLogPath()
+	rotateAuditLocked(auditPath)
 	f, err := os.OpenFile(auditPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err == nil {
 		_, _ = f.WriteString(entry)
