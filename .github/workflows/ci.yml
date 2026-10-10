@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          check-latest: true
+          cache-dependency-path: panel/go.sum
+      - name: gofmt (new/changed files must be formatted)
+        run: |
+          # The tree still has legacy unformatted files; gate only on files
+          # touched by this push/PR so formatting debt can't grow.
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$base" 2>/dev/null; then
+            base="HEAD~1"
+          fi
+          files=$(git diff --name-only --diff-filter=AM "$base" HEAD -- 'panel/*.go' || true)
+          [ -z "$files" ] && exit 0
+          bad=$(gofmt -l $files)
+          if [ -n "$bad" ]; then echo "gofmt needed:"; echo "$bad"; exit 1; fi
+      - name: go vet
+        run: cd panel && go vet ./...
+      - name: go build
+        run: cd panel && go build ./...
+      - name: go test (race)
+        run: cd panel && go test -race -count=1 ./...
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n
+        run: |
+          for f in hashem.sh hashem-backhaul.sh install.sh; do bash -n "$f"; done
+      - name: hermetic shell tests
+        run: |
+          # test_backhaul_e2e.sh and test_revpath_lab.sh need netns + the real
+          # Backhaul binary; they stay manual lab tests.
+          fail=0
+          for t in tests/test_*.sh; do
+            case "$t" in *test_backhaul_e2e.sh|*test_revpath_lab.sh) continue;; esac
+            echo "== $t"
+            bash "$t" || fail=1
+          done
+          exit $fail

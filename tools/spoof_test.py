@@ -13,12 +13,12 @@ Stdlib only (raw sockets need root/CAP_NET_RAW). One runnable check at the
 bottom: loopback self-test.
 
 Usage:
-  sudo python3 spoof_test.py direct --target 85.198.48.162 --port 55999 \\
+  sudo python3 tools/spoof_test.py direct --target 85.198.48.162 --port 55999 \\
       --spoof-src 192.0.2.1
   # on far end (helper listens, decapsulates, re-injects locally):
-  sudo python3 spoof_test.py helper --listen-port 55998 --deliver-port 55999
+  sudo python3 tools/spoof_test.py helper --listen-port 55998 --deliver-port 55999
   # on near end (encapsulate forged packet toward helper):
-  sudo python3 spoof_test.py tunnel --helper 85.198.48.162 --helper-port 55998 \\
+  sudo python3 tools/spoof_test.py tunnel --helper 85.198.48.162 --helper-port 55998 \\
       --spoof-src 192.0.2.1 --target 127.0.0.1 --port 55999
 """
 import argparse

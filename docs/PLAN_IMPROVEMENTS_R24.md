@@ -13,8 +13,8 @@ Small commits, one concern each. No production servers are touched.
 - [x] 1.6 Watchdog judges Backhaul by control-channel session (hashem.sh backhaul_session_ok + tests/test_watchdog_backhaul.sh); Go snapshot already uses ss sessions + probes
 
 ## Phase 2 - CI and quality
-- [ ] 2.1 GitHub Actions `ci.yml`: go vet, gofmt check, go test -race, bash -n, tests/*.sh (hermetic ones)
-- [ ] 2.2 Move `spoof_test.py` to `tools/`, fix references
+- [x] 2.1 ci.yml: vet, build, test -race, gofmt on changed files, bash -n, hermetic tests/*.sh (race in wss test fixed)
+- [x] 2.2 Move `spoof_test.py` to `tools/`, fix references
 
 ## Phase 3 - Security
 - [ ] 3.1 Login rate-limit + lockout with backoff per IP

@@ -89,6 +89,9 @@ func TestCarrierWSSIntegration(t *testing.T) {
 	oldConfigDir := configDir
 	configDir = tmpDir
 	defer func() { configDir = oldConfigDir }()
+	// set_mode below starts the WSS server goroutine, which reads configDir;
+	// stop it before configDir is restored (defers run last-in first-out).
+	defer func() { _ = stopWSSCarrier() }()
 
 	cfg := defaultCarrierConfig()
 	foundWSS := false
