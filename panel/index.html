@@ -987,6 +987,9 @@
           <svg class="ic" viewBox="0 0 24 24" id="eye"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
       </div>
+      <div class="field hidden" id="codeField">
+        <input id="totpCode" maxlength="16" inputmode="numeric" placeholder="2FA code or recovery code" autocomplete="one-time-code" aria-label="Two-factor code">
+      </div>
       <button type="submit" id="loginBtn" data-i18n="login_signin">Sign in</button>
     </form>
     <p id="loginErr"></p>
@@ -2197,6 +2200,25 @@
           <div class="ent-help">Minimum 12 characters, uppercase, lowercase, numbers, and symbols (NIST 800-63B). Changing it invalidates all other sessions.</div>
           <div id="passStrengthMeter" style="font-size:12px; margin-top:6px; margin-bottom:8px; color:var(--mu);"></div>
           <div><button class="hashem-btn hashem-btn-primary" id="savePass">Change password</button></div>
+        </div>
+        <div class="tunnel-card" id="twofaCard">
+          <div class="tc-header"><p class="tc-title">Two-factor authentication (TOTP)</p></div>
+          <div class="ent-help" id="twofaState">Loading…</div>
+          <div id="twofaSetupBox" class="hidden">
+            <div class="ent-help">Add this secret to your authenticator app (or open the link on your phone), then enter the 6-digit code to confirm.</div>
+            <div class="fg"><label for="twofaSecret">Secret</label><input class="hashem-input" id="twofaSecret" readonly></div>
+            <div class="fg"><label for="twofaUri">otpauth link</label><input class="hashem-input" id="twofaUri" readonly></div>
+            <div class="fg"><label for="twofaConfirm">Code</label><input class="hashem-input" id="twofaConfirm" inputmode="numeric" maxlength="6" placeholder="123456"></div>
+          </div>
+          <div id="twofaDisableBox" class="hidden">
+            <div class="fg"><label for="twofaPass">Password</label><input class="hashem-input" id="twofaPass" type="password" autocomplete="current-password"></div>
+            <div class="fg"><label for="twofaDisCode">Code or recovery code</label><input class="hashem-input" id="twofaDisCode" maxlength="16"></div>
+          </div>
+          <pre class="ent-help hidden" id="twofaCodes" style="user-select:all"></pre>
+          <div>
+            <button class="hashem-btn hashem-btn-primary" id="twofaBtn">Enable 2FA</button>
+            <button class="hashem-btn hashem-btn-secondary hidden" id="twofaCancel">Cancel</button>
+          </div>
         </div>
         <div class="tunnel-card" id="appearanceCard">
           <div class="tc-header"><p class="tc-title" data-i18n="appear_title">Appearance</p></div>
@@ -5354,10 +5376,13 @@ function peerInnerHint(st) {
 function doLogin() {
   return (async () => {
     try {
-      await api('/api/login', {username: $('u').value, password: $('p').value});
-      $('p').value = ''; $('loginErr').textContent = '';
-      showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh();
-    } catch(e) { $('loginErr').textContent = e.message; }
+      await api('/api/login', {username: $('u').value, password: $('p').value, code: $('totpCode').value.trim()});
+      $('p').value = ''; $('totpCode').value = ''; $('codeField').classList.add('hidden'); $('loginErr').textContent = '';
+      showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh();
+    } catch(e) {
+      if (e.code === 'E-AUTH-09') { $('codeField').classList.remove('hidden'); $('totpCode').focus(); }
+      $('loginErr').textContent = e.message;
+    }
   })();
 }
 $('loginForm').addEventListener('submit', e => { e.preventDefault(); doLogin(); });
@@ -5752,6 +5777,44 @@ function termOverlay(show, title, sub) {
   if (title) $('termOverlayTitle').textContent = title;
   if (sub) $('termOverlaySub').textContent = sub;
 }
+
+// ---- optional TOTP 2FA (Settings) ----
+const twofa = {enabled: false, step: 'idle'};
+function twofaRender() {
+  $('twofaState').textContent = twofa.enabled
+    ? 'Enabled. Sign-in needs your password and an authenticator code (or a one-time recovery code).'
+    : 'Disabled. Enable it to require an authenticator code at sign-in.';
+  $('twofaSetupBox').classList.toggle('hidden', twofa.step !== 'setup');
+  $('twofaDisableBox').classList.toggle('hidden', twofa.step !== 'disable');
+  $('twofaCancel').classList.toggle('hidden', twofa.step === 'idle');
+  $('twofaBtn').textContent = twofa.step === 'setup' ? 'Confirm & enable' : twofa.step === 'disable' ? 'Disable 2FA' : (twofa.enabled ? 'Disable 2FA…' : 'Enable 2FA');
+}
+async function twofaRefresh() {
+  try { const s = await api('/api/2fa'); twofa.enabled = !!s.enabled; if (s.enabled) $('twofaState').dataset.left = s.recovery_left; } catch(e) {}
+  twofa.step = 'idle'; twofaRender();
+}
+$('twofaCancel').onclick = () => { twofa.step = 'idle'; twofaRender(); };
+$('twofaBtn').onclick = async () => {
+  try {
+    if (twofa.step === 'idle' && !twofa.enabled) {
+      const r = await api('/api/2fa/setup', {});
+      $('twofaSecret').value = r.secret; $('twofaUri').value = r.uri; $('twofaConfirm').value = '';
+      twofa.step = 'setup'; $('twofaCodes').classList.add('hidden');
+    } else if (twofa.step === 'setup') {
+      const r = await api('/api/2fa/enable', {code: $('twofaConfirm').value.trim()});
+      twofa.enabled = true; twofa.step = 'idle';
+      const c = $('twofaCodes'); c.textContent = 'Recovery codes — save them now, each works once:\n' + r.recovery_codes.join('\n'); c.classList.remove('hidden');
+      toastOk('2FA enabled');
+    } else if (twofa.step === 'idle' && twofa.enabled) {
+      twofa.step = 'disable'; $('twofaPass').value = ''; $('twofaDisCode').value = '';
+    } else if (twofa.step === 'disable') {
+      await api('/api/2fa/disable', {password: $('twofaPass').value, code: $('twofaDisCode').value.trim()});
+      twofa.enabled = false; twofa.step = 'idle'; $('twofaCodes').classList.add('hidden');
+      toastOk('2FA disabled');
+    }
+  } catch(e) { toastErr('2FA', e.message); }
+  twofaRender();
+};
 async function termFlagRefresh() {
   try {
     const s = await api('/api/term/status');
@@ -7122,7 +7185,7 @@ if ($('docIperfBtn')) $('docIperfBtn').onclick = toggleIperf;
 
 // boot: if already logged in, status works; else show login
 (async () => {
-  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); }
+  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); }
   catch(e) { showLogin(); }
 })();
 // light pollers: skip when the tab is in the background (background tabs

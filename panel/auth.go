@@ -231,6 +231,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		Code     string `json:"code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeAPIError(w, r, "E-AUTH-03", "")
@@ -242,6 +243,18 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		LogSecurityAudit("login_failed", body.Username, ip, "invalid credentials")
 		writeAPIError(w, r, "E-AUTH-02", "")
 		return
+	}
+	if cfg.TOTPEnabled {
+		if strings.TrimSpace(body.Code) == "" {
+			writeAPIError(w, r, "E-AUTH-09", "") // password was right: no failure counted
+			return
+		}
+		if !checkSecondFactor(body.Code) {
+			recordLoginFailure(ip)
+			LogSecurityAudit("login_failed", body.Username, ip, "bad second factor")
+			writeAPIError(w, r, "E-AUTH-11", "")
+			return
+		}
 	}
 	recordLoginSuccess(ip)
 	if upgrade { // transparent migration: legacy SHA-256 / weak argon2 params -> current argon2id

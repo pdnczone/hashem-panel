@@ -45,6 +45,9 @@ var errCatalog = map[string]errInfo{
 	"E-AUTH-05": {500, "cannot switch password", "Disk write failed — check /etc/gre-panel permissions."},
 	"E-AUTH-06": {401, "session expired", "Log in again from the login screen."},
 	"E-AUTH-07": {401, "current password is incorrect", "Verify your current password before setting a new one."},
+	"E-AUTH-09": {403, "second factor required", "Enter the 6-digit code from your authenticator app (or a recovery code)."},
+	"E-AUTH-10": {409, "2FA state does not allow this", "Check whether 2FA is already enabled, or run setup first."},
+	"E-AUTH-11": {400, "invalid 2FA code", "Check the code and your phone's clock, then try again."},
 	"E-AUTH-08": {403, "invalid or missing CSRF token", "Refresh the page and try again."},
 	// setup validation
 	"E-SETUP-01": {400, "bad setup request (invalid JSON)", "Reload the page and resubmit the form."},

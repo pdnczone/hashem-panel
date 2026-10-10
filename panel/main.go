@@ -5,9 +5,9 @@ package main
 // setup in setup.go, dashboard metrics in dashboard.go.
 
 import (
-	"context"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/rand"
 	"embed"
 	"encoding/json"
@@ -57,6 +57,11 @@ type panelConfig struct {
 	// RevPathAuto enables automatic application of reverse-path fixes
 	// (rate-limited; report-only when false, the default).
 	RevPathAuto bool `json:"revpath_auto,omitempty"`
+	// Optional TOTP 2FA (off by default). Secret and recovery hashes live in
+	// panel.json (0600) like the password hash.
+	TOTPEnabled    bool     `json:"totp_enabled,omitempty"`
+	TOTPSecret     string   `json:"totp_secret,omitempty"`
+	RecoveryHashes []string `json:"recovery_hashes,omitempty"`
 }
 
 func termEnabled() bool { return cfg.TerminalEnabled }
@@ -251,6 +256,10 @@ func main() {
 	mux.HandleFunc("GET "+base+"/api/logs", requireAuth(handleLogs))
 	mux.HandleFunc("GET "+base+"/api/errors", requireAuth(handleErrors))
 	mux.HandleFunc("GET "+base+"/api/audit", requireAuth(handleAuditGet))
+	mux.HandleFunc("GET "+base+"/api/2fa", requireAuth(handle2FAStatus))
+	mux.HandleFunc("POST "+base+"/api/2fa/setup", requireAuth(requireCSRF(handle2FASetup)))
+	mux.HandleFunc("POST "+base+"/api/2fa/enable", requireAuth(requireCSRF(handle2FAEnable)))
+	mux.HandleFunc("POST "+base+"/api/2fa/disable", requireAuth(requireCSRF(handle2FADisable)))
 	mux.HandleFunc("POST "+base+"/api/action", requireAuth(requireCSRF(handleAction)))
 	mux.HandleFunc("POST "+base+"/api/password", requireAuth(requireCSRF(handlePassword)))
 	mux.HandleFunc("GET "+base+"/api/setup", requireAuth(handleSetupGet))
