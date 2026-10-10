@@ -702,45 +702,33 @@ func localStatusFrom(v *hostView) tunnelStatus {
 			}
 		}
 		if data, err := os.ReadFile(bhPath); err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
-				trimmed := strings.TrimSpace(line)
-				if strings.HasPrefix(trimmed, "transport") {
-					parts := strings.Split(trimmed, "=")
-					if len(parts) >= 2 {
-						st.Transport = strings.Trim(strings.TrimSpace(parts[1]), `"' `)
+			bc := parseBackhaulConf(string(data))
+			if bc.Transport != "" {
+				st.Transport = bc.Transport
+			}
+			if bc.RemoteAddr != "" {
+				if host, portStr, err := net.SplitHostPort(bc.RemoteAddr); err == nil {
+					st.RemotePub = host
+					st.Gre.PeerIP = host
+					if v, err := strconv.Atoi(portStr); err == nil {
+						st.BindPort = v
+						st.FrpPort = v
 					}
 				}
-				if strings.HasPrefix(trimmed, "remote_addr") {
-					parts := strings.SplitN(trimmed, "=", 2)
-					if len(parts) == 2 {
-						val := strings.Trim(strings.TrimSpace(parts[1]), `"' `)
-						host, portStr, err := net.SplitHostPort(val)
-						if err == nil {
-							st.RemotePub = host
-							st.Gre.PeerIP = host
-							if v, err := strconv.Atoi(portStr); err == nil {
-								st.BindPort = v
-								st.FrpPort = v
-							}
-						}
-					}
-				} else if strings.HasPrefix(trimmed, "bind_addr") {
-					parts := strings.Split(trimmed, ":")
-					if len(parts) >= 2 {
-						pStr := strings.Trim(parts[len(parts)-1], `" ')`)
-						if v, err := strconv.Atoi(pStr); err == nil {
-							st.BindPort = v
-							st.FrpPort = v
-						}
+			}
+			if bc.BindAddr != "" {
+				if _, portStr, err := net.SplitHostPort(bc.BindAddr); err == nil {
+					if v, err := strconv.Atoi(portStr); err == nil {
+						st.BindPort = v
+						st.FrpPort = v
 					}
 				}
-				if strings.HasPrefix(trimmed, `"`) {
-					pStr := strings.Trim(trimmed, `", `)
-					st.Proxies = append(st.Proxies, pStr)
-					basePart := strings.Split(strings.Split(pStr, "-")[0], "=")[0]
-					if v, err := strconv.Atoi(basePart); err == nil {
-						st.ProxyPorts = append(st.ProxyPorts, v)
-					}
+			}
+			for _, pStr := range bc.Ports {
+				st.Proxies = append(st.Proxies, pStr)
+				basePart := strings.Split(strings.Split(pStr, "-")[0], "=")[0]
+				if v, err := strconv.Atoi(basePart); err == nil {
+					st.ProxyPorts = append(st.ProxyPorts, v)
 				}
 			}
 		}

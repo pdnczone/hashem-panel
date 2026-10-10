@@ -1969,7 +1969,7 @@ func writeBackhaulServerConfig(path string, bindAddr string, transport string, t
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(sb.String()), 0644)
+	return os.WriteFile(path, []byte(sb.String()), 0600)
 }
 
 func writeBackhaulClientConfig(path string, remoteAddr string, transport string, token string) error {
@@ -1996,7 +1996,7 @@ func writeBackhaulClientConfig(path string, remoteAddr string, transport string,
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(sb.String()), 0644)
+	return os.WriteFile(path, []byte(sb.String()), 0600)
 }
 
 func randomToken(n int) string {
