@@ -50,6 +50,8 @@ type panelConfig struct {
 	// TerminalEnabled gates the Phase 3 interactive terminal tab
 	// (feature flag, default off; user enables after testing).
 	TerminalEnabled bool `json:"terminal_enabled,omitempty"`
+	// TerminalAllowIPs limits who may open the shell (IPs/CIDRs; empty = any).
+	TerminalAllowIPs []string `json:"terminal_allow_ips,omitempty"`
 	// TLSPort is the HTTPS listener port (default 7443). HTTP stays on Port.
 	TLSPort int `json:"tls_port,omitempty"`
 	// DebugEnabled mounts /debug/pprof behind auth (also HASHEM_PPROF=1).
@@ -249,6 +251,9 @@ func main() {
 	mux.HandleFunc("GET "+base+"/xterm.css", serveAsset("xterm.css", "text/css; charset=utf-8"))
 	mux.HandleFunc("GET "+base+"/api/term/ws", requireAuth(handleTermWS))
 	mux.HandleFunc("GET "+base+"/api/term/status", requireAuth(handleTermStatus))
+	mux.HandleFunc("POST "+base+"/api/term/ticket", requireAuth(requireCSRF(handleTermTicket)))
+	mux.HandleFunc("GET "+base+"/api/term/allowlist", requireAuth(handleTermAllowGet))
+	mux.HandleFunc("POST "+base+"/api/term/allowlist", requireAuth(requireCSRF(handleTermAllowPost)))
 	mux.HandleFunc("POST "+base+"/api/term/kill", requireAuth(requireCSRF(handleTermKill)))
 	mux.HandleFunc("POST "+base+"/api/term/enable", requireAuth(requireCSRF(handleTermEnable)))
 	mux.HandleFunc("GET "+base+"/api/health", handleHealth)

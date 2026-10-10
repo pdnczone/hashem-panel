@@ -120,6 +120,11 @@ var errCatalog = map[string]errInfo{
 	"E-TERM-08": {440, "terminal session idle too long (killed)", "Reconnect from the Terminal tab; sessions die after 10 idle minutes."},
 	"E-TERM-09": {440, "terminal session reached 30 minute cap (killed)", "Reconnect for a fresh shell."},
 	"E-TERM-10": {400, "no active terminal session", "Nothing to kill — connect first."},
+	"E-TERM-12": {403, "terminal not allowed from this IP", "Your IP is not on the terminal allowlist (Settings)."},
+	"E-TERM-13": {401, "terminal re-authentication failed", "Enter your panel password (and 2FA code if enabled)."},
+	"E-TERM-14": {400, "bad terminal allowlist", "Send up to 32 IPs or CIDRs, e.g. 203.0.113.7 or 198.51.100.0/24."},
+	"E-TERM-15": {409, "allowlist would lock you out", "Include your own IP in the list."},
+	"E-TERM-16": {401, "terminal ticket missing or expired", "Re-enter your password to connect."},
 	"E-TERM-11": {400, "bad terminal flag request", "Send {\"enabled\":true|false}."},
 	// panel TLS (Let's Encrypt)
 	"E-TLS-00": {0, "TLS certificate installed", "Informational: HTTPS is now served alongside HTTP."},

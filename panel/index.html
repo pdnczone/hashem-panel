@@ -2246,6 +2246,9 @@
           <div class="qs-hint">Root shell in the browser over WebSocket + PTY — same login session, single shell at a time, auto-killed after 10 idle minutes (30 min cap). Enable only after testing; toggle is the rollback switch.</div>
           <div class="qs-actions"><button class="hashem-btn hashem-btn-secondary" id="termToggleBtn">Enable terminal</button></div>
           <div class="qs-hint" id="termFlagMsg">Terminal tab is hidden until enabled.</div>
+          <div class="fg"><label for="termAllow">Allowed IPs / CIDRs (one per line, empty = any)</label><textarea class="hashem-input" id="termAllow" rows="3" placeholder="203.0.113.7&#10;198.51.100.0/24"></textarea></div>
+          <div class="qs-actions"><button class="hashem-btn hashem-btn-secondary" id="termAllowSave">Save allowlist</button></div>
+          <div class="qs-hint" id="termAllowMsg"></div>
         </div>
         <div class="tunnel-card">
           <div class="tc-header">
@@ -2363,6 +2366,17 @@
 
 
 
+<div class="ent-modal-ov" id="termAuthModal" hidden>
+  <div class="ent-modal" role="dialog" aria-modal="true" aria-labelledby="termAuthTitle">
+    <div class="ent-modal-h"><b id="termAuthTitle">Confirm it's you</b><button class="ent-x" id="termAuthX" aria-label="Close">×</button></div>
+    <div class="ent-modal-b">
+      <p class="u-m-0 u-color-tx2">The terminal is a root shell. Re-enter your password to open it.</p>
+      <div class="fg"><label for="termAuthPass">Password</label><input class="hashem-input" id="termAuthPass" type="password" autocomplete="current-password"></div>
+      <div class="fg hidden" id="termAuthCodeBox"><label for="termAuthCode">2FA code</label><input class="hashem-input" id="termAuthCode" inputmode="numeric" maxlength="16"></div>
+    </div>
+    <div class="ent-modal-f"><button class="hashem-btn hashem-btn-ghost" id="termAuthNo">Cancel</button><button class="hashem-btn hashem-btn-primary" id="termAuthYes">Open terminal</button></div>
+  </div>
+</div>
 <!-- Edit Peer Modal -->
 <div class="ent-modal-ov" id="editPortsModal" hidden>
   <div class="ent-modal" role="dialog" aria-modal="true" aria-labelledby="editPortsTitle" style="max-width:520px;width:100%">
@@ -5388,7 +5402,7 @@ function doLogin() {
     try {
       await api('/api/login', {username: $('u').value, password: $('p').value, code: $('totpCode').value.trim()});
       $('p').value = ''; $('totpCode').value = ''; $('codeField').classList.add('hidden'); $('loginErr').textContent = '';
-      showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh();
+      showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh();
     } catch(e) {
       if (e.code === 'E-AUTH-09') { $('codeField').classList.remove('hidden'); $('totpCode').focus(); }
       $('loginErr').textContent = e.message;
@@ -5830,6 +5844,34 @@ $('twofaBtn').onclick = async () => {
   } catch(e) { toastErr('2FA', e.message); }
   twofaRender();
 };
+// terminal re-authentication: password (+2FA code) -> one-time 60 s ticket
+function termGetTicket() {
+  return new Promise((resolve, reject) => {
+    const ov = $('termAuthModal');
+    $('termAuthPass').value = ''; $('termAuthCode').value = '';
+    api('/api/2fa').then(r => $('termAuthCodeBox').classList.toggle('hidden', !r.enabled)).catch(() => {});
+    const release = trapModal(ov, () => cancel());
+    ov.hidden = false; $('termAuthPass').focus();
+    const close = () => { ov.hidden = true; release(); $('termAuthPass').value = ''; $('termAuthCode').value = ''; };
+    const cancel = () => { close(); reject(new Error('cancelled')); };
+    const go = async () => {
+      try {
+        const r = await api('/api/term/ticket', {password: $('termAuthPass').value, code: $('termAuthCode').value.trim()});
+        close(); resolve(r.ticket);
+      } catch(e) { close(); reject(e); }
+    };
+    $('termAuthYes').onclick = go; $('termAuthNo').onclick = cancel; $('termAuthX').onclick = cancel;
+    $('termAuthPass').onkeydown = e => { if (e.key === 'Enter') go(); };
+  });
+}
+async function termAllowRefresh() {
+  try { const r = await api('/api/term/allowlist'); $('termAllow').value = (r.ips || []).join('\n'); $('termAllowMsg').textContent = 'Your current IP: ' + r.your_ip + (r.ips && r.ips.length ? '' : ' · no restriction active'); } catch(e) {}
+}
+$('termAllowSave').onclick = async () => {
+  const ips = $('termAllow').value.split(/[\s,]+/).map(x => x.trim()).filter(Boolean);
+  try { await api('/api/term/allowlist', {ips}); toastOk('terminal allowlist saved'); termAllowRefresh(); }
+  catch(e) { toastErr('allowlist', e.message); }
+};
 async function termFlagRefresh() {
   try {
     const s = await api('/api/term/status');
@@ -5902,9 +5944,12 @@ async function termConnect() {
   let st = null;
   try { st = await api('/api/term/status'); } catch(e) { toastErr('terminal status failed', e.message); termState.connecting = false; return; }
   if (!st.enabled) { toastWarn('terminal disabled', 'Enable it from Settings first.'); termState.connecting = false; return; }
+  let ticket;
+  try { ticket = await termGetTicket(); }
+  catch(e) { if (e && e.message !== 'cancelled') toastErr('terminal sign-in failed', e.message); termState.connecting = false; return; }
   const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
   let ws;
-  try { ws = new WebSocket(proto + location.host + at('/api/term/ws')); }
+  try { ws = new WebSocket(proto + location.host + at('/api/term/ws') + '?ticket=' + encodeURIComponent(ticket)); }
   catch(e) { toastErr('websocket failed', e.message); termState.connecting = false; return; }
   termState.ws = ws;
   termSetDot('warn', 'connecting…');
@@ -7200,7 +7245,7 @@ if ($('docIperfBtn')) $('docIperfBtn').onclick = toggleIperf;
 
 // boot: if already logged in, status works; else show login
 (async () => {
-  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); }
+  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); }
   catch(e) { showLogin(); }
 })();
 // light pollers: skip when the tab is in the background (background tabs

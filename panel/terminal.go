@@ -169,6 +169,20 @@ func handleTermWS(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, "E-TERM-11", "terminal disabled — enable it from Settings first")
 		return
 	}
+	if !ipAllowed(ClientIP(r), cfg.TerminalAllowIPs) {
+		LogSecurityAudit("terminal_ip_denied", cfg.Username, ClientIP(r), "ws connect")
+		writeAPIError(w, r, "E-TERM-12", "")
+		return
+	}
+	sess := ""
+	if c, err := r.Cookie("gre_session"); err == nil {
+		sess = c.Value
+	}
+	if !redeemTermTicket(r.URL.Query().Get("ticket"), sess, ClientIP(r)) {
+		LogSecurityAudit("terminal_ticket_rejected", cfg.Username, ClientIP(r), "missing/expired/mismatched ticket")
+		writeAPIError(w, r, "E-TERM-16", "")
+		return
+	}
 	termMu.Lock()
 	if termCur != nil {
 		termMu.Unlock()

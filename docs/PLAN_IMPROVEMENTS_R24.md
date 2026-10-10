@@ -21,7 +21,7 @@ Small commits, one concern each. No production servers are touched.
 - [x] 3.2 Audit log: every mutating API call (method, path, status; never body), size rotation, GET /api/audit (newest first, filter, redacted)
 - [x] 3.3 Optional TOTP 2FA (RFC 6238 vectors tested, replay guard, 8 single-use recovery codes, two-step enrol, disable needs password+code, login + Settings UI)
 - [x] 3.4 Idle session timeout (off by default; user-activity header so polling never keeps a session alive; Settings card)
-- [ ] 3.5 Terminal hardening: IP allowlist + password re-confirm before WS open
+- [x] 3.5 Terminal hardening: IP allowlist (IP/CIDR, refuses self-lockout), password(+2FA) re-auth gives a single-use 60s ticket bound to session+IP, required by the WS
 - [ ] 3.6 Update integrity: verify sha256 of downloaded binary (extend existing checksum logic) in install.sh
 
 ## Phase 4 - Operations
