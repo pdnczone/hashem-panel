@@ -22,7 +22,7 @@ Small commits, one concern each. No production servers are touched.
 - [x] 3.3 Optional TOTP 2FA (RFC 6238 vectors tested, replay guard, 8 single-use recovery codes, two-step enrol, disable needs password+code, login + Settings UI)
 - [x] 3.4 Idle session timeout (off by default; user-activity header so polling never keeps a session alive; Settings card)
 - [x] 3.5 Terminal hardening: IP allowlist (IP/CIDR, refuses self-lockout), password(+2FA) re-auth gives a single-use 60s ticket bound to session+IP, required by the WS
-- [ ] 3.6 Update integrity: verify sha256 of downloaded binary (extend existing checksum logic) in install.sh
+- [x] 3.6 install.sh: canonical copy or 2-host mirror quorum or HASHEM_SHA256 pin, else fail closed (panel updater already verified checksums.txt fail-closed); tests/test_install_verify.sh
 
 ## Phase 4 - Operations
 - [ ] 4.1 Alerts: webhook + Telegram on state change only (debounced), config via panel
