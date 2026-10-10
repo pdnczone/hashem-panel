@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -172,6 +173,15 @@ func runFullDiagnostics() *doctorReport {
 		rep.Issues = append(rep.Issues, "FRP reverse service is NOT active")
 		rep.Recommendations = append(rep.Recommendations, "Restart FRP service via Tunnel tab")
 		rep.FixAvailable = true
+	}
+
+	// 1a. stale config without its engine binary: role is reported unknown
+	for _, c := range staleConfigCandidates() {
+		if fileExists(c.path) && !engineBinaryPresent(c.engine) {
+			rep.Score -= 10
+			rep.Issues = append(rep.Issues, fmt.Sprintf("Stale %s config found (%s) but the %s binary is not installed — role is reported as unknown", filepath.Base(c.path), c.path, c.engine))
+			rep.Recommendations = append(rep.Recommendations, "Remove the stale config or reinstall the engine (Setup tab)")
+		}
 	}
 
 	// 1b. frpc EOF on login = hub/spoke tcpMux mismatch (hint only, never auto-changed)

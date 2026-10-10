@@ -563,6 +563,55 @@ type tunnelStatus struct {
 	BindPort     int      `json:"bind_port"`
 }
 
+// engineBinDirs / backhaulExtraBins are where hashem.sh installs engine
+// binaries (INSTALL_DIR, plus the backhaul-core copy); vars so tests can
+// point them at temp dirs.
+var (
+	engineBinDirs     = []string{"/usr/local/bin"}
+	backhaulExtraBins = []string{"/root/backhaul-core/backhaul_premium"}
+)
+
+func executableFile(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o111 != 0
+}
+
+// engineBinaryPresent reports whether the engine ("frps", "frpc" or
+// "backhaul") has an executable binary in any known install location.
+func engineBinaryPresent(engine string) bool {
+	for _, d := range engineBinDirs {
+		if executableFile(filepath.Join(d, engine)) {
+			return true
+		}
+	}
+	if engine == "backhaul" {
+		for _, p := range backhaulExtraBins {
+			if executableFile(p) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type staleConfigCandidate struct {
+	path, engine, role, svc string
+}
+
+// staleConfigCandidates lists every config file that can imply a role, in
+// fallback preference order.
+func staleConfigCandidates() []staleConfigCandidate {
+	return []staleConfigCandidate{
+		{filepath.Join(frpDir, "frps.toml"), "frps", "iran (server)", "frps"},
+		{filepath.Join(frpDir, "frpc.toml"), "frpc", "foreign (client)", "frpc"},
+		{filepath.Join(backhaulDir, "config.toml"), "backhaul", "iran (backhaul)", "backhaul-server"},
+		{filepath.Join(backhaulDir, "server.toml"), "backhaul", "iran (backhaul)", "backhaul-server"},
+		{filepath.Join(configDir, "server.toml"), "backhaul", "iran (backhaul)", "backhaul-server"},
+		{filepath.Join(backhaulDir, "client.toml"), "backhaul", "foreign (backhaul)", "backhaul-client"},
+		{filepath.Join(configDir, "client.toml"), "backhaul", "foreign (backhaul)", "backhaul-client"},
+	}
+}
+
 // localStatus reads the base tunnel with a fresh synchronous read (batched host
 // commands, ICMP inline). Polling handlers use the shared snapshot instead.
 func localStatus() tunnelStatus {
@@ -618,28 +667,14 @@ func localStatusFrom(v *hostView) tunnelStatus {
 		}
 	}
 	if st.Role == "" {
-		// fall back to config presence
-		if _, err := os.Stat(filepath.Join(frpDir, "frps.toml")); err == nil {
-			st.Role = "iran (server)"
-			st.FrpSvc = "frps"
-		} else if _, err := os.Stat(filepath.Join(frpDir, "frpc.toml")); err == nil {
-			st.Role = "foreign (client)"
-			st.FrpSvc = "frpc"
-		} else if _, err := os.Stat(filepath.Join(backhaulDir, "config.toml")); err == nil {
-			st.Role = "iran (backhaul)"
-			st.FrpSvc = "backhaul-server"
-		} else if _, err := os.Stat(filepath.Join(backhaulDir, "server.toml")); err == nil {
-			st.Role = "iran (backhaul)"
-			st.FrpSvc = "backhaul-server"
-		} else if _, err := os.Stat(filepath.Join(configDir, "server.toml")); err == nil {
-			st.Role = "iran (backhaul)"
-			st.FrpSvc = "backhaul-server"
-		} else if _, err := os.Stat(filepath.Join(backhaulDir, "client.toml")); err == nil {
-			st.Role = "foreign (backhaul)"
-			st.FrpSvc = "backhaul-client"
-		} else if _, err := os.Stat(filepath.Join(configDir, "client.toml")); err == nil {
-			st.Role = "foreign (backhaul)"
-			st.FrpSvc = "backhaul-client"
+		// fall back to config presence, but only for an engine that is
+		// actually installed; a stale config alone must not claim a role
+		for _, c := range staleConfigCandidates() {
+			if fileExists(c.path) && engineBinaryPresent(c.engine) {
+				st.Role = c.role
+				st.FrpSvc = c.svc
+				break
+			}
 		}
 	}
 	// ports & proxies from Backhaul or FRP
