@@ -102,6 +102,7 @@ ports = [
 }
 
 func TestPeerApplyEngineHandler(t *testing.T) {
+	engineLab(t, []string{"backhaul", "frpc", "frps"}, []string{"backhaul-server", "backhaul-client"})
 	tmpDir, err := os.MkdirTemp("", "hashem_peer_engine_test_*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -134,6 +135,7 @@ func TestPeerApplyEngineHandler(t *testing.T) {
 }
 
 func TestSwitchTunnelEngineValidation(t *testing.T) {
+	engineLab(t, []string{"backhaul", "frpc", "frps"}, []string{"backhaul-server", "backhaul-client"})
 	// Invalid engine
 	out, err := switchTunnelEngine("invalid_engine", "tcp")
 	if err == nil {
