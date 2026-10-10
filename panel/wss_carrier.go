@@ -67,6 +67,8 @@ var (
 
 type wssCarrierManager struct {
 	cfg            wssConfig
+	tlsCertPath    string // panel cert paths, resolved at start so the server goroutine never reads configDir
+	tlsKeyPath     string
 	ctx            context.Context
 	cancel         context.CancelFunc
 	running        bool
@@ -274,10 +276,12 @@ func startWSSCarrier(cfg wssConfig) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	mgr := &wssCarrierManager{
-		cfg:     cfg,
-		ctx:     ctx,
-		cancel:  cancel,
-		running: true,
+		cfg:         cfg,
+		ctx:         ctx,
+		cancel:      cancel,
+		running:     true,
+		tlsCertPath: tlsCertFile(),
+		tlsKeyPath:  tlsKeyFile(),
 	}
 	wssActiveState = mgr
 
@@ -447,8 +451,8 @@ func (m *wssCarrierManager) runServer() {
 		var cert tls.Certificate
 		var certErr error
 
-		panelCert := tlsCertFile()
-		panelKey := tlsKeyFile()
+		panelCert := m.tlsCertPath
+		panelKey := m.tlsKeyPath
 		if _, err := os.Stat(panelCert); err == nil {
 			cert, certErr = tls.LoadX509KeyPair(panelCert, panelKey)
 		} else {
