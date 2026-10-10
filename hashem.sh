@@ -5805,6 +5805,78 @@ install_panel_smart() {
     esac
 }
 
+UPDATE_FILE="${PANEL_CONFIG_DIR}/update.json"
+UPDATE_API="https://api.github.com/repos/pdnczone/hashem-panel"
+
+# Update channel: stable (default) or dev. Same file the web panel reads.
+update_get_channel() {
+    local C
+    C=$(python3 -c "import json; c=json.load(open('$UPDATE_FILE')).get('channel'); print(c if c in ('stable','dev') else 'stable')" 2>/dev/null) || C=""
+    [[ "$C" == "dev" ]] && echo dev || echo stable
+}
+
+update_set_channel() {
+    [[ "$1" == "stable" || "$1" == "dev" ]] || return 1
+    mkdir -p "$PANEL_CONFIG_DIR" 2>/dev/null || true
+    ( umask 077; printf '{"channel": "%s"}\n' "$1" > "${UPDATE_FILE}.tmp" ) && mv -f "${UPDATE_FILE}.tmp" "$UPDATE_FILE"
+}
+
+# Prints the release tag to install for the active channel (empty = unknown).
+# stable: newest vX.Y.Z that is not a prerelease/draft, else GitHub's "Latest".
+# dev:    newest dev-rN prerelease. Never falls back across channels.
+# A release tag may only look like vX.Y.Z, dev-rN or panel-rN before it is used in a URL.
+update_tag_ok() { [[ "${1:-}" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+|dev-r[0-9]+|panel-r[0-9]+)$ ]]; }
+
+# update_verify_asset <file> <tag> <asset>: sha256 against that release's checksums.txt.
+# 0 = verified, 1 = MISMATCH (never fall back after this), 2 = no manifest/entry (legacy release).
+update_verify_asset() {
+    local F="$1" TAG="$2" ASSET="$3" SUMS WANT GOT
+    SUMS=$(curl -fsSL --connect-timeout 5 --max-time 15 "https://github.com/pdnczone/hashem-panel/releases/download/${TAG}/checksums.txt" 2>/dev/null) || return 2
+    WANT=$(printf '%s\n' "$SUMS" | awk -v a="$ASSET" '$2==a {print $1; exit}')
+    [[ -n "$WANT" ]] || return 2
+    GOT=$(sha256sum "$F" 2>/dev/null | awk '{print $1}')
+    [[ -n "$GOT" && "$GOT" == "$WANT" ]] && return 0
+    return 1
+}
+
+update_pick_tag() {
+    local CH JSON="" U ROWS TAG=""
+    CH=$(update_get_channel)
+    for U in "${UPDATE_API}/releases?per_page=30" "https://mirror.ghproxy.com/${UPDATE_API}/releases?per_page=30"; do
+        JSON=$(curl -fsSL --connect-timeout 4 --max-time 10 "$U" 2>/dev/null) || JSON=""
+        [[ -n "$JSON" ]] && break
+    done
+    # one "tag draft prerelease" row per release
+    ROWS=$(printf '%s' "$JSON" | tr -d ' \n\r\t' | tr ',{}' '\n\n\n' \
+        | awk -F'"' '/^"tag_name":/{t=$4} /^"draft":/{d=$3} /^"prerelease":/{if (t != "") print t, d, $3; t=""}')
+    if [[ "$CH" == "dev" ]]; then
+        TAG=$(printf '%s\n' "$ROWS" | awk '$2==":false" && $3==":true" && $1 ~ /^dev-r[0-9]+$/ {sub(/^dev-r/,"",$1); print $1}' | sort -n | tail -1)
+        [[ -n "$TAG" ]] && TAG="dev-r${TAG}"
+    else
+        TAG=$(printf '%s\n' "$ROWS" | awk '$2==":false" && $3==":false" && $1 ~ /^v[0-9]+\.[0-9]+\.[0-9]+$/ {print $1}' | sort -V | tail -1)
+        if [[ -z "$TAG" ]]; then
+            TAG=$(curl -fsSL --connect-timeout 4 --max-time 10 "${UPDATE_API}/releases/latest" 2>/dev/null | grep -m1 '"tag_name":' | cut -d'"' -f4)
+        fi
+    fi
+    update_tag_ok "$TAG" || TAG=""
+    echo "$TAG"
+}
+
+cli_update_channel() {
+    local CH="${1:-}"
+    if [[ -z "$CH" ]]; then
+        update_get_channel
+        return 0
+    fi
+    if ! update_set_channel "$CH"; then
+        echo -e "${RED}[!] Channel must be 'stable' or 'dev'.${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}[✔️] Update channel set to ${CH}.${NC}"
+    [[ "$CH" == "dev" ]] && echo -e "${YELLOW}[!] Dev builds are test builds and may break.${NC}"
+    return 0
+}
+
 install_panel() {
     echo -e "${CYAN}[*] Installing Hashem web panel...${NC}"
     ensure_doctor_tools
@@ -5818,16 +5890,31 @@ install_panel() {
 
     TMP_PANEL="$(mktemp -d)"
     DL_OK=0
-    # try latest release first (prebuilt, no Go needed)
-    LATEST_JSON=$(curl -fsSL --connect-timeout 4 --max-time 10 "https://api.github.com/repos/pdnczone/hashem-panel/releases/latest" 2>/dev/null) || true
-    if [[ -z "$LATEST_JSON" ]]; then
-        LATEST_JSON=$(curl -fsSL --connect-timeout 4 --max-time 10 "https://mirror.ghproxy.com/https://api.github.com/repos/pdnczone/hashem-panel/releases/latest" 2>/dev/null) || true
+    # pick the release of the active update channel (prebuilt, no Go needed)
+    UPD_TAG="${UPD_TAG:-$(update_pick_tag)}"
+    if [[ -z "$UPD_TAG" && "$(update_get_channel)" == "dev" ]]; then
+        echo -e "${RED}[!] No dev build found on the dev channel — nothing changed.${NC}"
+        rm -rf "$TMP_PANEL"
+        return 1
+    fi
+    LATEST_JSON=""
+    if [[ -z "$UPD_TAG" ]]; then
+        LATEST_JSON=$(curl -fsSL --connect-timeout 4 --max-time 10 "https://api.github.com/repos/pdnczone/hashem-panel/releases/latest" 2>/dev/null) || true
+        if [[ -z "$LATEST_JSON" ]]; then
+            LATEST_JSON=$(curl -fsSL --connect-timeout 4 --max-time 10 "https://mirror.ghproxy.com/https://api.github.com/repos/pdnczone/hashem-panel/releases/latest" 2>/dev/null) || true
+        fi
     fi
     DL_URL=""
     GREPANEL_URL=""
     HASHEMSH_URL=""
     HASHEM_URL=""
-    if [[ -n "$LATEST_JSON" ]]; then
+    if [[ -n "$UPD_TAG" ]]; then
+        local REL_BASE="https://github.com/pdnczone/hashem-panel/releases/download/${UPD_TAG}"
+        DL_URL="${REL_BASE}/${PANEL_ASSET}"
+        GREPANEL_URL="${REL_BASE}/grepanel"
+        HASHEMSH_URL="${REL_BASE}/hashem.sh"
+        HASHEM_URL="${REL_BASE}/hashem"
+    elif [[ -n "$LATEST_JSON" ]]; then
         DL_URL=$(echo "$LATEST_JSON" | grep -o "\"browser_download_url\": *\"[^\"]*${PANEL_ASSET}\"" | head -1 | cut -d'"' -f4)
         GREPANEL_URL=$(echo "$LATEST_JSON" | grep -o "\"browser_download_url\": *\"[^\"]*grepanel\"" | head -1 | cut -d'"' -f4)
         HASHEMSH_URL=$(echo "$LATEST_JSON" | grep -o "\"browser_download_url\": *\"[^\"]*hashem\\.sh\"" | head -1 | cut -d'"' -f4)
@@ -7272,7 +7359,23 @@ update_all() {
     echo -e "${CYAN}[*] Updating Hashem (script + panel binary)...${NC}"
     TMP_U="$(mktemp -d)"
     trap 'rm -rf "$TMP_U"' RETURN
-    # 1. fresh script from main with mirror fallbacks
+    # 1. fresh script from the channel's release (main only if the tag has no asset)
+    UPD_TAG=$(update_pick_tag)
+    echo -e "${CYAN}[*] Channel: $(update_get_channel)${UPD_TAG:+ (release ${UPD_TAG})}${NC}"
+    if [[ -n "$UPD_TAG" ]]; then
+        download_with_fallback "$TMP_U/hashem.sh" "https://github.com/pdnczone/hashem-panel/releases/download/${UPD_TAG}/hashem.sh" 30 || rm -f "$TMP_U/hashem.sh"
+        if [[ -s "$TMP_U/hashem.sh" ]]; then
+            update_verify_asset "$TMP_U/hashem.sh" "$UPD_TAG" hashem.sh; _VR=$?
+            if [[ $_VR -eq 1 ]]; then
+                echo -e "${RED}[!] hashem.sh does not match ${UPD_TAG}/checksums.txt — refusing, nothing changed.${NC}"
+                return 1
+            fi
+        fi
+    fi
+    if [[ ! -s "$TMP_U/hashem.sh" ]] && [[ "$(update_get_channel)" == "dev" ]]; then
+        echo -e "${RED}[!] No dev release script available — nothing changed.${NC}"
+        return 1
+    fi
     if ! download_with_fallback "$TMP_U/hashem.sh" "${HASHEM_URL_BASE}/hashem.sh" 30; then
         echo -e "${RED}[!] Failed to download latest hashem.sh — nothing changed.${NC}"
         return 1
@@ -7742,7 +7845,7 @@ menu_maintenance() {
         clear
         show_banner
         echo -e "${CYAN}--- [5] MAINTENANCE & UPDATE ---${NC}"
-        echo "  1) Update All (Latest hashem.sh + latest Web Panel binary)"
+        echo "  1) Update All (Latest hashem.sh + latest Web Panel binary; channel: $(update_get_channel), change: hashem update-channel stable|dev)"
         echo "  2) Pre-cache / Verify Core Binaries (FRP, Backhaul, Go Panel)"
         echo "  3) Install / Refresh System Dependencies"
         echo "  4) Check & Load Kernel Modules (GRE & FOU)"
@@ -7950,7 +8053,8 @@ Usage:
   hashem tgsend "msg"                          # send Telegram alert manually
   hashem doctor [server|stop-server|fix]       # full latency, jitter, MTU & speed diagnostics
   hashem stress-test [host] [port] [conns]     # high-concurrency connection stress test (verify zero drops)
-  hashem update | update-all                   # update script + panel to latest release
+  hashem update | update-all                   # update script + panel to the latest release of the update channel
+  hashem update-channel [stable|dev]           # show / set update channel (default stable; dev = test builds)
   hashem download-cores                        # download & pre-cache FRP and Backhaul core binaries
   hashem modified-backhaul                     # interactive Modified Backhaul manager (IPX, ICMP, TUN, anytls)
   hashem free-ram                              # cap journald + drop cache + 1GB swap
@@ -8368,6 +8472,7 @@ if [[ $# -gt 0 ]]; then
         backup) shift; cli_backup "$@" ;;
         tgsend) shift; watchdog_send "$1" ;;
         update|update-all) update_all ;;
+        update-channel) shift; cli_update_channel "$@" ;;
         cleanup-legacy) remove_legacy_units ;;
         peer-token)
             shift; ID=""

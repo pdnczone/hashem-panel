@@ -79,6 +79,7 @@ var errCatalog = map[string]errInfo{
 	"E-UPDATE-05": {400, "unsupported arch for update", "Only amd64/arm64 prebuilt binaries are published."},
 	"E-UPDATE-06": {500, "cannot sync hashem.sh installer script", "Panel binary updated, but installer script download failed — check internet or DNS."},
 	"E-UPDATE-07": {502, "checksum verification failed", "Downloaded binary or script failed SHA256 checksum check."},
+	"E-UPDATE-08": {400, "invalid update channel", "Channel must be stable or dev."},
 	// log diagnostics (annotation only, also reused by status hints)
 	"E-GRE-01": {0, "GRE interface missing / down", "Tunnel setup did not create it, or it was deleted — reinstall that peer."},
 	"E-GRE-02": {0, "GRE ping failed (100% loss / unreachable)", "Peers cannot reach each other: firewall, wrong public IP, or GRE blocked."},

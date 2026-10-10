@@ -2,7 +2,7 @@ name: build-panel
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
     tags:
       - 'v*.*.*'
     paths:
@@ -34,6 +34,9 @@ jobs:
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             VER="${{ github.ref_name }}"
             BIN="hashem-${VER}"
+          elif [[ "${{ github.ref }}" == refs/heads/dev ]]; then
+            VER="dev-r${{ github.run_number }}"
+            BIN="gre-panel"
           else
             VER="panel-r${{ github.run_number }}"
             BIN="gre-panel"
@@ -66,13 +69,38 @@ jobs:
             | sed 's#  dist/#  #' | sort -u -k2 > checksums.txt
           cat checksums.txt
 
+      # legacy main builds. IMPORTANT: once v1.0.0 exists these must never become GitHub's
+      # "Latest" (old panels follow /releases/latest), so make_latest is "false".
+      # Delete this step when you want to stop publishing panel-r* builds from main.
       - name: Create release (Branch)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ github.ref == 'refs/heads/main' }}
         uses: softprops/action-gh-release@v2
         with:
+          make_latest: "false"
+          prerelease: false
           tag_name: panel-r${{ github.run_number }}
           name: "Panel build r${{ github.run_number }}"
           body: "Auto-built gre-panel from ${{ github.sha }}"
+          files: |
+            panel/${{ env.BIN_NAME }}-linux-amd64
+            panel/${{ env.BIN_NAME }}-linux-arm64
+            panel/dist/hashem.sh
+            panel/dist/hashem-chaff.sh
+            panel/dist/hashem-backhaul.sh
+            panel/dist/grepanel
+            panel/checksums.txt
+
+      # Dev channel: prerelease only, never "Latest", never touches a stable tag.
+      - name: Create release (Dev)
+        if: ${{ github.ref == 'refs/heads/dev' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev-r${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: "Dev build r${{ github.run_number }}"
+          body: "Experimental dev build from ${{ github.sha }}. Not for production."
+          prerelease: true
+          make_latest: "false"
           files: |
             panel/${{ env.BIN_NAME }}-linux-amd64
             panel/${{ env.BIN_NAME }}-linux-arm64
@@ -87,6 +115,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: "Hashem Panel ${{ env.VER }}"
+          prerelease: false
+          make_latest: "true"
           # By not specifying 'body', the action will use the annotated tag message as the release notes automatically.
           files: |
             panel/${{ env.BIN_NAME }}-linux-amd64

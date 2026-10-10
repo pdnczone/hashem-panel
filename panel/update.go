@@ -21,58 +21,7 @@ import (
 
 var updateClient = &http.Client{Timeout: 25 * time.Second}
 
-// handleVersion reports the running build and the latest GitHub release.
-func handleVersion(w http.ResponseWriter, r *http.Request) {
-	latest, _ := latestReleaseTag()
-	out := map[string]any{"current": panelVersion, "latest": latest}
-	if latest != "" && latest != panelVersion {
-		out["update_available"] = true
-	} else {
-		out["update_available"] = false
-	}
-	writeJSON(w, out)
-}
-
-// latestReleaseTag asks the GitHub API for the newest release tag with mirror fallbacks.
-// Empty string = could not determine (offline / rate-limited).
-func latestReleaseTag() (string, error) {
-	urls := []string{
-		"https://api.github.com/repos/pdnczone/hashem-panel/releases/latest",
-		"https://mirror.ghproxy.com/https://api.github.com/repos/pdnczone/hashem-panel/releases/latest",
-		"https://ghproxy.net/https://api.github.com/repos/pdnczone/hashem-panel/releases/latest",
-	}
-	var lastErr error
-	for _, u := range urls {
-		req, err := http.NewRequest("GET", u, nil)
-		if err != nil {
-			continue
-		}
-		req.Header.Set("User-Agent", "hashem-panel-updater/"+panelVersion)
-		resp, err := updateClient.Do(req)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
-			lastErr = fmt.Errorf("github api: %s", resp.Status)
-			continue
-		}
-		var rel struct {
-			TagName string `json:"tag_name"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
-			resp.Body.Close()
-			lastErr = err
-			continue
-		}
-		resp.Body.Close()
-		if rel.TagName != "" {
-			return rel.TagName, nil
-		}
-	}
-	return "", lastErr
-}
+// handleVersion / latestReleaseTag (channel aware) live in update_channel.go.
 
 // handleUpdate downloads the latest prebuilt binary for this arch,
 // verifies it (non-empty ELF), swaps it in, syncs the latest hashem.sh
@@ -90,8 +39,18 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if latest == "" {
 		latest = "latest"
 	}
+	if latest != "latest" && !validTag(latest) {
+		writeAPIError(w, r, "E-UPDATE-01", "unexpected release tag")
+		return
+	}
 	if latest != "latest" && latest == panelVersion {
-		writeJSON(w, map[string]string{"status": "ok", "detail": "already latest (" + panelVersion + ")"})
+		writeJSON(w, map[string]string{"status": "ok", "detail": "already latest (" + displayVersion(panelVersion) + ")"})
+		return
+	}
+	// never install something that is not newer than what is running
+	// (e.g. a stable host must not be "updated" to an older tag)
+	if latest != "latest" && !updateAvailable(panelVersion, latest, updateChannel()) {
+		writeJSON(w, map[string]string{"status": "ok", "detail": "already latest (" + displayVersion(panelVersion) + ")"})
 		return
 	}
 
@@ -151,10 +110,10 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = os.Chmod(exe, 0755)
 	// Keep hashem.sh in sync with the binary
-	syncPanelScript()
+	syncPanelScriptFrom(latest)
 
 	LogSecurityAudit("update_success", cfg.Username, ClientIP(r), "installed version "+latest)
-	writeJSON(w, map[string]string{"status": "ok", "detail": "updated to " + latest + " — restarting panel"})
+	writeJSON(w, map[string]string{"status": "ok", "detail": "updated to " + displayVersion(latest) + " — restarting panel"})
 	go func() {
 		time.Sleep(1000 * time.Millisecond)
 		restartSelf()
@@ -361,11 +320,15 @@ func sessionFile() string { return filepath.Join(configDir, "sessions.json") }
 
 // ---- hashem.sh sync (keeps server script in step with the binary) ----
 
-// syncPanelScript downloads the latest hashem.sh from main, syntax-checks
+// syncPanelScript refreshes hashem.sh from the running binary's own release.
+func syncPanelScript() { syncPanelScriptFrom(runningReleaseTag()) }
+
+// syncPanelScriptFrom downloads hashem.sh from release `tag` (checksum
+// verified; main only if the tag has no such asset), syntax-checks
 // it with `bash -n`, and installs it where greScriptPath() reads from
 // (next to the running binary on servers).
 // best-effort: never blocks the binary update.
-func syncPanelScript() {
+func syncPanelScriptFrom(tag string) {
 	target := greScriptTarget()
 	if target == "" {
 		return
@@ -385,7 +348,7 @@ func syncPanelScript() {
 	tmpPath := tmp.Name()
 	_ = tmp.Close()
 	defer func() { _ = os.Remove(tmpPath) }()
-	if err := downloadFile(scriptURL, mustOpen(tmpPath)); err != nil {
+	if err := fetchScript(tag, "hashem.sh", scriptURL, tmpPath); err != nil {
 		recordError("E-UPDATE-06", "script-sync", "download: "+err.Error())
 		return
 	}
@@ -419,11 +382,11 @@ func syncPanelScript() {
 	}
 	_ = os.Remove("/usr/local/bin/gre.sh")
 	_ = os.Symlink("/usr/local/bin/hashem.sh", "/usr/local/bin/gre.sh")
-	syncChaffScript()
+	syncChaffScript(tag)
 }
 
-// syncChaffScript installs /usr/local/bin/hashem-chaff.sh from the repo.
-func syncChaffScript() {
+// syncChaffScript installs /usr/local/bin/hashem-chaff.sh from release `tag`.
+func syncChaffScript(tag string) {
 	tmp, err := os.CreateTemp("", "hashem-chaff-*.sh")
 	if err != nil {
 		return
@@ -431,7 +394,7 @@ func syncChaffScript() {
 	tmpPath := tmp.Name()
 	_ = tmp.Close()
 	defer func() { _ = os.Remove(tmpPath) }()
-	if err := downloadFile(chaffScriptURL, mustOpen(tmpPath)); err != nil {
+	if err := fetchScript(tag, "hashem-chaff.sh", chaffScriptURL, tmpPath); err != nil {
 		recordError("E-UPDATE-06", "script-sync", "chaff download: "+err.Error())
 		return
 	}

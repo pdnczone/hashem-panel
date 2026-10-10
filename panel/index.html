@@ -2183,9 +2183,13 @@
       </section>
       <section id="tab-update" role="tabpanel" hidden>
         <div class="tunnel-card">
-          <div class="tc-header"><p class="tc-title">Panel update</p><span class="status-indicator" id="updDot"><span class="dot"></span><span id="updDotTxt">—</span></span></div>
+          <div class="tc-header"><p class="tc-title">Panel update <span class="badge info hidden" id="updDevBadge" data-i18n="upd_dev_badge">DEV</span></p><span class="status-indicator" id="updDot"><span class="dot"></span><span id="updDotTxt">—</span></span></div>
           <div class="ver-big" id="verCurrent">—</div>
           <div class="qs-hint">Installed version</div>
+          <div class="fg u-mt-4"><label for="updChannel" data-i18n="upd_channel">Update channel</label>
+            <select class="hashem-input" id="updChannel"><option value="stable" data-i18n="upd_channel_stable">Stable</option><option value="dev" data-i18n="upd_channel_dev">Dev</option></select>
+          </div>
+          <div class="warnbox hidden" id="updChannelWarn" data-i18n="upd_dev_warn">Dev channel: test builds, may break. Not for production tunnels.</div>
           <div id="verRowsUpd" class="u-grid-gap-0 u-mt-4"><div class="qs-hint">Press Check to load release info.</div></div>
           <div class="qs-actions u-mt-8" >
             <button class="hashem-btn hashem-btn-primary" id="updateBtn">Check for updates</button>
@@ -2759,6 +2763,11 @@ const I18N = {
     nav_doctor: "Diagnostics",
     nav_benchmark: "Benchmark",
     nav_update: "Update",
+    upd_channel: "Update channel",
+    upd_channel_stable: "Stable",
+    upd_channel_dev: "Dev",
+    upd_dev_warn: "Dev channel: test builds, may break. Not for production tunnels.",
+    upd_dev_badge: "DEV",
     nav_settings: "Settings",
     nav_terminal: "Terminal",
     sec_overview: "Overview",
@@ -3164,6 +3173,11 @@ const I18N = {
     nav_doctor: "عیب‌یابی شبکه",
     nav_benchmark: "بنچمارک کیفیت",
     nav_update: "به‌روزرسانی",
+    upd_channel: "کانال به‌روزرسانی",
+    upd_channel_stable: "پایدار",
+    upd_channel_dev: "توسعه (Dev)",
+    upd_dev_warn: "کانال Dev: نسخه‌های آزمایشی که ممکن است خراب شوند. برای تونل‌های واقعی استفاده نکنید.",
+    upd_dev_badge: "DEV",
     nav_settings: "تنظیمات",
     nav_terminal: "ترمینال",
     sec_overview: "نمای کلی",
@@ -5641,6 +5655,10 @@ async function loadVersion() {
   try {
     const v = await api('/api/version');
     const cur = $('verCurrent'); if (cur) cur.textContent = v.current || '—';
+    const isDev = v.channel === 'dev';
+    if ($('updChannel')) $('updChannel').value = isDev ? 'dev' : 'stable';
+    $('updDevBadge').classList.toggle('hidden', !isDev);
+    $('updChannelWarn').classList.toggle('hidden', !isDev);
     const rows = $('verRowsUpd');
     if (rows) rows.innerHTML = '<div class="ver-row"><span class="k">Latest release</span><span>' + esc(v.latest || 'unknown') + '</span></div>'
       + '<div class="ver-row"><span class="k">Status</span><span>' + (v.update_available ? '<span class="badge info"><span class="dot"></span>update available</span>' : '<span class="badge ok"><span class="dot"></span>up to date</span>') + '</span></div>';
@@ -5659,6 +5677,12 @@ async function loadVersion() {
     setTimeout(async () => { try { await api('/api/status'); loadVersion(); } catch(_){ /* panel still restarting: ignore */ } }, 5000);
   }
 }
+$('updChannel').onchange = async () => {
+  const sel = $('updChannel');
+  try { await api('/api/update/channel', {channel: sel.value}); toastOk(tr('upd_channel', 'Update channel'), sel.value); }
+  catch(e) { toastErr('channel change failed', e.message); }
+  loadVersion();
+};
 $('updateBtn').onclick = async () => {
   const btn = $('updateBtn');
   // First click = check; second click (when update known) = install.
