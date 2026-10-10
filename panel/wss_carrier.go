@@ -103,7 +103,7 @@ func defaultWSSConfig() wssConfig {
 	}
 
 	role := "server"
-	if localStatus().Role == "foreign" {
+	if strings.HasPrefix(localStatus().Role, "foreign") {
 		role = "client"
 	}
 
@@ -290,7 +290,7 @@ func startWSSCarrier(cfg wssConfig) error {
 	// Determine effective role
 	role := strings.ToLower(cfg.Role)
 	if role == "auto" {
-		if localStatus().Role == "iran" {
+		if strings.HasPrefix(localStatus().Role, "iran") {
 			role = "server"
 		} else {
 			role = "client"

@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -26,6 +27,19 @@ import (
 var panelFS embed.FS
 
 var configDir = "/etc/gre-panel"
+
+// frpDir / backhaulDir hold the FRP and Backhaul configs; tests point them at
+// throwaway dirs. Overridable with GRE_FRP_DIR / GRE_BACKHAUL_DIR.
+var (
+	frpDir      = "/etc/frp"
+	backhaulDir = "/etc/backhaul"
+)
+
+// runSystemctl is the one place the panel shells out to systemctl for tunnel
+// engine switches and port rewrites (swappable for tests).
+var runSystemctl = func(args ...string) error {
+	return exec.Command("systemctl", args...).Run()
+}
 
 type panelConfig struct {
 	Username string `json:"username"`
@@ -189,6 +203,12 @@ func main() {
 	}
 	if v := os.Getenv("GRE_PANEL_DIR"); v != "" {
 		configDir = v
+	}
+	if v := os.Getenv("GRE_FRP_DIR"); v != "" {
+		frpDir = v
+	}
+	if v := os.Getenv("GRE_BACKHAUL_DIR"); v != "" {
+		backhaulDir = v
 	}
 	loadOrInit()
 	ensureFreeHTTPPort()

@@ -80,9 +80,9 @@ ports = [
 `
 	// Create mock server.toml for backhaul in both mock configDir and system dir
 	_ = os.WriteFile(filepath.Join(tmpDir, "server.toml"), []byte(serverToml), 0644)
-	_ = os.MkdirAll("/etc/backhaul", 0755)
-	defer os.RemoveAll("/etc/backhaul")
-	_ = os.WriteFile("/etc/backhaul/server.toml", []byte(serverToml), 0644)
+	_ = os.MkdirAll(backhaulDir, 0755)
+	defer os.RemoveAll(backhaulDir)
+	_ = os.WriteFile(filepath.Join(backhaulDir, "server.toml"), []byte(serverToml), 0644)
 
 	rep := runCarrierBenchmark()
 	if rep == nil {

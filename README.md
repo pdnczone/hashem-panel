@@ -139,29 +139,26 @@ Adding more foreign servers: use the **Setup** tab in the panel or `hashem add-p
 
 ## Panel tour
 
-Every tab has its own page in the documentation (see the [documentation map](#documentation-map)).
+See the [documentation map](#documentation-map) for the available guides.
 
 ### Dashboard — the overall state
 
-The top banner shows one big word (Healthy / Degraded / Down) and one line per tunnel. Below it are the KPIs and the Fleet Health card with the hub latency summary, the topology graph and per-server cards. → [docs/en/panel/dashboard.md](docs/en/panel/dashboard.md)
-
+The top banner shows one big word (Healthy / Degraded / Down) and one line per tunnel. Below it are the KPIs and the Fleet Health card with the hub latency summary, the topology graph and per-server cards.
 <img src="docs/dashboard.jpg" width="100%" alt="Dashboard">
 
 ### Tunnel — the main tunnel and its peers
 
-Manage the main tunnel and the foreign-server peer cards. → [docs/en/panel/tunnel.md](docs/en/panel/tunnel.md)
-
+Manage the main tunnel and the foreign-server peer cards.
 <img src="docs/tunnel.png" width="100%" alt="Tunnel tab with peers">
 
 ### Performance — tuning
 
-Capacity, encryption/compression, chaff and DPI Shield. → [docs/en/panel/performance.md](docs/en/panel/performance.md)
-
+Capacity, encryption/compression, chaff and DPI Shield.
 <img src="docs/performance.jpg" width="100%" alt="Performance tab">
 
-### Diagnostics — latency, jitter, MTU
+**FRP TCP Multiplexing (`transport.tcpMux`) is OFF by default** (speed-first: tcpMux roughly halves throughput over GRE). New `frps`/`frpc` configs are written with `transport.tcpMux = false`. Turn it on only deliberately with `hashem perf tcpmux on` (or the Performance tab). The setting **must be identical on the Iran hub and every foreign spoke**; a mismatch makes `frpc` fail to log in with `connect to server error: EOF`, and `hashem status` / `hashem doctor` print a hint when they see it. Backhaul is unaffected.
 
-→ [docs/en/panel/diagnostics.md](docs/en/panel/diagnostics.md)
+### Diagnostics — latency, jitter, MTU
 
 <img src="docs/diagnostics.jpg" width="100%" alt="Diagnostics tab">
 
@@ -171,20 +168,20 @@ Capacity, encryption/compression, chaff and DPI Shield. → [docs/en/panel/perfo
 
 ### Other tabs
 
-- **Setup** — pairing, bundles and peers → [setup-and-peers](docs/en/panel/setup-and-peers.md)
-- **Watchdog** — monitoring and alerts → [automation-watchdog](docs/en/panel/automation-watchdog.md)
-- **Benchmark** — carrier probing → [benchmark](docs/en/panel/benchmark.md)
-- **Update** — channels, install any tag → [update](docs/en/panel/update.md)
-- **Logs, Settings, Terminal** → [settings-logs-terminal](docs/en/panel/settings-logs-terminal.md)
+- **Setup** — pairing, bundles and peers
+- **Watchdog** — monitoring and alerts
+- **Benchmark** — carrier probing
+- **Update** — channels, install any tag
+- **Logs, Settings, Terminal**
 
 ---
 
 ## Tunnel types
 
-- **GRE+FRP** (`frp`) — a GRE Layer-3 link between the two servers with FRP running over it. FRP transports: `tcp`, `kcp`, `quic`, `websocket`, `wss`. `wss` needs a TLS front: a `frps-wss*.service` unit running `gre-panel tls-proxy` on `control_port+2`. Guide: [gre-frp](docs/en/tunnels/gre-frp.md).
-- **GRE+Backhaul** (`gre-backhaul`) — the same GRE link, with Backhaul as the relay. Bundle prefix `gh1_`. Guide: [gre-backhaul](docs/en/tunnels/gre-backhaul.md).
-- **Backhaul standalone** (`backhaul`) — Backhaul only, no GRE interface at all. Bundle prefix `bh1_`. Guide: [backhaul-standalone](docs/en/tunnels/backhaul-standalone.md).
-- **Carriers for the GRE layer** — **Direct GRE** (IP protocol 47) and **WSS** (TLS WebSocket, default `:8443`). The FOU carrier was removed. Guide: [carriers](docs/en/tunnels/carriers.md).
+- **GRE+FRP** (`frp`) — a GRE Layer-3 link between the two servers with FRP running over it. FRP transports: `tcp`, `kcp`, `quic`, `websocket`, `wss`. `wss` needs a TLS front: a `frps-wss*.service` unit running `gre-panel tls-proxy` on `control_port+2`. Guide: [FRP transports guide](docs/FRP_TUNNELS_GUIDE.md).
+- **GRE+Backhaul** (`gre-backhaul`) — the same GRE link, with Backhaul as the relay. Bundle prefix `gh1_`.
+- **Backhaul standalone** (`backhaul`) — Backhaul only, no GRE interface at all. Bundle prefix `bh1_`.
+- **Carriers for the GRE layer** — **Direct GRE** (IP protocol 47) and **WSS** (TLS WebSocket, default `:8443`). The FOU carrier was removed.
 
 ---
 
@@ -203,8 +200,6 @@ The dashboard's overall status uses the same function. The main tunnel counts as
 
 **Latency** per link is taken in this order: (1) ICMP ping of the GRE inner address → kind `icmp`; (2) if ICMP fails, the kernel TCP RTT of the live session on the control port (from `ss -tin`) → kind `tcp`; (3) otherwise `—`. The hub summary (`/api/fleet` → `latency`) gives avg, min, max over links that have a value, the count, and how many are `icmp` vs `tcp`. History, sparkline, average, loss and uptime use the same value.
 
-Details: [health-and-latency](docs/en/panel/health-and-latency.md).
-
 ---
 
 ## Automation
@@ -214,8 +209,6 @@ Details: [health-and-latency](docs/en/panel/health-and-latency.md).
 - **Carrier failover** — `hashem carrier` manages and cycles carriers.
 - **Backups** — `hashem backup now|restore|schedule|status` (encrypted archives in `/var/backups/hashem`).
 - **Adaptive capacity** — multiplexing capacity adjusts to load and available RAM.
-
-Details: [automation-watchdog](docs/en/panel/automation-watchdog.md).
 
 ---
 
@@ -233,8 +226,6 @@ Install steps: validate tag → download the panel binary and `hashem.sh` of tha
 **Auto-rollback:** the new process counts its starts in `pending_update.json`. If it crashes 3 times before it is confirmed healthy (self health check 45 s after start), the old binary and `hashem.sh` are restored and the panel restarts.
 
 **Branches:** `main` is stable (a push that changes `panel/**` or `hashem*.sh` builds release `panel-r<run>`); `dev` is for testing (each push builds prerelease `dev-r<run>`, never offered on stable). Promote by a manual Pull Request `dev → main`. Hotfix: branch from `main`, PR to `main`, then merge `main` back into `dev`.
-
-Details: [update](docs/en/panel/update.md) and [branches-and-releases](docs/en/development/branches-and-releases.md).
 
 ---
 
@@ -266,11 +257,6 @@ hashem uninstall      # full wipe
 
 ## Documentation map
 
-Full index: **[English](docs/en/index.md)** · **[فارسی](docs/fa/index.md)**
-
-- Tunnels — [GRE+FRP](docs/en/tunnels/gre-frp.md) · [GRE+Backhaul](docs/en/tunnels/gre-backhaul.md) · [Backhaul standalone](docs/en/tunnels/backhaul-standalone.md) · [Carriers](docs/en/tunnels/carriers.md)
-- Panel — [Dashboard](docs/en/panel/dashboard.md) · [Tunnel](docs/en/panel/tunnel.md) · [Setup and peers](docs/en/panel/setup-and-peers.md) · [Health and latency](docs/en/panel/health-and-latency.md) · [Performance](docs/en/panel/performance.md) · [Automation and watchdog](docs/en/panel/automation-watchdog.md) · [Settings, logs, terminal](docs/en/panel/settings-logs-terminal.md) · [Diagnostics](docs/en/panel/diagnostics.md) · [Benchmark](docs/en/panel/benchmark.md) · [Update](docs/en/panel/update.md)
-- Development — [Branches and releases](docs/en/development/branches-and-releases.md)
 - Guides — [Secure deployment](docs/DEPLOYMENT.md) · [FRP transports guide](docs/FRP_TUNNELS_GUIDE.md) (Persian + English)
 - Policy — [SECURITY.md](SECURITY.md)
 

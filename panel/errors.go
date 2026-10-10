@@ -91,6 +91,7 @@ var errCatalog = map[string]errInfo{
 	"E-FRP-07": {0, "connection reset by peer / broken pipe", "Remote peer or network carrier reset the TCP stream."},
 	"E-FRP-08": {0, "connection tracking table full (packet dropped)", "Kernel nf_conntrack_max limit reached under high concurrent connections. Run Optimize in Tunnel tab."},
 	"E-FRP-09": {0, "yamux stream capacity / buffer overflow", "High stream contention on single TCP mux. Increase poolCount in frpc."},
+	"E-FRP-10": {0, "frpc login failed with EOF (likely tcpMux mismatch)", "tcpMux mismatch: hub is likely tcpMux=true, run `hashem perf tcpmux on|off` so both ends match (default OFF)."},
 	"E-SYS-01": {0, "host tool unavailable", "journalctl/systemctl/ip missing on this host."},
 	"E-SUPPORT-01": {400, "bad support request (invalid JSON)", "Reload the page and try again."},
 	"E-SUPPORT-02": {400, "unknown support action", "Use claim, close, snooze or donate."},
@@ -273,6 +274,8 @@ func matchLogCode(line string) (code, hint string) {
 		return false
 	}
 	switch {
+	case has("connect to server error: eof"):
+		return "E-FRP-10", errCatalog["E-FRP-10"].Hint
 	case has("too many open files") || has("emfile", "enfile") || has("socket: too many"):
 		return "E-FRP-05", errCatalog["E-FRP-05"].Hint
 	case has("heartbeat timeout") || has("heartbeat out of date") || has("heartbeat failed"):

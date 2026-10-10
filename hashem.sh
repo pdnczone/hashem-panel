@@ -432,6 +432,18 @@ perf_tcpmux_lines() {
     fi
 }
 
+# read-only: frpc logging "connect to server error: EOF" is the signature of a tcpMux mismatch
+# (hub tcpMux=true, spoke false or vice versa). Prints the hint, never changes config.
+tcpmux_eof_hint() {
+    [[ -f "${CONFIG_DIR}/frpc.toml" ]] || return 1
+    command -v journalctl >/dev/null 2>&1 || return 1
+    # only the NEWEST login outcome counts: an old EOF followed by "login to server success" is a recovered tunnel
+    journalctl -u frpc -n 200 --no-pager 2>/dev/null \
+        | grep -E 'connect to server error: EOF|login to server success' | tail -n 1 \
+        | grep -q 'connect to server error: EOF' || return 1
+    echo "tcpMux mismatch: hub is likely tcpMux=true, run \`hashem perf tcpmux on|off\` (must match on hub and spoke)"
+}
+
 perf_get_enc() {
     if [[ -n "${PERF_ENC:-}" ]]; then
         [[ "$PERF_ENC" == "1" || "$PERF_ENC" == "true" ]] && echo 1 || echo 0
@@ -2572,7 +2584,7 @@ for i, sec in enumerate(sections):
         import json
         pool_cnt = ""
         try:
-            with open("/etc/gre-panel/perf.json") as jf:
+            with open("'"$PERF_FILE"'") as jf:
                 p_val = json.load(jf).get("frp_pool_count", 0)
                 if p_val and int(p_val) >= 2:
                     pool_cnt = str(int(p_val))
@@ -2630,7 +2642,7 @@ mux_raw = "'"$EFF_MUX"'".strip()
 import json, os
 max_pool = "500"
 try:
-    with open("/etc/gre-panel/perf.json") as jf:
+    with open("'"$PERF_FILE"'") as jf:
         max_pool = str(json.load(jf).get("frp_max_pool", 500))
 except:
     pass
@@ -2757,6 +2769,11 @@ cli_perf() {
                     local LIVE_MUX=1
                     grep -E -q '^[[:space:]]*transport\.tcpMux[[:space:]]*=[[:space:]]*false' "${CONFIG_DIR}/frpc.toml" && LIVE_MUX=0
                     echo -e "  Live TCP Multiplexing:  $([[ "$LIVE_MUX" == "1" ]] && echo "on" || echo "off") $([[ "$LIVE_MUX" == "$MUX_CFG" ]] && echo -e "${GREEN}[MATCH]${NC}" || echo -e "${RED}[MISMATCH]${NC}")"
+                else
+                    # unset: still show the live value (a missing tcpMux line means FRP's own default = on); must equal the hub's
+                    grep -E -q '^[[:space:]]*transport\.tcpMux[[:space:]]*=[[:space:]]*false' "${CONFIG_DIR}/frpc.toml" \
+                        && echo -e "  Live TCP Multiplexing:  off (must match the hub)" \
+                        || echo -e "  Live TCP Multiplexing:  ${YELLOW}on${NC} (must match the hub; run: hashem perf tcpmux off on BOTH ends for max speed)"
                 fi
                 echo -e "  Role: Foreign client (frpc)"
                 echo -e "  Live Proxy Encryption:  $([[ "$LIVE_ENC" == "1" ]] && echo "on" || echo "off") $([[ "$LIVE_ENC" == "$ENC" ]] && echo -e "${GREEN}[MATCH]${NC}" || echo -e "${RED}[MISMATCH]${NC}")"
@@ -2779,6 +2796,13 @@ cli_perf() {
                         grep -E -q '^[[:space:]]*transport\.tcpMux[[:space:]]*=[[:space:]]*false' "$F" && LIVE_MUX=0
                     done
                     echo -e "  Live TCP Multiplexing:  $([[ "$LIVE_MUX" == "1" ]] && echo "on" || echo "off") $([[ "$LIVE_MUX" == "$MUX_CFG" ]] && echo -e "${GREEN}[MATCH]${NC}" || echo -e "${RED}[MISMATCH]${NC}")"
+                else
+                    local UNSET_MUX="off" F
+                    for F in "${CONFIG_DIR}"/frps*.toml; do
+                        [[ -f "$F" ]] || continue
+                        grep -E -q '^[[:space:]]*transport\.tcpMux[[:space:]]*=[[:space:]]*false' "$F" || UNSET_MUX="on"
+                    done
+                    echo -e "  Live TCP Multiplexing:  ${UNSET_MUX} (must match every spoke; a missing line means FRP's default = on)"
                 fi
                 echo -e "  Role: Iran server (frps)"
                 echo -e "  Live Forced TLS:        $([[ "$LIVE_TLS" == "1" ]] && echo "on" || echo "off") $([[ "$LIVE_TLS" == "$TLS" ]] && echo -e "${GREEN}[MATCH]${NC}" || echo -e "${RED}[MISMATCH]${NC}")"
@@ -3058,8 +3082,8 @@ setup_iran_server_noninteractive() {
     fi
     local EFF_TLS=$(perf_get_tls)
     local MAX_POOL=500
-    if [[ -f /etc/gre-panel/perf.json ]] && command -v python3 >/dev/null 2>&1; then
-        MAX_POOL=$(python3 -c "import json; print(json.load(open('/etc/gre-panel/perf.json')).get('frp_max_pool', 500))" 2>/dev/null || echo 500)
+    if [[ -f "$PERF_FILE" ]] && command -v python3 >/dev/null 2>&1; then
+        MAX_POOL=$(python3 -c "import json; print(json.load(open('$PERF_FILE')).get('frp_max_pool', 500))" 2>/dev/null || echo 500)
     fi
     local TLS_LINE=""
     [[ "$EFF_TLS" == "1" ]] && TLS_LINE="transport.tls.force = true"
@@ -3918,8 +3942,8 @@ peer_write_frps() {
     local SUF=$1 BIND_PORT=$2 TOKEN=$3
     local EFF_TLS=$(perf_get_tls)
     local MAX_POOL=500
-    if [[ -f /etc/gre-panel/perf.json ]] && command -v python3 >/dev/null 2>&1; then
-        MAX_POOL=$(python3 -c "import json; print(json.load(open('/etc/gre-panel/perf.json')).get('frp_max_pool', 500))" 2>/dev/null || echo 500)
+    if [[ -f "$PERF_FILE" ]] && command -v python3 >/dev/null 2>&1; then
+        MAX_POOL=$(python3 -c "import json; print(json.load(open('$PERF_FILE')).get('frp_max_pool', 500))" 2>/dev/null || echo 500)
     fi
     local TLS_LINE=""
     [[ "$EFF_TLS" == "1" ]] && TLS_LINE="transport.tls.force = true"
@@ -4705,6 +4729,8 @@ check_status() {
     elif systemctl is-active --quiet frpc; then
         echo -e "${GREEN}[✔️] frpc (FRP Client on FOREIGN) is ACTIVE and RUNNING.${NC}"
         systemctl status frpc --no-pager -l
+        local MUX_HINT
+        MUX_HINT=$(tcpmux_eof_hint) && echo -e "${YELLOW}[!] ${MUX_HINT}${NC}"
     elif systemctl is-active --quiet backhaul-client; then
         echo -e "${GREEN}[✔️] backhaul-client (Backhaul Client on FOREIGN) is ACTIVE and RUNNING.${NC}"
         systemctl status backhaul-client --no-pager -l
@@ -4989,6 +5015,11 @@ doctor_health_check() {
         printf "%-8b %-30s %s\n" "$badge" "$name" "$details"
     }
     
+    local MUX_HINT
+    if MUX_HINT=$(tcpmux_eof_hint); then
+        report_item "FRP tcpMux match" "WARN" "$MUX_HINT"
+    fi
+
     # 1. OS & Architecture
     local OS_INFO
     OS_INFO=$(uname -s -m 2>/dev/null || echo "Linux")
@@ -6320,8 +6351,8 @@ restart_all_lite() {
 
 
 autotune_tick() {
-    [[ ! -f /etc/gre-panel/perf.json ]] && return 0
-    local DO_TUNE=$(python3 -c "import json; print(json.load(open('/etc/gre-panel/perf.json')).get('auto_tune', False))" 2>/dev/null || echo "False")
+    [[ ! -f "$PERF_FILE" ]] && return 0
+    local DO_TUNE=$(python3 -c "import json; print(json.load(open('$PERF_FILE')).get('auto_tune', False))" 2>/dev/null || echo "False")
     [[ "$DO_TUNE" != "True" && "$DO_TUNE" != "true" ]] && return 0
 
     local CONN=$(ss -tn state established 2>/dev/null | wc -l)
@@ -7295,7 +7326,7 @@ update_all() {
     if command -v python3 >/dev/null 2>&1; then
         python3 -c "
 import json
-path = '/etc/gre-panel/perf.json'
+path = '$PERF_FILE'
 try:
     with open(path, 'r') as f:
         d = json.load(f)
@@ -7308,6 +7339,16 @@ try:
 except Exception:
     pass
 " 2>/dev/null
+    fi
+    # 7. Legacy hub tomls with no transport.tcpMux line run FRP's default (ON) while new spokes
+    # write false => EOF. Warn only: changing it automatically would flip a live pair.
+    if [[ -z "$(perf_get_tcpmux)" ]]; then
+        local _frps_f
+        for _frps_f in "$CONFIG_DIR"/frps*.toml; do
+            [[ -f "$_frps_f" ]] || continue
+            grep -Eq '^[[:space:]]*transport\.tcpMux[[:space:]]*=' "$_frps_f" 2>/dev/null && continue
+            echo -e "${YELLOW}[!] $(basename "$_frps_f") has no transport.tcpMux line (FRP default = ON); set explicitly with: hashem perf tcpmux on|off on hub AND spokes${NC}"
+        done
     fi
     perf_apply >/dev/null 2>&1 || true
     if [[ -f "$WATCHDOG_FILE" ]] && command -v python3 >/dev/null 2>&1; then

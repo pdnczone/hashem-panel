@@ -342,7 +342,7 @@ func runHashemCarrierCmd(args ...string) ([]byte, error) {
 }
 
 func updateFrpcTransport(proto string) error {
-	frpcPath := "/etc/frp/frpc.toml"
+	frpcPath := filepath.Join(frpDir, "frpc.toml")
 	data, err := os.ReadFile(frpcPath)
 	if err != nil {
 		return err

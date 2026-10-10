@@ -172,9 +172,9 @@ func currentIranBundle() (string, string) {
 
 	// Backhaul server
 	if st.FrpSvc == "backhaul-server" || st.Engine == "backhaul" || st.Engine == "gre-backhaul" || setupMeta.Engine == "backhaul" || setupMeta.Engine == "gre-backhaul" {
-		data, err := os.ReadFile("/etc/backhaul/config.toml")
+		data, err := os.ReadFile(filepath.Join(backhaulDir, "config.toml"))
 		if err != nil {
-			data, err = os.ReadFile("/etc/backhaul/server.toml")
+			data, err = os.ReadFile(filepath.Join(backhaulDir, "server.toml"))
 		}
 		if err == nil {
 			var token, transport string
@@ -220,7 +220,7 @@ func currentIranBundle() (string, string) {
 	}
 
 	// FRP server
-	data, err := os.ReadFile("/etc/frp/frps.toml")
+	data, err := os.ReadFile(filepath.Join(frpDir, "frps.toml"))
 	if err == nil {
 		var token string
 		for _, line := range strings.Split(string(data), "\n") {
@@ -302,7 +302,7 @@ func tunnelExists() bool {
 			return true
 		}
 	}
-	for _, f := range []string{"/etc/frp/frps.toml", "/etc/frp/frpc.toml"} {
+	for _, f := range []string{filepath.Join(frpDir, "frps.toml"), filepath.Join(frpDir, "frpc.toml")} {
 		if _, err := os.Stat(f); err == nil {
 			return true
 		}
@@ -1300,8 +1300,8 @@ func editPeerDirect(peer *peerRecord, req peerPatchRequest) (string, error) {
 		exec.Command("ip", "tunnel", "change", greIf, "remote", req.RemotePub).CombinedOutput()
 		svcFile := fmt.Sprintf("/etc/systemd/system/%s.service", greIf)
 		updateServiceRemoteIP(svcFile, peer.RemotePub, req.RemotePub)
-		exec.Command("systemctl", "daemon-reload").CombinedOutput()
-		exec.Command("systemctl", "restart", greIf+".service").CombinedOutput()
+		_ = runSystemctl("daemon-reload")
+		_ = runSystemctl("restart", greIf+".service")
 
 		if !testPing(req.RemotePub, 2) {
 			warning = fmt.Sprintf("New remote IP %s did not reply to ping (peer may be offline or firewalling ICMP)", req.RemotePub)
@@ -1331,9 +1331,9 @@ func editPeerDirect(peer *peerRecord, req peerPatchRequest) (string, error) {
 		}
 
 		if peer.Engine == "backhaul" || peer.Engine == "gre-backhaul" {
-			tomlPath := fmt.Sprintf("/etc/backhaul/server-%d.toml", peer.ID)
+			tomlPath := filepath.Join(backhaulDir, fmt.Sprintf("server-%d.toml", peer.ID))
 			if _, err := os.Stat(tomlPath); err != nil && peer.ID <= 1 {
-				tomlPath = "/etc/backhaul/config.toml"
+				tomlPath = filepath.Join(backhaulDir, "config.toml")
 			}
 			if rawToml, err := os.ReadFile(tomlPath); err == nil {
 				updated := rewriteBackhaulTomlPorts(string(rawToml), rawList)
@@ -1347,12 +1347,12 @@ func editPeerDirect(peer *peerRecord, req peerPatchRequest) (string, error) {
 					svc = "backhaul-server"
 				}
 			}
-			exec.Command("systemctl", "reload-or-restart", svc).CombinedOutput()
+			_ = runSystemctl("reload-or-restart", svc)
 			allowUFWPorts(numList)
 		} else {
-			tomlPath := fmt.Sprintf("/etc/frp/frps-%d.toml", peer.ID)
+			tomlPath := filepath.Join(frpDir, fmt.Sprintf("frps-%d.toml", peer.ID))
 			if _, err := os.Stat(tomlPath); err != nil && peer.ID == 1 {
-				tomlPath = "/etc/frp/frps.toml"
+				tomlPath = filepath.Join(frpDir, "frps.toml")
 			}
 			if rawToml, err := os.ReadFile(tomlPath); err == nil {
 				updated := rewriteTomlPorts(string(rawToml), numList)
@@ -1366,7 +1366,7 @@ func editPeerDirect(peer *peerRecord, req peerPatchRequest) (string, error) {
 					svc = "frps"
 				}
 			}
-			exec.Command("systemctl", "reload-or-restart", svc).CombinedOutput()
+			_ = runSystemctl("reload-or-restart", svc)
 			allowUFWPorts(numList)
 		}
 	}
@@ -1425,8 +1425,8 @@ func editMainTunnelDirect(req peerPatchRequest, legacyPeer *peerRecord) (string,
 			oldIP = legacyPeer.RemotePub
 		}
 		updateServiceRemoteIP("/etc/systemd/system/gre-tunnel.service", oldIP, req.RemotePub)
-		exec.Command("systemctl", "daemon-reload").CombinedOutput()
-		exec.Command("systemctl", "restart", "gre-tunnel.service").CombinedOutput()
+		_ = runSystemctl("daemon-reload")
+		_ = runSystemctl("restart", "gre-tunnel.service")
 
 		if !testPing(req.RemotePub, 2) {
 			warning = fmt.Sprintf("New remote IP %s did not reply to ping", req.RemotePub)
@@ -1441,10 +1441,10 @@ func editMainTunnelDirect(req peerPatchRequest, legacyPeer *peerRecord) (string,
 
 	// 4. Ports change
 	if req.RawPorts != nil {
-		if rawToml, err := os.ReadFile("/etc/backhaul/config.toml"); err == nil {
+		if rawToml, err := os.ReadFile(filepath.Join(backhaulDir, "config.toml")); err == nil {
 			updated := rewriteBackhaulTomlPorts(string(rawToml), *req.RawPorts)
-			_ = os.WriteFile("/etc/backhaul/config.toml", []byte(updated), 0644)
-			exec.Command("systemctl", "reload-or-restart", "backhaul-server").CombinedOutput()
+			_ = os.WriteFile(filepath.Join(backhaulDir, "config.toml"), []byte(updated), 0644)
+			_ = runSystemctl("reload-or-restart", "backhaul-server")
 			allowUFWPorts(extractNumericPorts(*req.RawPorts))
 		}
 	}
@@ -1478,9 +1478,9 @@ func generatePeerBundle(peer *peerRecord, req peerPatchRequest) string {
 	}
 	token := peer.Token
 	if token == "" {
-		tomlPath := fmt.Sprintf("/etc/frp/frps-%d.toml", peer.ID)
+		tomlPath := filepath.Join(frpDir, fmt.Sprintf("frps-%d.toml", peer.ID))
 		if _, err := os.Stat(tomlPath); err != nil && peer.ID == 1 {
-			tomlPath = "/etc/frp/frps.toml"
+			tomlPath = filepath.Join(frpDir, "frps.toml")
 		}
 		if raw, err := os.ReadFile(tomlPath); err == nil {
 			for _, line := range strings.Split(string(raw), "\n") {
@@ -1493,9 +1493,9 @@ func generatePeerBundle(peer *peerRecord, req peerPatchRequest) string {
 			}
 		}
 		if token == "" {
-			bhPath := fmt.Sprintf("/etc/backhaul/server-%d.toml", peer.ID)
+			bhPath := filepath.Join(backhaulDir, fmt.Sprintf("server-%d.toml", peer.ID))
 			if _, err := os.Stat(bhPath); err != nil && peer.ID == 1 {
-				bhPath = "/etc/backhaul/config.toml"
+				bhPath = filepath.Join(backhaulDir, "config.toml")
 			}
 			if raw, err := os.ReadFile(bhPath); err == nil {
 				for _, line := range strings.Split(string(raw), "\n") {
@@ -1584,7 +1584,7 @@ func generateMainBundle(req peerPatchRequest, legacyPeer *peerRecord) string {
 		}
 	}
 	if token == "" {
-		if raw, err := os.ReadFile("/etc/frp/frps.toml"); err == nil {
+		if raw, err := os.ReadFile(filepath.Join(frpDir, "frps.toml")); err == nil {
 			for _, line := range strings.Split(string(raw), "\n") {
 				if strings.Contains(line, "auth.token") || strings.Contains(line, "token =") {
 					parts := strings.Split(line, "=")
@@ -1595,7 +1595,7 @@ func generateMainBundle(req peerPatchRequest, legacyPeer *peerRecord) string {
 			}
 		}
 		if token == "" {
-			if raw, err := os.ReadFile("/etc/backhaul/config.toml"); err == nil {
+			if raw, err := os.ReadFile(filepath.Join(backhaulDir, "config.toml")); err == nil {
 				for _, line := range strings.Split(string(raw), "\n") {
 					if strings.Contains(line, "token =") {
 						parts := strings.Split(line, "=")
@@ -1692,20 +1692,20 @@ func editMainTunnelPortsDirect(newPorts []int) error {
 	}
 
 	// 2. Foreign client toml (/etc/frp/frpc.toml)
-	if rawToml, err := os.ReadFile("/etc/frp/frpc.toml"); err == nil {
+	if rawToml, err := os.ReadFile(filepath.Join(frpDir, "frpc.toml")); err == nil {
 		updated := rewriteTomlPorts(string(rawToml), newPorts)
-		_ = os.WriteFile("/etc/frp/frpc.toml", []byte(updated), 0644)
-		exec.Command("systemctl", "reload-or-restart", "frpc").CombinedOutput()
+		_ = os.WriteFile(filepath.Join(frpDir, "frpc.toml"), []byte(updated), 0644)
+		_ = runSystemctl("reload-or-restart", "frpc")
 		editedAny = true
 	}
 
 	// 3. Server toml (/etc/frp/frps.toml)
-	if rawToml, err := os.ReadFile("/etc/frp/frps.toml"); err == nil {
+	if rawToml, err := os.ReadFile(filepath.Join(frpDir, "frps.toml")); err == nil {
 		if strings.Contains(string(rawToml), "[[proxies]]") {
 			updated := rewriteTomlPorts(string(rawToml), newPorts)
-			_ = os.WriteFile("/etc/frp/frps.toml", []byte(updated), 0644)
+			_ = os.WriteFile(filepath.Join(frpDir, "frps.toml"), []byte(updated), 0644)
 		}
-		exec.Command("systemctl", "reload-or-restart", "frps").CombinedOutput()
+		_ = runSystemctl("reload-or-restart", "frps")
 		editedAny = true
 	}
 

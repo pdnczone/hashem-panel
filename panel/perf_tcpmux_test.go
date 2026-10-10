@@ -28,6 +28,20 @@ func TestTCPMuxDefaultIsOff(t *testing.T) {
 	}
 }
 
+func TestFrpcLoginEOFHint(t *testing.T) {
+	code, hint := matchLogCode("login to the server failed: connect to server error: EOF")
+	if code != "E-FRP-10" || !strings.Contains(hint, "hashem perf tcpmux") {
+		t.Fatalf("got %q %q", code, hint)
+	}
+}
+
+func TestFrpcLoginEOFRecoveredIsNotAHint(t *testing.T) {
+	// frpcLoginEOF itself shells out to journalctl; the ordering rule is covered by test_tcpmux_default.sh
+	if code, _ := matchLogCode("login to server success, get run id [abc]"); code == "E-FRP-10" {
+		t.Fatalf("a successful login line must never classify as E-FRP-10")
+	}
+}
+
 func TestTCPMuxOnWritesKeepalive(t *testing.T) {
 	defer withTempConfigDir(t)()
 	c := loadPerfConfig()

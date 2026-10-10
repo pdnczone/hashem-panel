@@ -82,6 +82,7 @@
   .tunnel-card, .qs { background:var(--s1); border:1px solid var(--ln); border-radius:var(--r-lg);
     padding:18px; display:flex; flex-direction:column; gap:12px;
     box-shadow:var(--lift-sm); transition:border-color .2s ease, box-shadow .25s ease, transform .25s var(--spring); }
+  .tunnel-card[hidden], .qs[hidden] { display:none; }
   .kpi:hover { border-color:var(--ln2); box-shadow:var(--lift); transform:translateY(-2px); }
   .tunnel-card:not(.kpi):hover { border-color:var(--ln2); }
   /* Entrance: cards fade-rise once on load, staggered */
@@ -1523,7 +1524,7 @@
               <input type="checkbox" id="perfMuxCheck" class="u-checkbox-ac">
               <div>
                 <b class="u-color-tx" data-i18n="perf_mux_title">TCP Multiplexing (transport.tcpMux)</b>
-                <div class="qs-hint u-mt-2" data-i18n="perf_mux_hint">Packs every user stream into ONE TCP connection between frpc and frps. Measured over GRE it roughly halves tunnel throughput (e.g. 460 vs 1010 Mbit on Finland). Keep OFF for speed. It must be identical on the Iran hub AND every foreign server, otherwise frpc cannot log in.</div>
+                <div class="qs-hint u-mt-2" data-i18n="perf_mux_hint">Packs every user stream into ONE TCP connection between frpc and frps. Measured over GRE it roughly halves tunnel throughput (e.g. 460 vs 1010 Mbit on Finland). Default is OFF (max speed). It must be identical on the Iran hub AND every foreign server, otherwise frpc cannot log in.</div>
                 <div class="qs-hint u-mt-2" id="perfMuxLive">Live: —</div>
               </div>
             </label>
@@ -2753,7 +2754,7 @@ const I18N = {
     nav_logs: "Logs",
     nav_perf: "Performance",
     perf_mux_title: "TCP Multiplexing (transport.tcpMux)",
-    perf_mux_hint: "Packs every user stream into ONE TCP connection between frpc and frps. Measured over GRE it roughly halves tunnel throughput (e.g. 460 vs 1010 Mbit on Finland). Keep OFF for speed. It must be identical on the Iran hub AND every foreign server, otherwise frpc cannot log in.",
+    perf_mux_hint: "Packs every user stream into ONE TCP connection between frpc and frps. Measured over GRE it roughly halves tunnel throughput (e.g. 460 vs 1010 Mbit on Finland). Default is OFF (max speed). It must be identical on the Iran hub AND every foreign server, otherwise frpc cannot log in.",
     nav_watchdog: "Watchdog",
     nav_doctor: "Diagnostics",
     nav_benchmark: "Benchmark",
@@ -3158,7 +3159,7 @@ const I18N = {
     nav_logs: "گزارش‌ها (Logs)",
     nav_perf: "عملکرد سیستم",
     perf_mux_title: "TCP Multiplexing (transport.tcpMux)",
-    perf_mux_hint: "همه‌ی اتصال‌های کاربران را داخل «یک» اتصال TCP بین frpc و frps جمع می‌کند. روی GRE اندازه‌گیری شد: سرعت تونل را تقریباً نصف می‌کند (فنلاند ۴۶۰ در برابر ۱۰۱۰ Mbit). برای سرعت خاموش بماند. باید روی هاب ایران و «همه» سرورهای خارج یکسان باشد، وگرنه frpc لاگین نمی‌شود.",
+    perf_mux_hint: "همه‌ی اتصال‌های کاربران را داخل «یک» اتصال TCP بین frpc و frps جمع می‌کند. روی GRE اندازه‌گیری شد: سرعت تونل را تقریباً نصف می‌کند (فنلاند ۴۶۰ در برابر ۱۰۱۰ Mbit). پیش‌فرض خاموش است (حداکثر سرعت). باید روی هاب ایران و «همه» سرورهای خارج یکسان باشد، وگرنه frpc لاگین نمی‌شود.",
     nav_watchdog: "دیده‌بان و زمان‌بندی",
     nav_doctor: "عیب‌یابی شبکه",
     nav_benchmark: "بنچمارک کیفیت",

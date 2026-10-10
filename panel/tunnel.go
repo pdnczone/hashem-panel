@@ -68,7 +68,7 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 		}
 		// Fallback to whichever default service exists
 		svc = "frps"
-		if _, err := os.Stat("/etc/frp/frpc.toml"); err == nil {
+		if _, err := os.Stat(filepath.Join(frpDir, "frpc.toml")); err == nil {
 			svc = "frpc"
 		}
 	}
@@ -85,7 +85,7 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 	if !allowed[svc] {
 		// unknown? fall back to whichever FRP side exists
 		svc = "frps"
-		if _, err := os.Stat("/etc/frp/frpc.toml"); err == nil {
+		if _, err := os.Stat(filepath.Join(frpDir, "frpc.toml")); err == nil {
 			svc = "frpc"
 		}
 	}
@@ -504,7 +504,7 @@ func removePeerDirect(p *peerRecord) (string, error) {
 	exec.Command("systemctl", "disable", frpsSvc, greSvc+".service").CombinedOutput()
 	os.Remove("/etc/systemd/system/" + frpsSvc + ".service")
 	os.Remove("/etc/systemd/system/" + greSvc + ".service")
-	os.Remove(fmt.Sprintf("/etc/frp/frps-%d.toml", p.ID))
+	os.Remove(filepath.Join(frpDir, fmt.Sprintf("frps-%d.toml", p.ID)))
 	exec.Command("systemctl", "daemon-reload").CombinedOutput()
 	exec.Command("systemctl", "reset-failed").CombinedOutput()
 	exec.Command("ip", "tunnel", "del", greSvc).CombinedOutput()
@@ -607,22 +607,22 @@ func localStatus() tunnelStatus {
 	}
 	if st.Role == "" {
 		// fall back to config presence
-		if _, err := os.Stat("/etc/frp/frps.toml"); err == nil {
+		if _, err := os.Stat(filepath.Join(frpDir, "frps.toml")); err == nil {
 			st.Role = "iran (server)"
 			st.FrpSvc = "frps"
-		} else if _, err := os.Stat("/etc/frp/frpc.toml"); err == nil {
+		} else if _, err := os.Stat(filepath.Join(frpDir, "frpc.toml")); err == nil {
 			st.Role = "foreign (client)"
 			st.FrpSvc = "frpc"
-		} else if _, err := os.Stat("/etc/backhaul/config.toml"); err == nil {
+		} else if _, err := os.Stat(filepath.Join(backhaulDir, "config.toml")); err == nil {
 			st.Role = "iran (backhaul)"
 			st.FrpSvc = "backhaul-server"
-		} else if _, err := os.Stat("/etc/backhaul/server.toml"); err == nil {
+		} else if _, err := os.Stat(filepath.Join(backhaulDir, "server.toml")); err == nil {
 			st.Role = "iran (backhaul)"
 			st.FrpSvc = "backhaul-server"
 		} else if _, err := os.Stat(filepath.Join(configDir, "server.toml")); err == nil {
 			st.Role = "iran (backhaul)"
 			st.FrpSvc = "backhaul-server"
-		} else if _, err := os.Stat("/etc/backhaul/client.toml"); err == nil {
+		} else if _, err := os.Stat(filepath.Join(backhaulDir, "client.toml")); err == nil {
 			st.Role = "foreign (backhaul)"
 			st.FrpSvc = "backhaul-client"
 		} else if _, err := os.Stat(filepath.Join(configDir, "client.toml")); err == nil {
@@ -639,17 +639,17 @@ func localStatus() tunnelStatus {
 		}
 		st.TunnelEngine = st.Engine
 		st.TunnelType = st.Engine
-		bhPath := "/etc/backhaul/config.toml"
+		bhPath := filepath.Join(backhaulDir, "config.toml")
 		if _, err := os.Stat(bhPath); err != nil {
-			if _, err := os.Stat("/etc/backhaul/server.toml"); err == nil {
-				bhPath = "/etc/backhaul/server.toml"
+			if _, err := os.Stat(filepath.Join(backhaulDir, "server.toml")); err == nil {
+				bhPath = filepath.Join(backhaulDir, "server.toml")
 			} else if _, err := os.Stat(filepath.Join(configDir, "server.toml")); err == nil {
 				bhPath = filepath.Join(configDir, "server.toml")
 			}
 		}
 		if st.FrpSvc == "backhaul-client" {
-			if _, err := os.Stat("/etc/backhaul/client.toml"); err == nil {
-				bhPath = "/etc/backhaul/client.toml"
+			if _, err := os.Stat(filepath.Join(backhaulDir, "client.toml")); err == nil {
+				bhPath = filepath.Join(backhaulDir, "client.toml")
 			} else if _, err := os.Stat(filepath.Join(configDir, "client.toml")); err == nil {
 				bhPath = filepath.Join(configDir, "client.toml")
 			}
@@ -701,9 +701,9 @@ func localStatus() tunnelStatus {
 		if st.FrpSvc != "" {
 			st.Engine = "frp"
 		}
-		tomlPath := "/etc/frp/frps.toml"
+		tomlPath := filepath.Join(frpDir, "frps.toml")
 		if st.FrpSvc == "frpc" {
-			tomlPath = "/etc/frp/frpc.toml"
+			tomlPath = filepath.Join(frpDir, "frpc.toml")
 		}
 		if data, err := os.ReadFile(tomlPath); err == nil {
 			inProxy := false
@@ -836,7 +836,7 @@ func switchTunnelEngine(targetEngine, targetTransport string) (string, error) {
 	}
 
 	// 1. Read token & ports from current config
-	if data, err := os.ReadFile("/etc/frp/frps.toml"); err == nil {
+	if data, err := os.ReadFile(filepath.Join(frpDir, "frps.toml")); err == nil {
 		for _, l := range strings.Split(string(data), "\n") {
 			l = strings.TrimSpace(l)
 			if strings.HasPrefix(l, "auth.token = ") {
@@ -845,7 +845,7 @@ func switchTunnelEngine(targetEngine, targetTransport string) (string, error) {
 		}
 	}
 	if token == "" {
-		if data, err := os.ReadFile("/etc/frp/frpc.toml"); err == nil {
+		if data, err := os.ReadFile(filepath.Join(frpDir, "frpc.toml")); err == nil {
 			for _, l := range strings.Split(string(data), "\n") {
 				l = strings.TrimSpace(l)
 				if strings.HasPrefix(l, "auth.token = ") {
@@ -855,7 +855,7 @@ func switchTunnelEngine(targetEngine, targetTransport string) (string, error) {
 		}
 	}
 	if token == "" {
-		if data, err := os.ReadFile("/etc/backhaul/config.toml"); err == nil {
+		if data, err := os.ReadFile(filepath.Join(backhaulDir, "config.toml")); err == nil {
 			for _, l := range strings.Split(string(data), "\n") {
 				l = strings.TrimSpace(l)
 				if strings.HasPrefix(l, "token = ") {
@@ -865,7 +865,7 @@ func switchTunnelEngine(targetEngine, targetTransport string) (string, error) {
 		}
 	}
 	if token == "" {
-		if data, err := os.ReadFile("/etc/backhaul/client.toml"); err == nil {
+		if data, err := os.ReadFile(filepath.Join(backhaulDir, "client.toml")); err == nil {
 			for _, l := range strings.Split(string(data), "\n") {
 				l = strings.TrimSpace(l)
 				if strings.HasPrefix(l, "token = ") {
@@ -927,15 +927,15 @@ func switchTunnelEngine(targetEngine, targetTransport string) (string, error) {
 	outMsg.WriteString(fmt.Sprintf("Switching engine to %s (%s)...\n", targetEngine, targetTransport))
 
 	// Stop previous services
-	_ = exec.Command("systemctl", "stop", "frps").Run()
-	_ = exec.Command("systemctl", "stop", "frpc").Run()
-	_ = exec.Command("systemctl", "stop", "backhaul-server").Run()
-	_ = exec.Command("systemctl", "stop", "backhaul-client").Run()
+	_ = runSystemctl("stop", "frps")
+	_ = runSystemctl("stop", "frpc")
+	_ = runSystemctl("stop", "backhaul-server")
+	_ = runSystemctl("stop", "backhaul-client")
 
 	switch targetEngine {
 	case "frp":
 		// Ensure GRE is active
-		_ = exec.Command("systemctl", "restart", "gre-tunnel").Run()
+		_ = runSystemctl("restart", "gre-tunnel")
 		if isIran {
 			// Write frps.toml
 			effTLS := "0"
@@ -959,11 +959,11 @@ auth.token = %q%s
 transport.heartbeatTimeout = 90
 transport.maxPoolCount = 100
 `, port, token, tlsLine, tcpMuxTomlLines())
-			_ = os.MkdirAll("/etc/frp", 0755)
-			_ = os.WriteFile("/etc/frp/frps.toml", []byte(frpsToml), 0644)
+			_ = os.MkdirAll(frpDir, 0755)
+			_ = os.WriteFile(filepath.Join(frpDir, "frps.toml"), []byte(frpsToml), 0644)
 			ensureFRPServiceUnits("frps")
-			_ = exec.Command("systemctl", "restart", "frps").Run()
-			_ = exec.Command("systemctl", "enable", "frps").Run()
+			_ = runSystemctl("restart", "frps")
+			_ = runSystemctl("enable", "frps")
 			outMsg.WriteString("frps service configured and started with high-concurrency limits.\n")
 		} else {
 			// Foreign FRP client
@@ -987,7 +987,7 @@ transport.maxPoolCount = 100
 				}
 			}
 			if ppVersion == "" {
-				if data, err := os.ReadFile("/etc/frp/frpc.toml"); err == nil && strings.Contains(string(data), `proxyProtocolVersion = "v2"`) {
+				if data, err := os.ReadFile(filepath.Join(frpDir, "frpc.toml")); err == nil && strings.Contains(string(data), `proxyProtocolVersion = "v2"`) {
 					ppVersion = "v2"
 				}
 			}
@@ -1042,43 +1042,43 @@ localPort = %d
 remotePort = %d
 `, p, p, p, ppLine, encLine, compLine, p, p, p))
 			}
-			_ = os.MkdirAll("/etc/frp", 0755)
-			_ = os.WriteFile("/etc/frp/frpc.toml", []byte(frpcBuf.String()), 0644)
+			_ = os.MkdirAll(frpDir, 0755)
+			_ = os.WriteFile(filepath.Join(frpDir, "frpc.toml"), []byte(frpcBuf.String()), 0644)
 			ensureFRPServiceUnits("frpc")
-			_ = exec.Command("systemctl", "restart", "frpc").Run()
-			_ = exec.Command("systemctl", "enable", "frpc").Run()
+			_ = runSystemctl("restart", "frpc")
+			_ = runSystemctl("enable", "frpc")
 			outMsg.WriteString("frpc service configured and started with high-concurrency limits.\n")
 		}
 
 	case "backhaul":
 		// Standalone Backhaul (no GRE)
-		_ = exec.Command("systemctl", "stop", "gre-tunnel").Run()
+		_ = runSystemctl("stop", "gre-tunnel")
 		if isIran {
-			_ = writeBackhaulServerConfig("/etc/backhaul/config.toml", fmt.Sprintf("0.0.0.0:%d", port), targetTransport, token, rawPorts)
-			_ = exec.Command("systemctl", "restart", "backhaul-server").Run()
-			_ = exec.Command("systemctl", "enable", "backhaul-server").Run()
+			_ = writeBackhaulServerConfig(filepath.Join(backhaulDir, "config.toml"), fmt.Sprintf("0.0.0.0:%d", port), targetTransport, token, rawPorts)
+			_ = runSystemctl("restart", "backhaul-server")
+			_ = runSystemctl("enable", "backhaul-server")
 			outMsg.WriteString("backhaul-server configured and started.\n")
 		} else {
 			remoteAddr := fmt.Sprintf("%s:%d", remotePub, port)
-			_ = writeBackhaulClientConfig("/etc/backhaul/client.toml", remoteAddr, targetTransport, token)
-			_ = exec.Command("systemctl", "restart", "backhaul-client").Run()
-			_ = exec.Command("systemctl", "enable", "backhaul-client").Run()
+			_ = writeBackhaulClientConfig(filepath.Join(backhaulDir, "client.toml"), remoteAddr, targetTransport, token)
+			_ = runSystemctl("restart", "backhaul-client")
+			_ = runSystemctl("enable", "backhaul-client")
 			outMsg.WriteString("backhaul-client configured and started.\n")
 		}
 
 	case "gre-backhaul":
 		// GRE + Backhaul
-		_ = exec.Command("systemctl", "restart", "gre-tunnel").Run()
+		_ = runSystemctl("restart", "gre-tunnel")
 		if isIran {
-			_ = writeBackhaulServerConfig("/etc/backhaul/config.toml", fmt.Sprintf("0.0.0.0:%d", port), targetTransport, token, rawPorts)
-			_ = exec.Command("systemctl", "restart", "backhaul-server").Run()
-			_ = exec.Command("systemctl", "enable", "backhaul-server").Run()
+			_ = writeBackhaulServerConfig(filepath.Join(backhaulDir, "config.toml"), fmt.Sprintf("0.0.0.0:%d", port), targetTransport, token, rawPorts)
+			_ = runSystemctl("restart", "backhaul-server")
+			_ = runSystemctl("enable", "backhaul-server")
 			outMsg.WriteString("backhaul-server (over GRE) configured and started.\n")
 		} else {
 			remoteAddr := fmt.Sprintf("%s:%d", peerGre, port)
-			_ = writeBackhaulClientConfig("/etc/backhaul/client.toml", remoteAddr, targetTransport, token)
-			_ = exec.Command("systemctl", "restart", "backhaul-client").Run()
-			_ = exec.Command("systemctl", "enable", "backhaul-client").Run()
+			_ = writeBackhaulClientConfig(filepath.Join(backhaulDir, "client.toml"), remoteAddr, targetTransport, token)
+			_ = runSystemctl("restart", "backhaul-client")
+			_ = runSystemctl("enable", "backhaul-client")
 			outMsg.WriteString("backhaul-client (over GRE) configured and started.\n")
 		}
 	}
@@ -1121,7 +1121,7 @@ func ensureFRPServiceUnits(svcName string) {
 	}
 	if changed {
 		_ = os.WriteFile(unitPath, []byte(content), 0644)
-		_ = exec.Command("systemctl", "daemon-reload").Run()
+		_ = runSystemctl("daemon-reload")
 	}
 }
 

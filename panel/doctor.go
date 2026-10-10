@@ -172,6 +172,12 @@ func runFullDiagnostics() *doctorReport {
 		rep.FixAvailable = true
 	}
 
+	// 1b. frpc EOF on login = hub/spoke tcpMux mismatch (hint only, never auto-changed)
+	if st.FrpSvc == "frpc" && frpcLoginEOF() {
+		rep.Issues = append(rep.Issues, "frpc login fails with 'connect to server error: EOF'")
+		rep.Recommendations = append(rep.Recommendations, errCatalog["E-FRP-10"].Hint)
+	}
+
 	// 2. Kernel sysctl & MSS Clamping Audit (always audited)
 	rep.KernelAudit = executeKernelAudit()
 	if !rep.KernelAudit.BBREnabled {
@@ -622,4 +628,26 @@ func applyDoctorFixes() map[string]any {
 	return map[string]any{
 		"applied": fixes,
 	}
+}
+
+// frpcLoginEOF reports whether the recent frpc journal shows the login EOF
+// pattern that a hub/spoke tcpMux mismatch produces. Read-only.
+func frpcLoginEOF() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "journalctl", "-u", "frpc", "-n", "50", "--no-pager").Output()
+	if err != nil {
+		return false
+	}
+	// only the newest login outcome counts: an old EOF followed by a successful login is a recovered tunnel
+	lines := strings.Split(strings.ToLower(string(out)), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		switch {
+		case strings.Contains(lines[i], "login to server success"):
+			return false
+		case strings.Contains(lines[i], "connect to server error: eof"):
+			return true
+		}
+	}
+	return false
 }

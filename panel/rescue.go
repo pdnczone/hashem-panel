@@ -49,8 +49,9 @@ var (
 	rescueUnitDir = "/etc/systemd/system"
 	rescueBinDir  = "/usr/local/bin"
 	rescueMu      sync.Mutex
-	// frp configs whose forwarded ports the rescue should carry (swappable for tests).
-	rescueFrpConfigs = []string{"/etc/frp/frpc.toml", "/etc/frp/frps.toml"}
+	// frp configs whose forwarded ports the rescue should carry (swappable for
+	// tests); nil means the frpDir defaults, see rescueFrpConfigList.
+	rescueFrpConfigs []string
 
 	// Swappable for tests.
 	runCmd = func(name string, args ...string) (string, error) {
@@ -223,8 +224,13 @@ func rescueOriginFrpcToml(cport int, token, secret string, ports []int) string {
 }
 
 func rescueEntryFrpcToml(originIP string, cport int, token, secret string, ports []int) string {
+	return rescueEntryFrpcTomlMux(originIP, cport, token, secret, ports, tcpMuxEnabled())
+}
+
+// rescueEntryFrpcTomlMux renders the entry toml with the origin's tcpMux so both ends match.
+func rescueEntryFrpcTomlMux(originIP string, cport int, token, secret string, ports []int, mux bool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "serverAddr = %q\nserverPort = %d\nauth.method = \"token\"\nauth.token = %q\nloginFailExit = false\nlog.to = \"console\"\nlog.level = \"info\"\ntransport.poolCount = 20\n%s", originIP, cport, token, tcpMuxTomlLines())
+	fmt.Fprintf(&b, "serverAddr = %q\nserverPort = %d\nauth.method = \"token\"\nauth.token = %q\nloginFailExit = false\nlog.to = \"console\"\nlog.level = \"info\"\ntransport.poolCount = 20\n%s", originIP, cport, token, tcpMuxTomlLinesFor(mux))
 	for _, p := range ports {
 		for _, t := range [][2]string{{"tcp", "stcp"}, {"udp", "sudp"}} {
 			fmt.Fprintf(&b, "\n[[visitors]]\nname = \"rescue-v-%d-%s\"\ntype = %q\nserverName = \"rescue-%d-%s\"\nsecretKey = %q\nbindAddr = \"0.0.0.0\"\nbindPort = %d\n", p, t[0], t[1], p, t[0], secret, p)
@@ -329,10 +335,21 @@ type rescueCode struct {
 	Token  string `json:"t"`
 	Secret string `json:"s"`
 	Ports  []int  `json:"p"`
+	// M is the origin's tcpMux; absent in old codes (entry falls back to its own).
+	M *bool `json:"m,omitempty"`
+}
+
+// rescueFrpConfigList is the frp configs whose ports the rescue carries.
+func rescueFrpConfigList() []string {
+	if rescueFrpConfigs != nil {
+		return rescueFrpConfigs
+	}
+	return []string{filepath.Join(frpDir, "frpc.toml"), filepath.Join(frpDir, "frps.toml")}
 }
 
 func rescueEncode(st rescueState, originPub string) string {
-	b, _ := json.Marshal(rescueCode{V: 1, IP: originPub, CPort: st.CtrlPort, Token: st.Token, Secret: st.Secret, Ports: st.Ports})
+	mux := tcpMuxEnabled()
+	b, _ := json.Marshal(rescueCode{V: 1, IP: originPub, CPort: st.CtrlPort, Token: st.Token, Secret: st.Secret, Ports: st.Ports, M: &mux})
 	return rescueCodePrefix + base64.RawURLEncoding.EncodeToString(b)
 }
 
@@ -493,12 +510,16 @@ func rescueApplyCode(code string) (rescueState, error) {
 	st = rescueState{Role: "entry", RemoteIP: c.IP, CtrlPort: c.CPort, Token: c.Token, Secret: c.Secret, Ports: use, Skipped: skipped, Direct: direct, Relay: relay, Since: time.Now().Unix()}
 	d := rescueDir()
 	frpc := filepath.Join(rescueBinDir, "frpc")
+	mux := tcpMuxEnabled()
+	if c.M != nil {
+		mux = *c.M
+	}
 	write := func() error {
 		files := []struct {
 			p, c string
 			m    os.FileMode
 		}{
-			{filepath.Join(d, "frpc.toml"), rescueEntryFrpcToml(c.IP, c.CPort, c.Token, c.Secret, relay), 0600},
+			{filepath.Join(d, "frpc.toml"), rescueEntryFrpcTomlMux(c.IP, c.CPort, c.Token, c.Secret, relay, mux), 0600},
 			{rescueUnitPath("hashem-rescue-frpc"), rescueUnit("Hashem rescue entry (frpc visitors)", frpc+" -c "+filepath.Join(d, "frpc.toml"), "", ""), 0644},
 		}
 		if len(direct) > 0 {
@@ -600,7 +621,7 @@ func suggestRescuePorts() []int {
 		}
 	}
 
-	for _, f := range rescueFrpConfigs {
+	for _, f := range rescueFrpConfigList() {
 		if data, err := os.ReadFile(f); err == nil {
 			for _, line := range strings.Split(string(data), "\n") {
 				line = strings.TrimSpace(line)
@@ -710,7 +731,7 @@ func rescueTargets() []rescueTarget {
 	}
 
 	// 6. /etc/frp/frpc.toml serverAddr
-	if data, err := os.ReadFile("/etc/frp/frpc.toml"); err == nil {
+	if data, err := os.ReadFile(filepath.Join(frpDir, "frpc.toml")); err == nil {
 		for _, line := range strings.Split(string(data), "\n") {
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, "serverAddr") {

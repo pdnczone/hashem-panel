@@ -166,8 +166,11 @@ func tcpMuxEnabled() bool {
 }
 
 // tcpMuxTomlLines renders the tcpMux lines for a freshly written toml.
-func tcpMuxTomlLines() string {
-	if tcpMuxEnabled() {
+func tcpMuxTomlLines() string { return tcpMuxTomlLinesFor(tcpMuxEnabled()) }
+
+// tcpMuxTomlLinesFor renders the tcpMux lines for an explicit value.
+func tcpMuxTomlLinesFor(mux bool) string {
+	if mux {
 		return "transport.tcpMux = true\ntransport.tcpMuxKeepaliveInterval = 30\n"
 	}
 	return "transport.tcpMux = false\n"
@@ -177,7 +180,7 @@ func tcpMuxTomlLines() string {
 // "mixed" (hub and peers disagree) or "" when no toml exists. frp treats a missing
 // key as true, so only an explicit "false" counts as off.
 func liveTCPMux() string {
-	files, _ := filepath.Glob("/etc/frp/frp[sc]*.toml")
+	files, _ := filepath.Glob(filepath.Join(frpDir, "frp[sc]*.toml"))
 	seenOn, seenOff := false, false
 	for _, f := range files {
 		data, err := os.ReadFile(f)
@@ -258,26 +261,26 @@ func checkLiveTomlSync(c perfConfig) (bool, string, string) {
 		}
 		if live := liveTCPMux(); live != "" && live != want {
 			role := "none"
-			if _, err := os.Stat("/etc/frp/frpc.toml"); err == nil {
+			if _, err := os.Stat(filepath.Join(frpDir, "frpc.toml")); err == nil {
 				role = "foreign"
-			} else if matches, _ := filepath.Glob("/etc/frp/frps*.toml"); len(matches) > 0 {
+			} else if matches, _ := filepath.Glob(filepath.Join(frpDir, "frps*.toml")); len(matches) > 0 {
 				role = "iran"
 			}
 			return false, fmt.Sprintf("TCP multiplexing (%s) does not match live toml (%s)", want, live), role
 		}
 	}
 	role := "none"
-	if _, err := os.Stat("/etc/frp/frpc.toml"); err == nil {
+	if _, err := os.Stat(filepath.Join(frpDir, "frpc.toml")); err == nil {
 		role = "foreign"
-	} else if _, err := os.Stat("/etc/frp/frps.toml"); err == nil {
+	} else if _, err := os.Stat(filepath.Join(frpDir, "frps.toml")); err == nil {
 		role = "iran"
 	}
 
 	switch role {
 	case "foreign":
-		data, err := os.ReadFile("/etc/frp/frpc.toml")
+		data, err := os.ReadFile(filepath.Join(frpDir, "frpc.toml"))
 		if err != nil {
-			return false, "cannot read /etc/frp/frpc.toml", role
+			return false, "cannot read " + filepath.Join(frpDir, "frpc.toml"), role
 		}
 		content := string(data)
 		hasTLSByte := strings.Contains(content, "transport.tls.disableCustomTLSFirstByte = true") || strings.Contains(content, "transport.tls.disableCustomTLSFirstByte=true")
@@ -295,9 +298,9 @@ func checkLiveTomlSync(c perfConfig) (bool, string, string) {
 		}
 		return true, "All settings match live frpc.toml", role
 	case "iran":
-		data, err := os.ReadFile("/etc/frp/frps.toml")
+		data, err := os.ReadFile(filepath.Join(frpDir, "frps.toml"))
 		if err != nil {
-			return false, "cannot read /etc/frp/frps.toml", role
+			return false, "cannot read " + filepath.Join(frpDir, "frps.toml"), role
 		}
 		content := string(data)
 		hasTLSForce := strings.Contains(content, "transport.tls.force = true") || strings.Contains(content, "transport.tls.force=true")
