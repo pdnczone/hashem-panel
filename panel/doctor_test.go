@@ -9,6 +9,9 @@ import (
 )
 
 func TestDoctorEndpoints(t *testing.T) {
+	prev := applyFixesFn
+	applyFixesFn = func() map[string]any { return map[string]any{"applied": []string{}} }
+	defer func() { applyFixesFn = prev }()
 	// 1. GET /api/doctor
 	req := httptest.NewRequest("GET", "/api/doctor", nil)
 	rr := httptest.NewRecorder()

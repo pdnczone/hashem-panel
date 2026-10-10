@@ -2,9 +2,9 @@ package main
 
 import (
 	"net"
-	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ssSession is one ESTABLISHED TCP session from `ss -Htin`.
@@ -82,7 +82,7 @@ func sessionsOn(all []ssSession, ports []int, remotes ...string) []ssSession {
 }
 
 func ssEstablished() string {
-	out, err := exec.Command("ss", "-Htin", "state", "established").Output()
+	out, err := runCmdTimeoutOut(5*time.Second, "ss", "-Htin", "state", "established")
 	if err != nil {
 		return ""
 	}

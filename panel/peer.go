@@ -624,34 +624,40 @@ func peerSyncLoop() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		c := loadPeerConfig()
-		if c.PeerSecret == "" {
-			continue
-		}
+		t0 := time.Now()
+		peerSyncTick()
+		recordSampler("peerSync", time.Since(t0))
+	}
+}
 
-		if c.Role == "worker" {
-			if !c.IsConnected {
-				st := localStatus()
-				localInner := st.Gre.Inner
-				if localInner == "" {
-					localInner = defaultForeignGRE
-				}
-				innerIP := strings.Split(localInner, "/")[0]
-				_, err := sendToPeer("/api/peer/handshake", "POST", PeerHandshakeRequest{
-					Role:       "worker",
-					PublicIP:   detectPublicIP(),
-					PanelPort:  cfg.Port,
-					InternalIP: innerIP,
-				})
-				if err == nil {
-					log.Printf("[PeerSync] Background handshake succeeded with master")
-				}
-			} else {
-				// Periodically test link to update latency & maintain health
-				_, _, _ = testPeerLink()
+func peerSyncTick() {
+	c := loadPeerConfig()
+	if c.PeerSecret == "" {
+		return
+	}
+
+	if c.Role == "worker" {
+		if !c.IsConnected {
+			st := localStatus()
+			localInner := st.Gre.Inner
+			if localInner == "" {
+				localInner = defaultForeignGRE
 			}
-		} else if c.Role == "master" && c.IsConnected {
+			innerIP := strings.Split(localInner, "/")[0]
+			_, err := sendToPeer("/api/peer/handshake", "POST", PeerHandshakeRequest{
+				Role:       "worker",
+				PublicIP:   detectPublicIP(),
+				PanelPort:  cfg.Port,
+				InternalIP: innerIP,
+			})
+			if err == nil {
+				log.Printf("[PeerSync] Background handshake succeeded with master")
+			}
+		} else {
+			// Periodically test link to update latency & maintain health
 			_, _, _ = testPeerLink()
 		}
+	} else if c.Role == "master" && c.IsConnected {
+		_, _, _ = testPeerLink()
 	}
 }

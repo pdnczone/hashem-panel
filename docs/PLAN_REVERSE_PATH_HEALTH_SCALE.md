@@ -369,3 +369,51 @@ commit, and `git push origin main` in the same turn.
    `ping` but only ≤1/min per peer and only when no live session.
 4. Memory/CPU budget of target hub boxes (RAM size) so cgroup limits in C2.6
    are set from real numbers.
+
+---------------------------------------------------------------------------
+## Phase 1 status (measurement + read-only diagnosis)
+
+Phase 1 changes no tunnel, health verdict or system state. Every new probe is a
+read, and every new endpoint sits behind the normal session auth.
+
+### Shipped
+- `panel/runcmd.go`: `runner` seam (`cmdRunner`) plus `runCmdTimeout` /
+  `runCmdTimeoutOut`, with a context timeout and per-command counters (calls,
+  avg/max, timeouts, errors, calls in the last 60 s). The plan called this
+  `runCmd`, but `rescue.go` already owns that name (a swappable var its tests
+  assign), so the new helper is `runCmdTimeout`. Converted call sites only:
+  `livePeers`, `localStatus`, `ifaceInner`, `svcActive`, `ssEstablished`,
+  `activeConns`. Timeouts are 5 s; ping uses 4 s on top of its own `-W 2`.
+- `panel/metrics.go`: `GET /api/selfstats` (goroutines, heap, GC, RSS, open
+  FDs, uptime, exec stats, per-sampler stats, per-route p50/p95/p99 over the
+  last 512 requests, in-flight gauge). Samplers timed: `livePeers`,
+  `fleetSampler`, `trafficRecorder`, `peerSync`. Routes are labelled
+  `/{base}/...`; paths outside the base collapse to `other`.
+  `metricsMiddleware` wraps both the HTTP and HTTPS handler chains.
+- Optional pprof at `/{base}/debug/pprof/*`, mounted only when
+  `HASHEM_PPROF=1` or `debug_enabled` is true in `panel.json` (default off),
+  behind `requireAuth`.
+- `panel/loadlab_test.go`: in-process load lab (see
+  `docs/audit/LOAD_REPORT.md`). Skipped unless `HASHEM_LOADLAB=1`.
+- `panel/revpath.go`: probe matrix types, the pure `classifyRevPath`
+  (verdict codes from A2, ambiguous input gives `UNKNOWN` with no fix),
+  read-only collectors (rp_filter, ip_forward, GRE MTU, `ip route get`,
+  `/proc/net/dev` counters, `iptables-save` parsing, conntrack invalid),
+  `GET /api/revpath` (60 s cache, one collection at a time) and
+  `POST /api/revpath/run {peer_id}`. The doctor report gains an additive
+  `revpath` field filled from the cache only (it never probes).
+- Tests: runcmd, metrics, revpath (a stub-runner test fails if any write
+  command is issued) and the load lab.
+
+### Deferred
+- Spoke-side half of the matrix. Only hub to spoke is probed; spoke to hub
+  ICMP layers stay `unprobed`. The only spoke to hub data is passive: TCP
+  layers seen from live ESTABLISHED sessions. With the spoke side missing the
+  classifier caps confidence and asks for spoke data.
+- All fixes (A3), `applyDoctorFixes()` step 5 removal, `revpath_auto`, the UI
+  cards, the CLI subcommand and the netns lab.
+- Plan B (health model, `Linked` fixes, UI chips), Plan C2 (shared snapshot,
+  batching, server timeouts, cgroup limits). Phase 3 is gated on the lab
+  findings in `docs/audit/LOAD_REPORT.md`.
+- GRE counter deltas include live tunnel traffic, so they are only used as
+  zero versus non-zero.

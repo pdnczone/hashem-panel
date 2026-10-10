@@ -51,6 +51,8 @@ type panelConfig struct {
 	TerminalEnabled bool `json:"terminal_enabled,omitempty"`
 	// TLSPort is the HTTPS listener port (default 7443). HTTP stays on Port.
 	TLSPort int `json:"tls_port,omitempty"`
+	// DebugEnabled mounts /debug/pprof behind auth (also HASHEM_PPROF=1).
+	DebugEnabled bool `json:"debug_enabled,omitempty"`
 }
 
 func termEnabled() bool { return cfg.TerminalEnabled }
@@ -268,6 +270,10 @@ func main() {
 	mux.HandleFunc("GET "+base+"/api/carrier", requireAuth(handleCarrierGet))
 	mux.HandleFunc("POST "+base+"/api/carrier", requireAuth(requireCSRF(handleCarrierPost)))
 	mux.HandleFunc("GET "+base+"/api/fleet", requireAuth(handleFleet))
+	mux.HandleFunc("GET "+base+"/api/selfstats", requireAuth(handleSelfStats))
+	mux.HandleFunc("GET "+base+"/api/revpath", requireAuth(handleRevPathGet))
+	mux.HandleFunc("POST "+base+"/api/revpath/run", requireAuth(requireCSRF(handleRevPathRun)))
+	mountDebug(mux, base)
 	mux.HandleFunc("GET "+base+"/api/dial", requireAuth(handleDialGet))
 	mux.HandleFunc("POST "+base+"/api/dial", requireAuth(requireCSRF(handleDialPost)))
 	mux.HandleFunc("GET "+base+"/api/support", requireAuth(handleSupport))
@@ -322,7 +328,7 @@ func main() {
 		}
 	}
 	srv := &http.Server{
-		Handler:           securityMiddleware(mux),
+		Handler:           metricsMiddleware(securityMiddleware(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}

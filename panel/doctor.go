@@ -32,6 +32,8 @@ type doctorReport struct {
 	Issues          []string        `json:"issues"`
 	Recommendations []string        `json:"recommendations"`
 	FixAvailable    bool            `json:"fix_available"`
+	// RevPath is the cached read-only reverse-path diagnosis (never probes here).
+	RevPath []revPathEntry `json:"revpath,omitempty"`
 }
 
 type pingSummary struct {
@@ -108,7 +110,7 @@ func handleDoctorPost(w http.ResponseWriter, r *http.Request) {
 		lastDoctorMu.Unlock()
 		writeJSON(w, rep)
 	case "fix":
-		res := applyDoctorFixes()
+		res := applyFixesFn()
 		// Re-run diagnostics after fix
 		rep := runFullDiagnostics()
 		lastDoctorMu.Lock()
@@ -254,6 +256,8 @@ func runFullDiagnostics() *doctorReport {
 
 	// 5. Throughput / Speed
 	rep.SpeedResult = executeThroughputTest(rep.PeerGREIP, rep.InterfaceUp)
+
+	rep.RevPath = revPathCached()
 
 	// Final Score normalization
 	if rep.Score < 0 {
@@ -576,6 +580,10 @@ func stopIperfServer() (string, error) {
 	time.Sleep(200 * time.Millisecond)
 	return "iperf3 daemon stopped", nil
 }
+
+// applyFixesFn is swappable so tests never run the real fixer (sysctl, iptables,
+// installer optimize, gre-tunnel restart) on the machine running them.
+var applyFixesFn = applyDoctorFixes
 
 func applyDoctorFixes() map[string]any {
 	fixes := []string{}

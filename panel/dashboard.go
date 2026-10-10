@@ -445,7 +445,7 @@ func readCPU() (cpuSample, bool) {
 // ---- connections: established TCP/UDP via ss ----
 
 func activeConns() any {
-	out, err := exec.Command("ss", "-tun", "state", "established").CombinedOutput()
+	out, err := runCmdTimeout(5*time.Second, "ss", "-tun", "state", "established")
 	if err != nil {
 		return nil
 	}
@@ -578,8 +578,10 @@ func startTrafficRecorder() {
 			for {
 				select {
 				case <-sampleTicker.C:
+					t0 := time.Now()
 					traffic := greTraffic()
 					recordTrafficSample(traffic)
+					recordSampler("trafficRecorder", time.Since(t0))
 				case <-flushTicker.C:
 					flushHistoryIfDirty()
 				case <-compactTicker.C:

@@ -335,6 +335,7 @@ func startFleetSampler() {
 	fleetOnce.Do(func() {
 		go func() {
 			tick := func() {
+				defer func(t time.Time) { recordSampler("fleetSampler", time.Since(t)) }(time.Now())
 				peers := livePeers()
 				if m := mainTunnelLive(); m != nil {
 					peers = append([]peerLive{*m}, peers...)

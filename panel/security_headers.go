@@ -48,6 +48,6 @@ func securityMiddleware(next http.Handler) http.Handler {
 // Resolved lazily so the HTTPS listener always serves the current mux.
 func panelHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		securityMiddleware(panelMux).ServeHTTP(w, r)
+		metricsMiddleware(securityMiddleware(panelMux)).ServeHTTP(w, r)
 	})
 }

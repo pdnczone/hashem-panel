@@ -371,7 +371,7 @@ func ifaceTraffic(ifname string) (rx, tx *uint64) {
 }
 
 func ifaceInner(ifname string) string {
-	out, err := exec.Command("ip", "-4", "addr", "show", "dev", ifname).CombinedOutput()
+	out, err := runCmdTimeout(5*time.Second, "ip", "-4", "addr", "show", "dev", ifname)
 	if err != nil {
 		return ""
 	}
@@ -385,12 +385,13 @@ func ifaceInner(ifname string) string {
 }
 
 func svcActive(svc string) bool {
-	out, err := exec.Command("systemctl", "is-active", svc).CombinedOutput()
+	out, err := runCmdTimeout(5*time.Second, "systemctl", "is-active", svc)
 	return err == nil && strings.TrimSpace(string(out)) == "active"
 }
 
 // livePeers inspects every registered peer: GRE up, frps up, ping, counters.
 func livePeers() []peerLive {
+	defer func(t time.Time) { recordSampler("livePeers", time.Since(t)) }(time.Now())
 	recs := loadPeers()
 	if len(recs) == 0 {
 		return nil
@@ -401,7 +402,7 @@ func livePeers() []peerLive {
 		if p.NoGre {
 			l.GreInner = "standalone"
 			l.GreUp = true
-		} else if _, err := exec.Command("ip", "tunnel", "show").CombinedOutput(); err == nil {
+		} else if _, err := runCmdTimeout(5*time.Second, "ip", "tunnel", "show"); err == nil {
 			// presence check via interface address (works without parsing tun show)
 			l.GreInner = ifaceInner(p.GreIf)
 			l.GreUp = l.GreInner != ""
@@ -417,7 +418,7 @@ func livePeers() []peerLive {
 		}
 		if pingTarget != "" {
 			start := time.Now()
-			if err := exec.Command("ping", "-c", "1", "-W", "2", pingTarget).Run(); err == nil {
+			if _, err := runCmdTimeout(4*time.Second, "ping", "-c", "1", "-W", "2", pingTarget); err == nil {
 				l.PingOK = true
 				l.PingMs = fmt.Sprintf("%.0fms", float64(time.Since(start).Microseconds())/1000)
 			}
@@ -556,7 +557,7 @@ type tunnelStatus struct {
 func localStatus() tunnelStatus {
 	var st tunnelStatus
 	// GRE interface
-	if out, err := exec.Command("ip", "tunnel", "show").CombinedOutput(); err == nil {
+	if out, err := runCmdTimeout(5*time.Second, "ip", "tunnel", "show"); err == nil {
 		for _, line := range strings.Split(string(out), "\n") {
 			if strings.Contains(line, "gre-tunnel") {
 				st.Gre.Exists = true
@@ -574,7 +575,7 @@ func localStatus() tunnelStatus {
 			}
 		}
 	}
-	if out, err := exec.Command("ip", "-4", "addr", "show", "dev", "gre-tunnel").CombinedOutput(); err == nil {
+	if out, err := runCmdTimeout(5*time.Second, "ip", "-4", "addr", "show", "dev", "gre-tunnel"); err == nil {
 		for _, line := range strings.Split(string(out), "\n") {
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, "inet ") {
@@ -588,7 +589,7 @@ func localStatus() tunnelStatus {
 	}
 	// FRP / Backhaul role: which unit file exists / is active
 	for _, svc := range []string{"frps", "frpc", "backhaul-server", "backhaul-client"} {
-		if out, err := exec.Command("systemctl", "is-active", svc).CombinedOutput(); err == nil &&
+		if out, err := runCmdTimeout(5*time.Second, "systemctl", "is-active", svc); err == nil &&
 			strings.TrimSpace(string(out)) == "active" {
 			st.FrpUp = true
 			st.FrpSvc = svc
@@ -764,7 +765,7 @@ func localStatus() tunnelStatus {
 		target := grePeerInner(st.Gre.Inner)
 		if target != "" {
 			start := time.Now()
-			if err := exec.Command("ping", "-c", "1", "-W", "2", target).Run(); err == nil {
+			if _, err := runCmdTimeout(4*time.Second, "ping", "-c", "1", "-W", "2", target); err == nil {
 				st.PingOK = true
 				st.PingMs = fmt.Sprintf("%.0fms", float64(time.Since(start).Microseconds())/1000)
 			}
