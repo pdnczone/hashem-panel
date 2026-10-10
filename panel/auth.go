@@ -203,7 +203,15 @@ func authed(r *http.Request) bool {
 		return false
 	}
 	// server-side random session ids (survive restarts, 24h absolute expiry)
-	return validSession(c.Value)
+	if !validSession(c.Value) {
+		return false
+	}
+	if sessionIdleExpired(c.Value, r.Header.Get("X-User-Active") == "1") {
+		dropSession(c.Value)
+		LogSecurityAudit("session_idle_expired", cfg.Username, clientIP(r), "idle timeout")
+		return false
+	}
+	return true
 }
 
 func requireAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -266,6 +274,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	tok := newSessionToken()
 	addSession(tok) // persistent: survives restarts, 24h absolute expiry
+	touchSession(tok)
 
 	csrfTok := GenerateCSRFToken(tok)
 	http.SetCookie(w, sessionCookie(r, tok, 86400))
@@ -281,6 +290,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 func handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie("gre_session"); err == nil {
 		dropSession(c.Value)
+		dropIdle(c.Value)
 	}
 	http.SetCookie(w, sessionCookie(r, "", -1))
 	http.SetCookie(w, csrfCookie(r, "", -1))
@@ -337,6 +347,7 @@ func handlePassword(w http.ResponseWriter, r *http.Request) {
 
 	tok := newSessionToken()
 	addSession(tok) // Keep the changer logged in with a fresh session
+	touchSession(tok)
 	csrfTok := GenerateCSRFToken(tok)
 
 	http.SetCookie(w, sessionCookie(r, tok, 86400))

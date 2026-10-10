@@ -59,6 +59,9 @@ type panelConfig struct {
 	RevPathAuto bool `json:"revpath_auto,omitempty"`
 	// Optional TOTP 2FA (off by default). Secret and recovery hashes live in
 	// panel.json (0600) like the password hash.
+	// IdleTimeoutMin logs a session out after this many minutes without user
+	// activity (0 = off, the default).
+	IdleTimeoutMin int      `json:"idle_timeout_min,omitempty"`
 	TOTPEnabled    bool     `json:"totp_enabled,omitempty"`
 	TOTPSecret     string   `json:"totp_secret,omitempty"`
 	RecoveryHashes []string `json:"recovery_hashes,omitempty"`
@@ -256,6 +259,8 @@ func main() {
 	mux.HandleFunc("GET "+base+"/api/logs", requireAuth(handleLogs))
 	mux.HandleFunc("GET "+base+"/api/errors", requireAuth(handleErrors))
 	mux.HandleFunc("GET "+base+"/api/audit", requireAuth(handleAuditGet))
+	mux.HandleFunc("GET "+base+"/api/session-settings", requireAuth(handleSessionSettingsGet))
+	mux.HandleFunc("POST "+base+"/api/session-settings", requireAuth(requireCSRF(handleSessionSettingsPost)))
 	mux.HandleFunc("GET "+base+"/api/2fa", requireAuth(handle2FAStatus))
 	mux.HandleFunc("POST "+base+"/api/2fa/setup", requireAuth(requireCSRF(handle2FASetup)))
 	mux.HandleFunc("POST "+base+"/api/2fa/enable", requireAuth(requireCSRF(handle2FAEnable)))

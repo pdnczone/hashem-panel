@@ -20,7 +20,7 @@ Small commits, one concern each. No production servers are touched.
 - [x] 3.1 Login lockout escalates per repeat offender (15m x2 up to 24h, decays after 24h), Retry-After header (5-failure lockout already existed)
 - [x] 3.2 Audit log: every mutating API call (method, path, status; never body), size rotation, GET /api/audit (newest first, filter, redacted)
 - [x] 3.3 Optional TOTP 2FA (RFC 6238 vectors tested, replay guard, 8 single-use recovery codes, two-step enrol, disable needs password+code, login + Settings UI)
-- [ ] 3.4 Session idle timeout setting
+- [x] 3.4 Idle session timeout (off by default; user-activity header so polling never keeps a session alive; Settings card)
 - [ ] 3.5 Terminal hardening: IP allowlist + password re-confirm before WS open
 - [ ] 3.6 Update integrity: verify sha256 of downloaded binary (extend existing checksum logic) in install.sh
 

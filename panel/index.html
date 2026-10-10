@@ -2201,6 +2201,12 @@
           <div id="passStrengthMeter" style="font-size:12px; margin-top:6px; margin-bottom:8px; color:var(--mu);"></div>
           <div><button class="hashem-btn hashem-btn-primary" id="savePass">Change password</button></div>
         </div>
+        <div class="tunnel-card" id="idleCard">
+          <div class="tc-header"><p class="tc-title">Session idle timeout</p></div>
+          <div class="ent-help">Sign out automatically after this many minutes without clicks or key presses. Background refresh does not count as activity. 0 = off.</div>
+          <div class="fg"><label for="idleMin">Minutes (0, or 5–1440)</label><input class="hashem-input" id="idleMin" type="number" min="0" max="1440" value="0"></div>
+          <div><button class="hashem-btn hashem-btn-primary" id="idleSave">Save</button></div>
+        </div>
         <div class="tunnel-card" id="twofaCard">
           <div class="tc-header"><p class="tc-title">Two-factor authentication (TOTP)</p></div>
           <div class="ent-help" id="twofaState">Loading…</div>
@@ -2587,9 +2593,13 @@ function getCSRFToken() {
 function setCSRFToken(tok) {
   if (tok) _csrfToken = tok;
 }
+// idle-timeout support: requests made within 30 s of real user input are marked active
+let userActiveAt = Date.now();
+['pointerdown','keydown','wheel','touchstart'].forEach(ev => window.addEventListener(ev, () => { userActiveAt = Date.now(); }, {passive: true, capture: true}));
 async function api(path, body, method) {
   const m = method || (body ? 'POST' : 'GET');
   const headers = {};
+  if (Date.now() - userActiveAt < 30000) headers['X-User-Active'] = '1';
   if (body) headers['Content-Type'] = 'application/json';
   if (m === 'POST' || m === 'PATCH' || m === 'DELETE' || m === 'PUT') {
     const csrf = getCSRFToken();
@@ -5378,7 +5388,7 @@ function doLogin() {
     try {
       await api('/api/login', {username: $('u').value, password: $('p').value, code: $('totpCode').value.trim()});
       $('p').value = ''; $('totpCode').value = ''; $('codeField').classList.add('hidden'); $('loginErr').textContent = '';
-      showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh();
+      showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh();
     } catch(e) {
       if (e.code === 'E-AUTH-09') { $('codeField').classList.remove('hidden'); $('totpCode').focus(); }
       $('loginErr').textContent = e.message;
@@ -5789,6 +5799,11 @@ function twofaRender() {
   $('twofaCancel').classList.toggle('hidden', twofa.step === 'idle');
   $('twofaBtn').textContent = twofa.step === 'setup' ? 'Confirm & enable' : twofa.step === 'disable' ? 'Disable 2FA' : (twofa.enabled ? 'Disable 2FA…' : 'Enable 2FA');
 }
+async function idleRefresh() { try { const r = await api('/api/session-settings'); $('idleMin').value = r.idle_minutes; } catch(e) {} }
+$('idleSave').onclick = async () => {
+  try { await api('/api/session-settings', {idle_minutes: parseInt($('idleMin').value || '0', 10)}); toastOk('idle timeout saved'); }
+  catch(e) { toastErr('idle timeout', e.message); }
+};
 async function twofaRefresh() {
   try { const s = await api('/api/2fa'); twofa.enabled = !!s.enabled; if (s.enabled) $('twofaState').dataset.left = s.recovery_left; } catch(e) {}
   twofa.step = 'idle'; twofaRender();
@@ -7185,7 +7200,7 @@ if ($('docIperfBtn')) $('docIperfBtn').onclick = toggleIperf;
 
 // boot: if already logged in, status works; else show login
 (async () => {
-  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); }
+  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); }
   catch(e) { showLogin(); }
 })();
 // light pollers: skip when the tab is in the background (background tabs
