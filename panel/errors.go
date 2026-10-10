@@ -15,6 +15,7 @@ package main
 //   E-UPDATE-xx  version check / download / install
 //   E-GRE-xx     GRE interface / ping diagnostics (log annotation)
 //   E-FRP-xx     FRP diagnostics (log annotation)
+//   E-BH-xx      Backhaul diagnostics (log annotation)
 //   E-SYS-xx     host tooling (journalctl/systemctl missing)
 //   E-WD-xx      watchdog / telegram alerts / backup
 
@@ -92,6 +93,9 @@ var errCatalog = map[string]errInfo{
 	"E-FRP-07": {0, "connection reset by peer / broken pipe", "Remote peer or network carrier reset the TCP stream."},
 	"E-FRP-08": {0, "connection tracking table full (packet dropped)", "Kernel nf_conntrack_max limit reached under high concurrent connections. Run Optimize in Tunnel tab."},
 	"E-FRP-09": {0, "yamux stream capacity / buffer overflow", "High stream contention on single TCP mux. Increase poolCount in frpc."},
+	"E-BH-01": {0, "backhaul authentication failed (token mismatch)", "The client token differs from the server token. Re-copy it from the Iran side; the token shown in logs is masked."},
+	"E-BH-02": {0, "backhaul control channel failed (EOF)", "Usually a wrong token or a transport mismatch (e.g. tcp vs tcpmux/ws) between hub and spoke. Make both ends use the same transport and token."},
+	"E-BH-03": {0, "backhaul rejected the config file", "The binary does not understand this config dialect (sectioned premium schema vs flat server/client). Re-run the Backhaul setup in `hashem`."},
 	"E-FRP-10": {0, "frpc login failed with EOF (likely tcpMux mismatch)", "tcpMux mismatch: hub is likely tcpMux=true, run `hashem perf tcpmux on|off` so both ends match (default OFF)."},
 	"E-SYS-01": {0, "host tool unavailable", "journalctl/systemctl/ip missing on this host."},
 	"E-SYS-02": {503, "panel is busy (too many requests in flight)", "Retry in a couple of seconds; /api/selfstats still answers."},
@@ -276,6 +280,12 @@ func matchLogCode(line string) (code, hint string) {
 		return false
 	}
 	switch {
+	case has("invalid security token"):
+		return "E-BH-01", errCatalog["E-BH-01"].Hint
+	case has("failed to receive control channel response"):
+		return "E-BH-02", errCatalog["E-BH-02"].Hint
+	case has("neither server nor client configuration is properly set"):
+		return "E-BH-03", errCatalog["E-BH-03"].Hint
 	case has("connect to server error: eof"):
 		return "E-FRP-10", errCatalog["E-FRP-10"].Hint
 	case has("too many open files") || has("emfile", "enfile") || has("socket: too many"):

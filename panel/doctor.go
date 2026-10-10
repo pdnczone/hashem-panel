@@ -190,6 +190,13 @@ func runFullDiagnostics() *doctorReport {
 		rep.Recommendations = append(rep.Recommendations, errCatalog["E-FRP-10"].Hint)
 	}
 
+	// 1c. Backhaul failure signatures in the unit's recent journal (hint only)
+	if issue, rec := backhaulDoctorIssue(st); issue != "" {
+		rep.Score -= 10
+		rep.Issues = append(rep.Issues, issue)
+		rep.Recommendations = append(rep.Recommendations, rec)
+	}
+
 	// 2. Kernel sysctl & MSS Clamping Audit (always audited)
 	rep.KernelAudit = executeKernelAudit()
 	if !rep.KernelAudit.BBREnabled {
@@ -677,4 +684,40 @@ func frpcLoginEOF() bool {
 		}
 	}
 	return false
+}
+
+// classifyBackhaulLog returns the E-BH-* code of the newest Backhaul outcome
+// in raw journal text, or "" when the last word was a healthy control channel
+// (an old failure followed by a successful handshake is a recovered tunnel).
+func classifyBackhaulLog(raw string) string {
+	lines := strings.Split(raw, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		l := strings.ToLower(lines[i])
+		if strings.Contains(l, "control channel established successfully") ||
+			strings.Contains(l, "control channel successfully established") {
+			return ""
+		}
+		if code, _ := matchLogCode(lines[i]); strings.HasPrefix(code, "E-BH-") {
+			return code
+		}
+	}
+	return ""
+}
+
+// backhaulDoctorIssue reads the active Backhaul unit's recent journal
+// (read-only, bounded) and returns a doctor issue plus its recommendation.
+func backhaulDoctorIssue(st tunnelStatus) (issue, recommendation string) {
+	if !strings.HasPrefix(st.FrpSvc, "backhaul") {
+		return "", ""
+	}
+	out, err := runCmdTimeoutOut(5*time.Second, "journalctl", "-u", st.FrpSvc, "-n", "80", "--no-pager")
+	if err != nil {
+		return "", ""
+	}
+	code := classifyBackhaulLog(string(out))
+	if code == "" {
+		return "", ""
+	}
+	e := errCatalog[code]
+	return fmt.Sprintf("%s: %s (%s)", st.FrpSvc, e.Msg, code), e.Hint
 }

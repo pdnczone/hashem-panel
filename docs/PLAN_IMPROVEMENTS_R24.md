@@ -9,7 +9,7 @@ Small commits, one concern each. No production servers are touched.
 - [x] 1.2 `switchTunnelEngine` stops swallowing errors; reports real failure (gaps 6, 7)
 - [x] 1.3 Real TOML parsing for backhaul config instead of line scanner (gap 2)
 - [x] 1.4 Per-peer backhaul units recognised in role detection (gap 4)
-- [ ] 1.5 Doctor knows Backhaul: token mismatch / control-channel EOF / transport mismatch hints (gap 9)
+- [x] 1.5 Doctor knows Backhaul: token mismatch / control-channel EOF / transport mismatch hints (gap 9)
 - [ ] 1.6 Watchdog/health use session state, not unit state, for Backhaul (gap 12)
 
 ## Phase 2 - CI and quality
