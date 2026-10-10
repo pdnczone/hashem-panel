@@ -27,7 +27,7 @@ Small commits, one concern each. No production servers are touched.
 ## Phase 4 - Operations
 - [x] 4.1 Alerts: webhook + Telegram on health STATE CHANGE only (baseline tick, per-link min gap, degraded opt-in, secrets masked in GET/errors), Settings card, test button
 - [x] 4.2 24h in-memory link history (30s, ring, derived rx/tx rates, 64-link cap) + /api/history + Settings graph; Prometheus /metrics behind bearer token (404 until enabled)
-- [ ] 4.3 Config backup/restore (tar of /etc/gre-panel, secrets masked in listing), CLI + API
+- [x] 4.3 Backup covers backhaul/alerts/carrier/wss/autopool/peer_link/setup/tls + units; restore refuses archives escaping allowed dirs and saves a pre-restore safety backup (backup/restore CLI, schedule and panel UI already existed)
 
 ## Phase 5 - Anti-censorship
 - [ ] 5.1 Carrier advisor: from tunnel-health probes, recommend/rotate carrier (advisory by default,

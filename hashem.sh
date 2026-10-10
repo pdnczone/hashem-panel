@@ -6269,6 +6269,41 @@ except Exception:
     return 0
 }
 
+# backup_file_list: every config/unit worth restoring that exists on this host.
+# BK_ROOT (default empty) prefixes all paths so tests can use a throwaway tree.
+backup_file_list() {
+    local r="${BK_ROOT:-}" f
+    local -a pats=(
+        "$r"/etc/frp/*.toml
+        "$r"/etc/backhaul/*.toml
+        "$r"/etc/gre-panel/panel.json "$r"/etc/gre-panel/peers.json "$r"/etc/gre-panel/watchdog.json
+        "$r"/etc/gre-panel/perf.json "$r"/etc/gre-panel/backup.key
+        "$r"/etc/gre-panel/alerts.json "$r"/etc/gre-panel/carrier.json "$r"/etc/gre-panel/wss_carrier.json
+        "$r"/etc/gre-panel/auto_pool.json "$r"/etc/gre-panel/peer_link.json "$r"/etc/gre-panel/setup.json
+        "$r"/etc/gre-panel/rescue.json "$r"/etc/gre-panel/tls/*
+        "$r"/etc/systemd/system/gre-*.service "$r"/etc/systemd/system/frps*.service
+        "$r"/etc/systemd/system/frpc*.service "$r"/etc/systemd/system/backhaul-*.service
+    )
+    for f in "${pats[@]}"; do
+        [[ -f "$f" ]] && echo "$f"
+    done
+}
+
+# backup_listing_safe <listing-file>: 0 only if every entry stays inside the
+# directories a backup may contain (no absolute paths, no "..", no links out).
+backup_listing_safe() {
+    local line
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        case "$line" in
+            /*|*..*) return 1 ;;
+            etc/frp/*|etc/backhaul/*|etc/gre-panel/*|etc/systemd/system/*) ;;
+            *) return 1 ;;
+        esac
+    done < "$1"
+    return 0
+}
+
 backup_now() {
     local OUTDIR="$BACKUP_DIR"
     local KEEP=7
@@ -6298,13 +6333,7 @@ backup_now() {
     local OUT_FILE="${OUTDIR}/hashem-backup-${DATE_STR}.enc"
 
     local FILES=()
-    local f
-    for f in /etc/frp/*.toml /etc/gre-panel/panel.json /etc/gre-panel/peers.json /etc/gre-panel/watchdog.json \
-             /etc/gre-panel/perf.json /etc/gre-panel/backup.key \
-             /etc/systemd/system/gre-*.service /etc/systemd/system/frps*.service \
-             /etc/systemd/system/frpc*.service; do
-        [[ -f "$f" ]] && FILES+=("$f")
-    done
+    mapfile -t FILES < <(backup_file_list)
 
     if [[ ${#FILES[@]} -eq 0 ]]; then
         echo -e "${RED}[!] No configuration or unit files found to back up.${NC}" >&2
@@ -6377,11 +6406,21 @@ backup_restore() {
         return 1
     fi
 
+    if ! backup_listing_safe "$TMP_D/list.txt"; then
+        echo -e "${RED}[!] Archive contains paths outside the allowed config directories — refusing to restore.${NC}" >&2
+        return 1
+    fi
+
     if [[ "$DRY_RUN" -eq 1 ]]; then
         echo -e "${GREEN}[✔️] Archive verified OK. Files inside:${NC}"
         cat "$TMP_D/list.txt"
         return 0
     fi
+
+    echo -e "${CYAN}[*] Saving a safety backup of the current configuration first...${NC}"
+    backup_now --keep 5 "${BACKUP_DIR}/pre-restore" >/dev/null 2>&1 \
+        && echo -e "${GREEN}[✔️] Current state saved in ${BACKUP_DIR}/pre-restore (roll back with: hashem backup restore <file>).${NC}" \
+        || echo -e "${YELLOW}[!] Could not save a safety backup; continuing.${NC}"
 
     echo -e "${CYAN}[*] Restoring configuration files and systemd units...${NC}"
     tar -xzf "$TMP_D/backup.tar.gz" -C /
