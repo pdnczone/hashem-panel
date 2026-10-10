@@ -739,6 +739,13 @@ func revPathRefresh(ids []int, force bool) []revPathEntry {
 		reuse := c != nil && (c.checkedAt.After(arrived) || (!force && time.Since(c.checkedAt) < revPathTTL))
 		if !reuse {
 			c = diagnosePeer(p)
+			// Fold in the spoke->hub half when the spoke answers (same Peer
+			// Link channel as the other peer calls). Failure to reach the
+			// spoke keeps the hub-only result; the classifier lowers
+			// confidence and asks for spoke data.
+			if rep := spokeFetcher(p); rep != nil {
+				mergeSpokeReport(c, rep)
+			}
 			revPathMu.Lock()
 			revPathCache[p.ID] = c
 			revPathMu.Unlock()

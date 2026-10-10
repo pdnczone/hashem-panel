@@ -5426,6 +5426,54 @@ apply_frp_unit_weight() { # $1=unit file
     unit_set_directive "$1" "CPUWeight" "100"
 }
 
+# revpath CLI: query the local panel API (login with password from
+# HASHEM_PANEL_PASS or an interactive prompt). Read-only unless --apply.
+cli_revpath() { # [--peer ID] [--apply] [--auto]
+    local peer="" apply="false" auto="false"
+    while [[ $# -gt 0 ]]; do case "$1" in
+        --peer) peer="$2"; shift 2 ;;
+        --apply) apply="true"; shift ;;
+        --auto) auto="true"; apply="true"; shift ;;
+        *) shift ;;
+    esac; done
+    [[ -f /etc/gre-panel/panel.json ]] || { echo -e "${RED}[!] Panel is not installed on this server.${NC}"; return 1; }
+    local port base user pass
+    port=$(grep -o '"port": *[0-9]*' /etc/gre-panel/panel.json 2>/dev/null | grep -o '[0-9]*'); port=${port:-7777}
+    base=$(grep -o '"base_path": *"[^"]*"' /etc/gre-panel/panel.json 2>/dev/null | cut -d'"' -f4)
+    user=$(grep -o '"username": *"[^"]*"' /etc/gre-panel/panel.json 2>/dev/null | cut -d'"' -f4); user=${user:-admin}
+    pass="${HASHEM_PANEL_PASS:-}"
+    if [[ -z "$pass" ]]; then
+        if [[ ! -t 0 ]]; then echo -e "${RED}[!] Set HASHEM_PANEL_PASS or run interactively.${NC}"; return 1; fi
+        read -rsp "Panel password for ${user}: " pass; echo
+    fi
+    local jar; jar=$(mktemp); trap 'rm -f "$jar"' RETURN
+    local login
+    login=$(curl -sS --max-time 10 -c "$jar" -X POST "http://127.0.0.1:${port}/${base}/api/login" \
+        -H 'Content-Type: application/json' -d "{\"username\":\"${user}\",\"password\":\"${pass}\"}" 2>/dev/null) || { echo -e "${RED}[!] Panel unreachable.${NC}"; return 1; }
+    echo "$login" | grep -q '"status"' || { echo -e "${RED}[!] Login failed.${NC}"; return 1; }
+    local csrf; csrf=$(grep -o 'gre_csrf[^;]*' "$jar" 2>/dev/null | tail -1 | cut -f2)
+    local api="curl -sS --max-time 30 -b $jar -H Content-Type:application/json"
+    [[ -n "$csrf" ]] && api="$api -H X-CSRF-Token:$csrf"
+    if [[ "$apply" == "true" ]]; then
+        [[ -n "$peer" ]] || { echo -e "${RED}[!] --apply needs --peer ID.${NC}"; return 1; }
+        # shellcheck disable=SC2086
+        $api -X POST "http://127.0.0.1:${port}/${base}/api/revpath/fix" -d "{\"peer_id\":${peer},\"apply\":true,\"auto\":${auto}}" | python3 -m json.tool 2>/dev/null || \
+        $api -X POST "http://127.0.0.1:${port}/${base}/api/revpath/fix" -d "{\"peer_id\":${peer},\"apply\":true,\"auto\":${auto}}"
+    elif [[ -n "$peer" ]]; then
+        # shellcheck disable=SC2086
+        $api -X POST "http://127.0.0.1:${port}/${base}/api/revpath/run" -d "{\"peer_id\":${peer}}" | python3 -m json.tool 2>/dev/null || \
+        $api -X POST "http://127.0.0.1:${port}/${base}/api/revpath/run" -d "{\"peer_id\":${peer}}"
+    else
+        # shellcheck disable=SC2086
+        $api "http://127.0.0.1:${port}/${base}/api/revpath" | python3 -c 'import json,sys
+d=json.load(sys.stdin)
+for p in d.get("peers",[]):
+    g=p.get("diagnosis",{})
+    print(f\"peer {p.get(\"peer_id\")} {p.get(\"name\")}: {g.get(\"verdict\")} ({g.get(\"confidence\")}) - {g.get(\"suggested_fix\",\"\")[:100]}\")' 2>/dev/null || \
+        $api "http://127.0.0.1:${port}/${base}/api/revpath"
+    fi
+}
+
 cli_panel_limits() { # [--apply] [--mem MB]: print (default) or apply panel limits
     local apply=0 mem=""
     while [[ $# -gt 0 ]]; do case "$1" in
@@ -7993,6 +8041,7 @@ if [[ $# -gt 0 ]]; then
             peer_token "$ID" ;;
         status) check_status ;;
         panel-limits) shift; cli_panel_limits "$@" ;;
+        revpath) shift; cli_revpath "$@" ;;
         doctor|test|diagnose) shift; cli_doctor "$@" ;;
         stress-test|test-load|stress) shift; cli_stress_test "$@" ;;
         panel-tls) shift; panel_tls_issue "$@" ;;

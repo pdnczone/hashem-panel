@@ -33,6 +33,9 @@ func TestMain(m *testing.M) {
 	dialFn = func(network, addr string, timeout time.Duration) (net.Conn, error) {
 		return nil, errors.New("test dialer: no network")
 	}
+	// The spoke half of the reverse-path matrix dials a spoke panel over
+	// HTTP; tests must opt in explicitly. Nothing here ever reaches the net.
+	spokeFetcher = func(p peerRecord) *SpokeProbeReport { return nil }
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)

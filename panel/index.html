@@ -1868,6 +1868,20 @@
           </div>
         </div>
 
+        <!-- Reverse path: per-peer two-direction ping diagnosis + fixes -->
+        <div class="tunnel-card u-mt-14" id="docRevPathCard">
+          <div class="tc-header">
+            <p class="tc-title u-flex-center-gap8">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+              <span>Reverse Path (Iran ⇄ abroad)</span>
+            </p>
+            <span class="qs-hint">both directions, then fix</span>
+          </div>
+          <div class="doc-issues-box" id="docRevPathBox">
+            <div class="qs-hint">No diagnostic report loaded.</div>
+          </div>
+        </div>
+
         <!-- 4 Diagnostic Cards Grid -->
         <div class="doc-grid">
           <!-- Card 1: Latency & Jitter -->
@@ -6923,6 +6937,50 @@ function renderDoctor(rep) {
       issuesBox.innerHTML = html;
     }
   }
+
+  // Reverse-path card: per-peer two-direction diagnosis + fix buttons.
+  renderRevPath(rep.revpath || []);
+}
+
+// ---- Reverse path (Phase 4): diagnosis cards + dry-run / apply ----
+function revVerdictBadge(v) {
+  if (v === 'HEALTHY') return '<span class="badge ok"><span class="dot"></span>HEALTHY</span>';
+  if (v === 'UNKNOWN') return '<span class="badge dim">UNKNOWN</span>';
+  return '<span class="badge warn"><span class="dot"></span>' + esc(v) + '</span>';
+}
+function renderRevPath(entries) {
+  const box = $('docRevPathBox');
+  if (!box) return;
+  if (!entries || !entries.length) {
+    box.innerHTML = '<div class="qs-hint">No peer reverse-path data yet — run diagnostics on a hub with peers.</div>';
+    return;
+  }
+  box.innerHTML = entries.map(e => {
+    const d = e.diagnosis || {};
+    const ev = (d.evidence || []).map(x => '<div class="qs-hint">· ' + esc(x) + '</div>').join('');
+    const fix = d.suggested_fix ? '<div class="qs-hint">Fix: ' + esc(d.suggested_fix) + '</div>' : '';
+    const btn = (d.verdict && d.verdict !== 'HEALTHY' && d.verdict !== 'UNKNOWN')
+      ? '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">'
+        + '<button class="hashem-btn hashem-btn-secondary u-btn-xs" onclick="revFix(' + e.peer_id + ',false)">Show plan</button>'
+        + '<button class="hashem-btn hashem-btn-primary u-btn-xs" onclick="revFix(' + e.peer_id + ',true)">Apply fix</button>'
+        + '</div><div class="qs-hint" id="revSteps' + e.peer_id + '"></div>'
+      : '';
+    return '<div class="det-card u-col-full"><div class="det-head"><span>' + esc(e.name || ('peer-' + e.peer_id)) + '</span>'
+      + revVerdictBadge(d.verdict) + '</div>'
+      + '<div class="qs-hint">confidence: ' + esc(d.confidence || '?') + ' · checked: ' + esc(e.checked || '?') + '</div>'
+      + ev + fix + btn + '</div>';
+  }).join('');
+}
+async function revFix(peerId, apply) {
+  const out = $('revSteps' + peerId);
+  if (out) out.textContent = apply ? 'Applying…' : 'Planning…';
+  try {
+    const r = await api('/api/revpath/fix', { peer_id: peerId, apply: !!apply });
+    const steps = (r.steps || []).map(s => (s.ok ? '✓ ' : '✗ ') + s.action + ': ' + (s.detail || '')).join('\n');
+    const head = r.dry_run ? 'Plan (nothing applied):\n' : ('Before: ' + ((r.before || {}).verdict || '?') + ' → After: ' + ((r.after || {}).verdict || '?') + '\n');
+    if (out) out.innerHTML = '<pre class="qs-hint" style="white-space:pre-wrap">' + esc(head + steps) + '</pre>';
+    if (r.after) await loadDoctor(false);
+  } catch (e) { if (out) out.textContent = e.message; reportErr('revpath', e); }
 }
 
 async function runDoctor() {

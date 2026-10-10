@@ -501,3 +501,38 @@ C2.6 shipped:
 
 Deferred: GOMEMLIMIT/GOGC (needs real-hub data), /api/summary merge,
 cgroup tuning from a loaded hub via /api/selfstats.
+
+## Phase 4 status (auto-fix engine + spoke probes) — 2026-10-10
+
+Report-only by default; auto behind `revpath_auto` (panel.json) or
+HASHEM_REVPATH_AUTO=1. Spoke half rides the existing Peer Link channel
+(same secret, no new port).
+
+Shipped:
+- Spoke probes: `POST /api/peer/revpath-probe` (peer auth) runs the
+  spoke->hub half on the spoke (ICMP over GRE both sizes, public ICMP, TCP
+  to control/WSS ports, GRE counters) against hub addresses the hub sends.
+  The hub merges it in `revPathRefresh` and reclassifies with both
+  directions genuinely probed; unreachable spokes keep the hub-only result
+  with lowered confidence. Seam `spokeFetcher` (nil in tests by default).
+- Auto-fix (`panel/revfix.go`): dry-run plan via `POST /api/revpath/fix`
+  (default); `apply:true` runs snapshot -> apply -> re-probe -> rollback if
+  worse. Fixable: RP_FILTER (3 sysctl keys + persist), SRC_SELECT (route
+  src pin), NO_RETURN_ROUTE, FW_INPUT (own HASHEM-REVPATH chain only),
+  MTU_BLACKHOLE (stepwise down), CONNTRACK_INVALID (raw NOTRACK). Never
+  restarts services. Rate limits: 1/peer/10min, 3/hour; explicit clicks
+  bypass the auto flag but not the limits. History at
+  `GET /api/revpath/fixes`.
+- UI: Reverse Path card in the Doctor tab (verdict, confidence, evidence,
+  suggested fix, Show plan / Apply fix per peer, step log).
+- CLI: `hashem revpath [--peer ID] [--apply] [--auto]` (login via
+  HASHEM_PANEL_PASS or prompt; read-only unless --apply).
+- `tests/test_revpath_lab.sh`: netns GRE pair proving the one-way pattern
+  (rp_filter strict, INPUT DROP proto 47) detect -> fix -> symmetric;
+  self-cleaning, skips without privileges.
+- Tests: plan shapes per verdict, exact-command apply, rollback order,
+  rate limits, merge, handler dry-run/auto-off, probe read-only gate
+  (via `forbiddenCmd`).
+
+Deferred: auto on by default (needs a week of reports), GOMEMLIMIT,
+/api/summary merge, real-hub cgroup tuning.

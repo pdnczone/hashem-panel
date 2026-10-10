@@ -54,6 +54,9 @@ type panelConfig struct {
 	TLSPort int `json:"tls_port,omitempty"`
 	// DebugEnabled mounts /debug/pprof behind auth (also HASHEM_PPROF=1).
 	DebugEnabled bool `json:"debug_enabled,omitempty"`
+	// RevPathAuto enables automatic application of reverse-path fixes
+	// (rate-limited; report-only when false, the default).
+	RevPathAuto bool `json:"revpath_auto,omitempty"`
 }
 
 func termEnabled() bool { return cfg.TerminalEnabled }
@@ -274,6 +277,8 @@ func main() {
 	mux.HandleFunc("GET "+base+"/api/selfstats", requireAuth(handleSelfStats))
 	mux.HandleFunc("GET "+base+"/api/revpath", requireAuth(handleRevPathGet))
 	mux.HandleFunc("POST "+base+"/api/revpath/run", requireAuth(requireCSRF(handleRevPathRun)))
+	mux.HandleFunc("POST "+base+"/api/revpath/fix", requireAuth(requireCSRF(handleRevPathFix)))
+	mux.HandleFunc("GET "+base+"/api/revpath/fixes", requireAuth(handleRevPathFixes))
 	mountDebug(mux, base)
 	mux.HandleFunc("GET "+base+"/api/dial", requireAuth(handleDialGet))
 	mux.HandleFunc("POST "+base+"/api/dial", requireAuth(requireCSRF(handleDialPost)))
@@ -287,6 +292,7 @@ func main() {
 	mux.HandleFunc("POST "+base+"/api/peer/apply-carrier", requirePeerAuth(handlePeerApplyCarrier))
 	mux.HandleFunc("POST "+base+"/api/peer/apply-engine", requirePeerAuth(handlePeerApplyEngine))
 	mux.HandleFunc("POST "+base+"/api/peer/ping", requirePeerAuth(handlePeerPing))
+	mux.HandleFunc("POST "+base+"/api/peer/revpath-probe", requirePeerAuth(handlePeerRevPathProbe))
 	mux.HandleFunc("GET "+base+"/api/peer/rescue-offer", requireRescuePeerAuth(handlePeerRescueOffer))
 	mux.HandleFunc("POST "+base+"/api/peer/rescue-ack", requireRescuePeerAuth(handlePeerRescueAck))
 	mux.HandleFunc("GET "+base+"/api/rescue", requireAuth(handleRescueGet))

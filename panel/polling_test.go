@@ -22,6 +22,9 @@ func TestIndexPollingPolicy(t *testing.T) {
 		"if (running) { schedule(); return; }":         1, // no overlapping requests
 		"visibilitychange":                             2, // resume on return
 		"if (document.hidden) return; // C2.7":         1, // support popup guard
+		"function renderRevPath(entries)":              1, // reverse-path cards
+		"function revFix(peerId, apply)":               1, // dry-run / apply buttons
+		"docRevPathBox":                                2, // card container (markup + render)
 	} {
 		if got := strings.Count(s, want); got < min {
 			t.Errorf("%q found %d times, want at least %d", want, got, min)
