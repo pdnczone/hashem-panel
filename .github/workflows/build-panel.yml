@@ -56,7 +56,6 @@ jobs:
         run: |
           mkdir -p panel/dist
           cp hashem.sh panel/dist/hashem.sh
-          cp hashem-chaff.sh panel/dist/hashem-chaff.sh
           cp hashem-backhaul.sh panel/dist/hashem-backhaul.sh
           cp panel/grepanel panel/dist/grepanel
           ls -la panel/dist/
@@ -65,7 +64,7 @@ jobs:
         run: |
           cd panel
           sha256sum "${BIN_NAME}-linux-amd64" "${BIN_NAME}-linux-arm64" gre-panel-linux-amd64 gre-panel-linux-arm64 \
-            dist/hashem.sh dist/hashem-chaff.sh dist/hashem-backhaul.sh dist/grepanel \
+            dist/hashem.sh dist/hashem-backhaul.sh dist/grepanel \
             | sed 's#  dist/#  #' | sort -u -k2 > checksums.txt
           cat checksums.txt
 
@@ -85,7 +84,6 @@ jobs:
             panel/${{ env.BIN_NAME }}-linux-amd64
             panel/${{ env.BIN_NAME }}-linux-arm64
             panel/dist/hashem.sh
-            panel/dist/hashem-chaff.sh
             panel/dist/hashem-backhaul.sh
             panel/dist/grepanel
             panel/checksums.txt
@@ -105,7 +103,6 @@ jobs:
             panel/${{ env.BIN_NAME }}-linux-amd64
             panel/${{ env.BIN_NAME }}-linux-arm64
             panel/dist/hashem.sh
-            panel/dist/hashem-chaff.sh
             panel/dist/hashem-backhaul.sh
             panel/dist/grepanel
             panel/checksums.txt
@@ -124,7 +121,6 @@ jobs:
             panel/gre-panel-linux-amd64
             panel/gre-panel-linux-arm64
             panel/dist/hashem.sh
-            panel/dist/hashem-chaff.sh
             panel/dist/hashem-backhaul.sh
             panel/dist/grepanel
             panel/checksums.txt

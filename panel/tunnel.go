@@ -938,27 +938,15 @@ func switchTunnelEngine(targetEngine, targetTransport string) (string, error) {
 		_ = runSystemctl("restart", "gre-tunnel")
 		if isIran {
 			// Write frps.toml
-			effTLS := "0"
-			if p, err := os.ReadFile(filepath.Join(configDir, "perf.json")); err == nil {
-				var pj struct {
-					TLSEnabled bool `json:"tls_enabled"`
-				}
-				if json.Unmarshal(p, &pj) == nil && pj.TLSEnabled {
-					effTLS = "1"
-				}
-			}
-			tlsLine := ""
-			if effTLS == "1" {
-				tlsLine = "\ntransport.tls.force = true\n"
-			}
+			_, maxPool := effectivePoolValues()
 			frpsToml := fmt.Sprintf(`bindAddr = "0.0.0.0"
 bindPort = %d
 auth.method = "token"
-auth.token = %q%s
+auth.token = %q
 %stransport.tcpKeepalive = 30
 transport.heartbeatTimeout = 90
-transport.maxPoolCount = 100
-`, port, token, tlsLine, tcpMuxTomlLines())
+transport.maxPoolCount = %d
+`, port, token, tcpMuxTomlLines(), maxPool)
 			_ = os.MkdirAll(frpDir, 0755)
 			_ = os.WriteFile(filepath.Join(frpDir, "frps.toml"), []byte(frpsToml), 0644)
 			ensureFRPServiceUnits("frps")
@@ -1012,6 +1000,7 @@ transport.maxPoolCount = 100
 				}
 			}
 
+			pool, _ := effectivePoolValues()
 			frpcBuf.WriteString(fmt.Sprintf(`serverAddr = %q
 serverPort = %d
 auth.method = "token"
@@ -1022,8 +1011,8 @@ transport.protocol = %q
 transport.heartbeatTimeout = 90
 transport.dialServerTimeout = 15
 transport.dialServerKeepalive = 30
-transport.poolCount = 20
-`, peerGre, effPort, token, frpProto, tcpMuxTomlLines()))
+transport.poolCount = %d
+`, peerGre, effPort, token, frpProto, tcpMuxTomlLines(), pool))
 
 			for _, p := range proxyPorts {
 				frpcBuf.WriteString(fmt.Sprintf(`

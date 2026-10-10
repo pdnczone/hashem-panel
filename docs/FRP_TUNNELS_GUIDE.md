@@ -121,6 +121,30 @@
   * نمایش دقیق آمار آنلاین بودن کاربران به تفکیک IP.
   * ثبت لاگ‌های واقعی ترافیک در هسته Xray.
 
+### ⚙️ استخر هوشمند اتصال‌های کاری (Auto Pool)
+تحت بار زیاد، استخر اتصال‌های کاری (work connection pool) پر می‌شود و frpc این خطا را در لاگ می‌نویسد: `StartWorkConn contains error: work connection pool is full, discarding`؛ نتیجه کندی تانل است. **Auto Pool** (به‌صورت پیش‌فرض روشن، `auto_pool: true` در `perf.json`) مقدار `transport.poolCount` (frpc) و `transport.maxPoolCount` (frps) را خودکار تنظیم می‌کند.
+
+*English summary:* the 1-minute watchdog timer runs `autopool_tick` (in `hashem.sh`) and combines three signals: pool-full lines in the `frpc` journal since the last tick, established connections to the hub port (active user connections), and CPU load / free RAM.
+
+| | رفتار / Behavior |
+|---|---|
+| افزایش / Scale up | ×۱٫۵ بلافاصله با دیدن خطای pool-full یا وقتی اتصال‌های فعال از pool بیشتر است (مگر RAM آزاد < ۱۵۰MB) |
+| کاهش / Scale down | ×۰٫۸ فقط بعد از ۱۵ تیک آرام پشت‌سرهم؛ هرگز زیر اتصال‌های فعال |
+| بازه / Range | frpc `poolCount` ۲۰–۲۰۰، frps `maxPoolCount` ۶۰–۵۰۰ و همیشه `maxPoolCount ≥ 1.5 × poolCount` |
+| سقف RAM / RAM cap | `maxPoolCount ≤ RAM_MB × 8 / 5` (حدود ۱۰٪ رم با ۶۴KB برای هر اتصال کاری)؛ `poolCount` حداکثر ⅔ این سقف |
+
+**اعمال تغییر:** فقط `frpc` ری‌استارت می‌شود (هرگز `frps` از تیک ری‌استارت نمی‌شود چون همه تانل‌ها قطع می‌شوند)، و فقط وقتی کمتر از ۳۰ اتصال فعال کاربر هست، یا خطاها شدید است (≥ ۲۰ خطا در یک دقیقه). بین دو ری‌استارت خودکار حداقل ۵ دقیقه فاصله است؛ در غیر این صورت تصمیم «deferred» ثبت می‌شود و در تیک بعدی اعمال می‌گردد. روی هاب ایران، `maxPoolCount` هنگام نصب/`perf apply` سخاوتمندانه از روی RAM تنظیم می‌شود؛ اگر بعداً نیاز به افزایش باشد فقط فایل `frps.toml` به‌روز و `frps_restart_needed` در state علامت می‌خورد تا در زمان کم‌ترافیک دستی ری‌استارت کنید.
+
+**وضعیت / State:** `/etc/gre-panel/auto_pool.json` (pool، max_pool، آخرین تصمیم و دلیل، آخرین ری‌استارت، `quiet_ticks`). همه‌ی writerهای `frps.toml` / `frpc.toml` مقدار را از یک تابع (`pool_effective_values`) می‌گیرند.
+
+**حالت دستی:** در تب Performance کلید Auto Pool را خاموش کنید؛ فیلدهای `poolCount` / `maxPool` همان‌طور که وارد شده اعمال می‌شوند (فقط `maxPool ≥ 1.5 × poolCount` اجبار می‌شود). CLI:
+
+```bash
+hashem perf autopool status   # مقادیر مؤثر، آخرین تصمیم
+hashem perf autopool off      # حالت دستی (سپس: hashem perf apply)
+hashem perf autopool on
+```
+
 ---
 
 ## ۴. ماتریس انتخاب پروتکل بر اساس اپراتورهای ایران

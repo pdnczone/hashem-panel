@@ -14,59 +14,60 @@ import (
 )
 
 type perfConfig struct {
-	ProxyEncryption  bool   `json:"proxy_encryption"`
-	ProxyCompression bool   `json:"proxy_compression"`
-	ForceTLS         bool   `json:"force_tls"`
-	ChaffProfile     string `json:"chaff_profile"`
-	DPIEnabled       bool   `json:"dpi_enabled"`
-	DPIRate          string `json:"dpi_rate"`
-	DPIBurst         int    `json:"dpi_burst"`
-	FRPPoolCount     int    `json:"frp_pool_count"`
-	FRPMaxPool       int    `json:"frp_max_pool"`
-	AutoTune         bool   `json:"auto_tune"`
-	TuningProfile    string `json:"tuning_profile"`
+	ProxyEncryption  bool `json:"proxy_encryption"`
+	ProxyCompression bool `json:"proxy_compression"`
+	// AutoPool: true (default, also when the key is missing) lets hashem.sh size the pool;
+	// false applies FRPPoolCount / FRPMaxPool as typed.
+	AutoPool     bool `json:"auto_pool"`
+	FRPPoolCount int  `json:"frp_pool_count"`
+	FRPMaxPool   int  `json:"frp_max_pool"`
 	// TCPMux: nil = never configured (live tomls are left untouched on apply);
 	// false = speed-first (default for new tunnels); true = frp tcpMux on.
 	TCPMux *bool `json:"tcp_mux,omitempty"`
 }
 
+// autoPoolState mirrors the auto_pool.json that hashem.sh autopool_tick maintains.
+type autoPoolState struct {
+	Pool             int    `json:"pool"`
+	MaxPool          int    `json:"max_pool"`
+	AppliedPool      int    `json:"applied_pool"`
+	QuietTicks       int    `json:"quiet_ticks"`
+	LastTick         int64  `json:"last_tick"`
+	LastChange       int64  `json:"last_change"`
+	LastRestart      int64  `json:"last_restart"`
+	LastDecision     string `json:"last_decision"`
+	LastReason       string `json:"last_reason"`
+	ErrorsLastTick   int    `json:"errors_last_tick"`
+	ActiveConns      int    `json:"active_conns"`
+	FRPSRestartNeeded bool  `json:"frps_restart_needed"`
+}
+
 type perfStatusResponse struct {
 	ProxyEncryption  bool            `json:"proxy_encryption"`
 	ProxyCompression bool            `json:"proxy_compression"`
-	ForceTLS         bool            `json:"force_tls"`
-	ChaffProfile     string          `json:"chaff_profile"`
-	DPIEnabled       bool            `json:"dpi_enabled"`
-	DPIRate          string          `json:"dpi_rate"`
-	DPIBurst         int             `json:"dpi_burst"`
+	AutoPool         bool            `json:"auto_pool"`
 	FRPPoolCount     int             `json:"frp_pool_count"`
 	FRPMaxPool       int             `json:"frp_max_pool"`
-	AutoTune         bool            `json:"auto_tune"`
-	TuningProfile    string          `json:"tuning_profile"`
+	EffectivePool    int             `json:"effective_pool_count"`
+	EffectiveMaxPool int             `json:"effective_max_pool"`
+	AutoPoolState    autoPoolState   `json:"auto_pool_state"`
 	TCPMux           bool            `json:"tcp_mux"`
 	TCPMuxSet        bool            `json:"tcp_mux_set"`
 	TCPMuxLive       string          `json:"tcp_mux_live"`
 	InSync           bool            `json:"in_sync"`
 	SyncDetails      string          `json:"sync_details"`
 	Role             string          `json:"role"`
-	DPIActive        bool            `json:"dpi_active"`
-	ChaffActive      bool            `json:"chaff_active"`
 	Overridden       map[string]bool `json:"overridden,omitempty"`
 }
 
 type perfPostRequest struct {
-	Action           string  `json:"action"`
-	ProxyEncryption  *bool   `json:"proxy_encryption,omitempty"`
-	ProxyCompression *bool   `json:"proxy_compression,omitempty"`
-	ForceTLS         *bool   `json:"force_tls,omitempty"`
-	ChaffProfile     *string `json:"chaff_profile,omitempty"`
-	DPIEnabled       *bool   `json:"dpi_enabled,omitempty"`
-	DPIRate          *string `json:"dpi_rate,omitempty"`
-	DPIBurst         *int    `json:"dpi_burst,omitempty"`
-	FRPPoolCount     *int    `json:"frp_pool_count,omitempty"`
-	FRPMaxPool       *int    `json:"frp_max_pool,omitempty"`
-	AutoTune         *bool   `json:"auto_tune,omitempty"`
-	TuningProfile    *string `json:"tuning_profile,omitempty"`
-	TCPMux           *bool   `json:"tcp_mux,omitempty"`
+	Action           string `json:"action"`
+	ProxyEncryption  *bool  `json:"proxy_encryption,omitempty"`
+	ProxyCompression *bool  `json:"proxy_compression,omitempty"`
+	AutoPool         *bool  `json:"auto_pool,omitempty"`
+	FRPPoolCount     *int   `json:"frp_pool_count,omitempty"`
+	FRPMaxPool       *int   `json:"frp_max_pool,omitempty"`
+	TCPMux           *bool  `json:"tcp_mux,omitempty"`
 }
 
 func perfConfigPath() string {
@@ -75,22 +76,15 @@ func perfConfigPath() string {
 
 func defaultPerfConfig() perfConfig {
 	return perfConfig{
-		ProxyEncryption:  false,
-		ProxyCompression: false,
-		ForceTLS:         false,
-		ChaffProfile:     "off",
-		DPIEnabled:       false,
-		DPIRate:          "60/sec",
-		DPIBurst:         120,
-		FRPPoolCount:     20,
-		FRPMaxPool:       60,
-		AutoTune:         false,
-		TuningProfile:    "standard",
+		AutoPool:     true,
+		FRPPoolCount: 20,
+		FRPMaxPool:   60,
 	}
 }
 
 func boolPtr(b bool) *bool { return &b }
 
+// loadPerfConfig reads perf.json. Keys of removed features are ignored and disappear on the next save.
 func loadPerfConfig() perfConfig {
 	def := defaultPerfConfig()
 	data, err := os.ReadFile(perfConfigPath())
@@ -98,18 +92,12 @@ func loadPerfConfig() perfConfig {
 		return def
 	}
 	var raw struct {
-		ProxyEncryption  *bool   `json:"proxy_encryption"`
-		ProxyCompression *bool   `json:"proxy_compression"`
-		ForceTLS         *bool   `json:"force_tls"`
-		ChaffProfile     *string `json:"chaff_profile"`
-		DPIEnabled       *bool   `json:"dpi_enabled"`
-		DPIRate          *string `json:"dpi_rate"`
-		DPIBurst         *int    `json:"dpi_burst"`
-		FRPPoolCount     *int    `json:"frp_pool_count"`
-		FRPMaxPool       *int    `json:"frp_max_pool"`
-		AutoTune         *bool   `json:"auto_tune"`
-		TuningProfile    *string `json:"tuning_profile"`
-		TCPMux           *bool   `json:"tcp_mux"`
+		ProxyEncryption  *bool `json:"proxy_encryption"`
+		ProxyCompression *bool `json:"proxy_compression"`
+		AutoPool         *bool `json:"auto_pool"`
+		FRPPoolCount     *int  `json:"frp_pool_count"`
+		FRPMaxPool       *int  `json:"frp_max_pool"`
+		TCPMux           *bool `json:"tcp_mux"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return def
@@ -121,23 +109,8 @@ func loadPerfConfig() perfConfig {
 	if raw.ProxyCompression != nil {
 		c.ProxyCompression = *raw.ProxyCompression
 	}
-	if raw.ForceTLS != nil {
-		c.ForceTLS = *raw.ForceTLS
-	}
-	if raw.ChaffProfile != nil {
-		p := strings.ToLower(strings.TrimSpace(*raw.ChaffProfile))
-		if p == "off" || p == "low" || p == "mid" {
-			c.ChaffProfile = p
-		}
-	}
-	if raw.DPIEnabled != nil {
-		c.DPIEnabled = *raw.DPIEnabled
-	}
-	if raw.DPIRate != nil && strings.TrimSpace(*raw.DPIRate) != "" {
-		c.DPIRate = strings.TrimSpace(*raw.DPIRate)
-	}
-	if raw.DPIBurst != nil && *raw.DPIBurst > 0 {
-		c.DPIBurst = *raw.DPIBurst
+	if raw.AutoPool != nil {
+		c.AutoPool = *raw.AutoPool
 	}
 	if raw.FRPPoolCount != nil && *raw.FRPPoolCount >= 2 {
 		c.FRPPoolCount = *raw.FRPPoolCount
@@ -145,17 +118,58 @@ func loadPerfConfig() perfConfig {
 	if raw.FRPMaxPool != nil && *raw.FRPMaxPool >= 10 {
 		c.FRPMaxPool = *raw.FRPMaxPool
 	}
-	if raw.AutoTune != nil {
-		c.AutoTune = *raw.AutoTune
-	}
-	if raw.TuningProfile != nil && strings.TrimSpace(*raw.TuningProfile) != "" {
-		c.TuningProfile = strings.TrimSpace(*raw.TuningProfile)
-	}
 	if raw.TCPMux != nil {
 		v := *raw.TCPMux
 		c.TCPMux = &v
 	}
 	return c
+}
+
+func autoPoolStatePath() string {
+	return filepath.Join(configDir, "auto_pool.json")
+}
+
+func loadAutoPoolState() autoPoolState {
+	var st autoPoolState
+	if data, err := os.ReadFile(autoPoolStatePath()); err == nil {
+		_ = json.Unmarshal(data, &st)
+	}
+	return st
+}
+
+// effectivePoolValues returns the poolCount / maxPoolCount every frps/frpc writer must use.
+// The decision lives in hashem.sh (`perf pool`); the fallback only covers a missing script and
+// follows the same rules from the files: auto => the state file, manual => perf.json, and
+// maxPoolCount is never below 1.5 * poolCount.
+func effectivePoolValues() (int, int) {
+	if script, err := greScriptPath(); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "bash", script, "perf", "pool")
+		cmd.Env = append(os.Environ(), "GRE_SKIP_PANEL=1", "TERM=dumb", "GRE_PANEL_DIR="+configDir)
+		if out, err := cmd.Output(); err == nil {
+			var pool, maxPool int
+			if n, _ := fmt.Sscanf(strings.TrimSpace(string(out)), "%d %d", &pool, &maxPool); n == 2 && pool > 0 && maxPool > 0 {
+				return pool, maxPool
+			}
+		}
+	}
+	c := loadPerfConfig()
+	pool, maxPool := c.FRPPoolCount, c.FRPMaxPool
+	if c.AutoPool {
+		st := loadAutoPoolState()
+		pool, maxPool = 20, 60
+		if st.Pool > 0 {
+			pool = st.Pool
+		}
+		if st.MaxPool > 0 {
+			maxPool = st.MaxPool
+		}
+	}
+	if need := (pool*3 + 1) / 2; maxPool < need {
+		maxPool = need
+	}
+	return pool, maxPool
 }
 
 // tcpMuxEnabled is the value NEW frps/frpc tomls get: speed-first default is OFF
@@ -216,17 +230,8 @@ func liveTCPMux() string {
 
 func savePerfConfig(c perfConfig) error {
 	_ = os.MkdirAll(configDir, 0700)
-	if c.ChaffProfile == "" {
-		c.ChaffProfile = "off"
-	}
-	if c.DPIRate == "" {
-		c.DPIRate = "300/min"
-	}
-	if c.DPIBurst <= 0 {
-		c.DPIBurst = 100
-	}
 	if c.FRPMaxPool <= 0 {
-		c.FRPMaxPool = 100
+		c.FRPMaxPool = 60
 	}
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
@@ -246,11 +251,25 @@ func effectivePerfConfig() (perfConfig, map[string]bool) {
 		c.ProxyCompression = (v == "1" || strings.ToLower(v) == "true")
 		overridden["proxy_compression"] = true
 	}
-	if v := os.Getenv("PERF_TLS"); v != "" {
-		c.ForceTLS = (v == "1" || strings.ToLower(v) == "true")
-		overridden["force_tls"] = true
-	}
 	return c, overridden
+}
+
+// tomlInt returns the integer value of a top-level "key = N" line, 0 when absent.
+func tomlInt(content, key string) int {
+	for _, ln := range strings.Split(content, "\n") {
+		ln = strings.TrimSpace(ln)
+		if !strings.HasPrefix(ln, key) {
+			continue
+		}
+		parts := strings.SplitN(ln, "=", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[0]) == key {
+			var n int
+			if _, err := fmt.Sscanf(strings.TrimSpace(parts[1]), "%d", &n); err == nil {
+				return n
+			}
+		}
+	}
+	return 0
 }
 
 func checkLiveTomlSync(c perfConfig) (bool, string, string) {
@@ -283,18 +302,19 @@ func checkLiveTomlSync(c perfConfig) (bool, string, string) {
 			return false, "cannot read " + filepath.Join(frpDir, "frpc.toml"), role
 		}
 		content := string(data)
-		hasTLSByte := strings.Contains(content, "transport.tls.disableCustomTLSFirstByte = true") || strings.Contains(content, "transport.tls.disableCustomTLSFirstByte=true")
 		hasEnc := strings.Contains(content, "transport.useEncryption = true") || strings.Contains(content, "transport.useEncryption=true")
 		hasComp := strings.Contains(content, "transport.useCompression = true") || strings.Contains(content, "transport.useCompression=true")
 
-		if c.ForceTLS != hasTLSByte {
-			return false, fmt.Sprintf("TLS setting (%v) does not match frpc.toml (%v)", c.ForceTLS, hasTLSByte), role
-		}
 		if c.ProxyEncryption != hasEnc {
 			return false, fmt.Sprintf("Proxy encryption (%v) does not match frpc.toml (%v)", c.ProxyEncryption, hasEnc), role
 		}
 		if c.ProxyCompression != hasComp {
 			return false, fmt.Sprintf("Proxy compression (%v) does not match frpc.toml (%v)", c.ProxyCompression, hasComp), role
+		}
+		if !c.AutoPool {
+			if live := tomlInt(content, "transport.poolCount"); live != c.FRPPoolCount {
+				return false, fmt.Sprintf("poolCount (%d) does not match frpc.toml (%d)", c.FRPPoolCount, live), role
+			}
 		}
 		return true, "All settings match live frpc.toml", role
 	case "iran":
@@ -302,10 +322,10 @@ func checkLiveTomlSync(c perfConfig) (bool, string, string) {
 		if err != nil {
 			return false, "cannot read " + filepath.Join(frpDir, "frps.toml"), role
 		}
-		content := string(data)
-		hasTLSForce := strings.Contains(content, "transport.tls.force = true") || strings.Contains(content, "transport.tls.force=true")
-		if c.ForceTLS != hasTLSForce {
-			return false, fmt.Sprintf("Force TLS setting (%v) does not match frps.toml (%v)", c.ForceTLS, hasTLSForce), role
+		if !c.AutoPool {
+			if live := tomlInt(string(data), "transport.maxPoolCount"); live != c.FRPMaxPool {
+				return false, fmt.Sprintf("maxPoolCount (%d) does not match frps.toml (%d)", c.FRPMaxPool, live), role
+			}
 		}
 		return true, "All settings match live frps.toml", role
 	default:
@@ -332,39 +352,23 @@ func runPerfCmd(args ...string) (string, error) {
 func handlePerfGet(w http.ResponseWriter, r *http.Request) {
 	c, over := effectivePerfConfig()
 	inSync, details, role := checkLiveTomlSync(c)
-
-	dpiActive := false
-	if out, err := exec.Command("iptables", "-L", "HASHEM-DPI", "-n").CombinedOutput(); err == nil {
-		dpiActive = strings.Contains(string(out), "HASHEM-DPI")
-	}
-
-	chaffActive := false
-	if out, err := exec.Command("systemctl", "is-active", "gre-chaff").CombinedOutput(); err == nil && strings.TrimSpace(string(out)) == "active" {
-		chaffActive = true
-	} else if out, err := exec.Command("systemctl", "list-units", "--type=service", "--state=running").CombinedOutput(); err == nil && strings.Contains(string(out), "gre-chaff") {
-		chaffActive = true
-	}
+	ePool, eMax := effectivePoolValues()
 
 	resp := perfStatusResponse{
 		ProxyEncryption:  c.ProxyEncryption,
 		ProxyCompression: c.ProxyCompression,
-		ForceTLS:         c.ForceTLS,
-		ChaffProfile:     c.ChaffProfile,
-		DPIEnabled:       c.DPIEnabled,
-		DPIRate:          c.DPIRate,
-		DPIBurst:         c.DPIBurst,
+		AutoPool:         c.AutoPool,
 		FRPPoolCount:     c.FRPPoolCount,
 		FRPMaxPool:       c.FRPMaxPool,
-		AutoTune:         c.AutoTune,
-		TuningProfile:    c.TuningProfile,
+		EffectivePool:    ePool,
+		EffectiveMaxPool: eMax,
+		AutoPoolState:    loadAutoPoolState(),
 		TCPMux:           c.TCPMux != nil && *c.TCPMux,
 		TCPMuxSet:        c.TCPMux != nil,
 		TCPMuxLive:       liveTCPMux(),
 		InSync:           inSync,
 		SyncDetails:      details,
 		Role:             role,
-		DPIActive:        dpiActive,
-		ChaffActive:      chaffActive,
 		Overridden:       over,
 	}
 	writeJSON(w, resp)
@@ -387,24 +391,6 @@ func handlePerfPost(w http.ResponseWriter, r *http.Request) {
 		if body.ProxyCompression != nil {
 			c.ProxyCompression = *body.ProxyCompression
 		}
-		if body.ForceTLS != nil {
-			c.ForceTLS = *body.ForceTLS
-		}
-		if body.ChaffProfile != nil {
-			p := strings.ToLower(strings.TrimSpace(*body.ChaffProfile))
-			if p == "off" || p == "low" || p == "mid" {
-				c.ChaffProfile = p
-			}
-		}
-		if body.DPIEnabled != nil {
-			c.DPIEnabled = *body.DPIEnabled
-		}
-		if body.DPIRate != nil && strings.TrimSpace(*body.DPIRate) != "" {
-			c.DPIRate = strings.TrimSpace(*body.DPIRate)
-		}
-		if body.DPIBurst != nil && *body.DPIBurst > 0 {
-			c.DPIBurst = *body.DPIBurst
-		}
 		if body.FRPPoolCount != nil && *body.FRPPoolCount >= 2 {
 			c.FRPPoolCount = *body.FRPPoolCount
 		}
@@ -415,11 +401,8 @@ func handlePerfPost(w http.ResponseWriter, r *http.Request) {
 			v := *body.TCPMux
 			c.TCPMux = &v
 		}
-		if body.AutoTune != nil {
-			c.AutoTune = *body.AutoTune
-		}
-		if body.TuningProfile != nil {
-			c.TuningProfile = *body.TuningProfile
+		if body.AutoPool != nil {
+			c.AutoPool = *body.AutoPool
 		}
 		if err := savePerfConfig(c); err != nil {
 			writeAPIError(w, r, "E-PERF-02", "failed to save config: "+err.Error())
@@ -435,11 +418,8 @@ func handlePerfPost(w http.ResponseWriter, r *http.Request) {
 		if body.FRPMaxPool != nil && *body.FRPMaxPool >= 10 {
 			c.FRPMaxPool = *body.FRPMaxPool
 		}
-		if body.AutoTune != nil {
-			c.AutoTune = *body.AutoTune
-		}
-		if body.TuningProfile != nil {
-			c.TuningProfile = *body.TuningProfile
+		if body.AutoPool != nil {
+			c.AutoPool = *body.AutoPool
 		}
 		if err := savePerfConfig(c); err != nil {
 			writeAPIError(w, r, "E-PERF-02", "failed to save config: "+err.Error())
@@ -455,29 +435,14 @@ func handlePerfPost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"status": "ok", "detail": "Capacity tuning applied successfully"})
 
 	case "apply":
+		if body.AutoPool != nil {
+			c.AutoPool = *body.AutoPool
+		}
 		if body.ProxyEncryption != nil {
 			c.ProxyEncryption = *body.ProxyEncryption
 		}
 		if body.ProxyCompression != nil {
 			c.ProxyCompression = *body.ProxyCompression
-		}
-		if body.ForceTLS != nil {
-			c.ForceTLS = *body.ForceTLS
-		}
-		if body.ChaffProfile != nil {
-			p := strings.ToLower(strings.TrimSpace(*body.ChaffProfile))
-			if p == "off" || p == "low" || p == "mid" {
-				c.ChaffProfile = p
-			}
-		}
-		if body.DPIEnabled != nil {
-			c.DPIEnabled = *body.DPIEnabled
-		}
-		if body.DPIRate != nil && strings.TrimSpace(*body.DPIRate) != "" {
-			c.DPIRate = strings.TrimSpace(*body.DPIRate)
-		}
-		if body.DPIBurst != nil && *body.DPIBurst > 0 {
-			c.DPIBurst = *body.DPIBurst
 		}
 		if body.TCPMux != nil {
 			v := *body.TCPMux
@@ -495,51 +460,6 @@ func handlePerfPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		recordError("E-PERF-00", "perf", "Performance settings applied and tunnels restarted")
-		writeJSON(w, map[string]string{"status": "ok", "detail": out})
-
-	case "set-chaff":
-		if body.ChaffProfile == nil {
-			writeAPIError(w, r, "E-PERF-01", "chaff_profile required")
-			return
-		}
-		p := strings.ToLower(strings.TrimSpace(*body.ChaffProfile))
-		if p != "off" && p != "low" && p != "mid" {
-			writeAPIError(w, r, "E-PERF-01", "invalid chaff_profile: must be off, low, or mid")
-			return
-		}
-		c.ChaffProfile = p
-		if err := savePerfConfig(c); err != nil {
-			writeAPIError(w, r, "E-PERF-02", "failed to save config: "+err.Error())
-			return
-		}
-		out, err := runPerfCmd("perf", "chaff", p)
-		if err != nil {
-			writeAPIError(w, r, "E-PERF-03", out)
-			return
-		}
-		recordError("E-PERF-00", "perf", "Chaff profile set to "+p)
-		writeJSON(w, map[string]string{"status": "ok", "detail": out})
-
-	case "set-dpi":
-		if body.DPIEnabled == nil {
-			writeAPIError(w, r, "E-PERF-01", "dpi_enabled required")
-			return
-		}
-		c.DPIEnabled = *body.DPIEnabled
-		if err := savePerfConfig(c); err != nil {
-			writeAPIError(w, r, "E-PERF-02", "failed to save config: "+err.Error())
-			return
-		}
-		action := "off"
-		if c.DPIEnabled {
-			action = "on"
-		}
-		out, err := runPerfCmd("perf", "dpi", action)
-		if err != nil {
-			writeAPIError(w, r, "E-PERF-03", out)
-			return
-		}
-		recordError("E-PERF-00", "perf", "DPI shield set to "+action)
 		writeJSON(w, map[string]string{"status": "ok", "detail": out})
 
 	case "reset":

@@ -382,45 +382,9 @@ func syncPanelScriptFrom(tag string) {
 	}
 	_ = os.Remove("/usr/local/bin/gre.sh")
 	_ = os.Symlink("/usr/local/bin/hashem.sh", "/usr/local/bin/gre.sh")
-	syncChaffScript(tag)
-}
-
-// syncChaffScript installs /usr/local/bin/hashem-chaff.sh from release `tag`.
-func syncChaffScript(tag string) {
-	tmp, err := os.CreateTemp("", "hashem-chaff-*.sh")
-	if err != nil {
-		return
-	}
-	tmpPath := tmp.Name()
-	_ = tmp.Close()
-	defer func() { _ = os.Remove(tmpPath) }()
-	if err := fetchScript(tag, "hashem-chaff.sh", chaffScriptURL, tmpPath); err != nil {
-		recordError("E-UPDATE-06", "script-sync", "chaff download: "+err.Error())
-		return
-	}
-	// Verify chaff script integrity
-	chaffContent, err := os.ReadFile(tmpPath)
-	if err != nil || len(chaffContent) < 100 || (!strings.HasPrefix(string(chaffContent), "#!/bin/bash") && !strings.HasPrefix(string(chaffContent), "#!/usr/bin/env bash")) {
-		recordError("E-UPDATE-06", "script-sync", "chaff integrity check failed: invalid script header")
-		return
-	}
-	if out, err := exec.Command("bash", "-n", tmpPath).CombinedOutput(); err != nil {
-		recordError("E-UPDATE-06", "script-sync", "chaff bash -n failed: "+string(out))
-		return
-	}
-	if err := copyFile(tmpPath, "/usr/local/bin/hashem-chaff.sh"); err != nil {
-		recordError("E-UPDATE-06", "script-sync", "chaff install: "+err.Error())
-		return
-	}
-	_ = os.Chmod("/usr/local/bin/hashem-chaff.sh", 0755)
-	_ = os.Remove("/usr/local/bin/gre-chaff.sh")
-	LogSecurityAudit("script_synced", "system", "local", "target=/usr/local/bin/hashem-chaff.sh")
 }
 
 const scriptURL = "https://raw.githubusercontent.com/pdnczone/hashem-panel/main/hashem.sh"
-
-// chaffScriptURL ships the standalone chaff generator next to hashem.sh.
-const chaffScriptURL = "https://raw.githubusercontent.com/pdnczone/hashem-panel/main/hashem-chaff.sh"
 
 // greScriptURL stays as an alias: releases before the rename shipped gre.sh,
 // and external tools may import the name.

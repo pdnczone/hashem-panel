@@ -91,7 +91,7 @@ code{background:#0b1220;border:1px solid #1e293b;border-radius:.3rem;padding:0 .
         <rect x="50" y="130" width="390" height="70" rx="8" fill="rgba(6,78,59,.4)" stroke="#34d399" stroke-width="1.5"/>
         <text x="245" y="152" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">L4 — frps  (per peer: frps / frps-N)</text>
         <text x="245" y="170" fill="#94a3b8" font-size="9" text-anchor="middle">bindPort • kcpBindPort • quicBindPort(+1) • token • maxPoolCount</text>
-        <text x="245" y="186" fill="#94a3b8" font-size="9" text-anchor="middle">tcpMux (OFF default) • tls.force • heartbeatTimeout=90</text>
+        <text x="245" y="186" fill="#94a3b8" font-size="9" text-anchor="middle">tcpMux (OFF default) • heartbeatTimeout=90 • maxPoolCount (auto, RAM-capped)</text>
 
         <rect x="50" y="225" width="390" height="70" rx="8" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1.5"/>
         <text x="245" y="247" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">L3 — GRE tunnel  (gre-tunnel / gre-tN)</text>
@@ -111,14 +111,14 @@ code{background:#0b1220;border:1px solid #1e293b;border-radius:.3rem;padding:0 .
 
         <rect x="50" y="525" width="390" height="70" rx="8" fill="rgba(136,19,55,.4)" stroke="#fb7185" stroke-width="1.5"/>
         <text x="245" y="547" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">Anti-censorship / hardening</text>
-        <text x="245" y="565" fill="#94a3b8" font-size="9" text-anchor="middle">DPI Shield (iptables HASHEM-DPI) • chaff (ICMP filler) • forced TLS</text>
+        <text x="245" y="565" fill="#94a3b8" font-size="9" text-anchor="middle">Auto Pool (watchdog tick) • tcpMux toggle • enc / comp</text>
         <text x="245" y="581" fill="#94a3b8" font-size="9" text-anchor="middle">kernel tune: BBR, buffers, MSS clamp, reordering • login lockout</text>
 
         <!-- spoke layers -->
         <rect x="560" y="130" width="390" height="70" rx="8" fill="rgba(6,78,59,.4)" stroke="#34d399" stroke-width="1.5"/>
         <text x="755" y="152" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">L4 — frpc</text>
         <text x="755" y="170" fill="#94a3b8" font-size="9" text-anchor="middle">serverAddr = hub GRE inner IP  (or public IP via dial fallback)</text>
-        <text x="755" y="186" fill="#94a3b8" font-size="9" text-anchor="middle">poolCount=20 • tcp+udp proxy per port • tcpMux must match hub</text>
+        <text x="755" y="186" fill="#94a3b8" font-size="9" text-anchor="middle">poolCount=auto (20–200) • tcp+udp proxy per port • tcpMux must match hub</text>
 
         <rect x="560" y="225" width="390" height="70" rx="8" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1.5"/>
         <text x="755" y="247" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">L3 — GRE (mirror)</text>
@@ -282,10 +282,10 @@ code{background:#0b1220;border:1px solid #1e293b;border-radius:.3rem;padding:0 .
         <text x="500" y="220" fill="#94a3b8" font-size="9" text-anchor="middle">جهت dial برعکس (stcp/sudp visitors)</text>
 
         <rect x="680" y="130" width="300" height="110" rx="8" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1.5"/>
-        <text x="830" y="153" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">dial / carrier / autotune</text>
+        <text x="830" y="153" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">dial / carrier / auto pool</text>
         <text x="830" y="172" fill="#94a3b8" font-size="9" text-anchor="middle">dial_watch_tick: GRE مرده → IP عمومی (خودکار)</text>
         <text x="830" y="188" fill="#94a3b8" font-size="9" text-anchor="middle">carrier: دستی (direct|wss) — AutoPilot فقط لاگ</text>
-        <text x="830" y="204" fill="#94a3b8" font-size="9" text-anchor="middle">autotune: pool بر اساس تعداد اتصال (خاموش)</text>
+        <text x="830" y="204" fill="#94a3b8" font-size="9" text-anchor="middle">auto pool: poolCount بر اساس خطای pool-full و بار (روشن)</text>
         <text x="830" y="220" fill="#94a3b8" font-size="9" text-anchor="middle">hashem-frp-restore: بعد از boot</text>
       </svg>
     </div>
@@ -293,9 +293,9 @@ code{background:#0b1220;border:1px solid #1e293b;border-radius:.3rem;padding:0 .
       <div class="card"><h3><span class="dot em"></span>خودکار و روشن</h3>
         <ul><li>watchdog tick هر ۶۰ ثانیه (فقط هشدار)</li><li>dial fallback (GRE → public IP)</li><li>fleet/linked sampler</li><li>restore بعد از reboot</li></ul></div>
       <div class="card"><h3><span class="dot am"></span>خودکار ولی نیازمند تأیید/روشن‌کردن</h3>
-        <ul><li>rescue: تشخیص خودکار، اجرا با کلیک</li><li>auto_restart / restart دوره‌ای</li><li>autotune pool</li><li>بکاپ زمان‌بندی‌شده</li></ul></div>
+        <ul><li>rescue: تشخیص خودکار، اجرا با کلیک</li><li>auto_restart / restart دوره‌ای</li><li>auto pool (فقط ری‌استارت frpc، با cooldown)</li><li>بکاپ زمان‌بندی‌شده</li></ul></div>
       <div class="card"><h3><span class="dot ro"></span>عمداً دستی</h3>
-        <ul><li>carrier (direct/wss) — AutoPilot فقط پیشنهاد</li><li>tcpMux / TLS / enc / comp</li><li>x-ui / inbounds هرگز لمس نمی‌شود</li></ul></div>
+        <ul><li>carrier (direct/wss) — AutoPilot فقط پیشنهاد</li><li>tcpMux / enc / comp</li><li>x-ui / inbounds هرگز لمس نمی‌شود</li></ul></div>
     </div>
     <div class="note">پس از قطعی امروز: watchdog ۱۲۸ بار پیاپی «down» گفت ولی <b>علت</b> را نگفت (EOF/tcpMux). hint جدید <span class="mono">E-FRP-10</span> این را فقط در status/doctor نشان می‌دهد؛ هنوز در هشدار تلگرام نیست.</div>
   </section>
@@ -309,10 +309,9 @@ code{background:#0b1220;border:1px solid #1e293b;border-radius:.3rem;padding:0 .
         <tr><td class="mono">transport.tcpMux</td><td><span class="tag off-t">OFF</span></td><td class="mono">perf.go / hashem.sh</td><td>طبق اندازه‌گیری ثبت‌شده، تقریباً نصف throughput روی GRE؛ باید دو سر یکسان باشد</td></tr>
         <tr><td class="mono">proxy encryption</td><td><span class="tag off-t">OFF</span></td><td class="mono">perf.json</td><td>ترافیک VLESS از قبل رمز است؛ رمزنگاری دوباره فقط CPU می‌سوزاند</td></tr>
         <tr><td class="mono">proxy compression</td><td><span class="tag off-t">OFF</span></td><td class="mono">perf.json</td><td>داده‌ی رمزشده فشرده نمی‌شود؛ هزینه‌ی CPU بدون سود</td></tr>
-        <tr><td class="mono">forced TLS</td><td><span class="tag off-t">OFF</span> <span class="tag am-t">در perf.json</span></td><td class="mono">perf.json</td><td>در سند skill «ON» بود؛ در کد فعلی OFF — ناهمخوانی مستندات (نکته‌ی ۶)</td></tr>
-        <tr><td class="mono">chaff</td><td><span class="tag off-t">off</span></td><td class="mono">perf.json</td><td>حلقه‌ی bash ping CPU می‌خورد؛ low/mid اختیاری</td></tr>
-        <tr><td class="mono">DPI Shield</td><td><span class="tag off-t">OFF</span></td><td class="mono">perf.json</td><td>iptables hashlimit روی پورت‌های reverse؛ ضد scan/flood</td></tr>
-        <tr><td class="mono">poolCount / maxPool</td><td>20 / 60</td><td class="mono">perf.go</td><td>جلوگیری از re-dial storm؛ بار بالا را از Performance tab بالا ببرید</td></tr>
+        <tr><td class="mono">auto pool</td><td><span class="tag on-t">ON</span></td><td class="mono">perf.json auto_pool</td><td>poolCount ۲۰–۲۰۰ و maxPoolCount ۶۰–۵۰۰ (سقف بر اساس RAM)، maxPool ≥ ۱٫۵×pool؛ وضعیت در auto_pool.json</td></tr>
+        <tr><td class="mono">tcpMux</td><td><span class="tag off-t">OFF</span></td><td class="mono">perf.json</td><td>سرعت‌محور؛ باید روی هاب و همه اسپوک‌ها یکسان باشد</td></tr>
+        <tr><td class="mono">poolCount / maxPool (دستی)</td><td>20 / 60</td><td class="mono">perf.json</td><td>فقط وقتی auto_pool خاموش است؛ همه‌ی writerها از <span class="mono">pool_effective_values</span> می‌خوانند</td></tr>
         <tr><td class="mono">watchdog auto_restart</td><td><span class="tag off-t">false</span></td><td class="mono">watchdog.json</td><td>restart خودکار زنجیره‌ای CPU هاب را تا ۷۰٪ می‌برد؛ فقط هشدار</td></tr>
         <tr><td class="mono">carrier</td><td>direct (دستی)</td><td class="mono">carrier.json</td><td>فقط GRE خام؛ سوییچ خودکار ممنوع</td></tr>
         <tr><td class="mono">FRP control port</td><td>تصادفی 20000–60000</td><td class="mono">setup</td><td>پرهیز از اثرانگشت ثابت ۷۰۰۰</td></tr>
@@ -328,12 +327,10 @@ code{background:#0b1220;border:1px solid #1e293b;border-radius:.3rem;padding:0 .
         <tr><td class="mono">tcpMux ON</td><td><span class="tag warn-t">↓ حدود ۵۰٪ (ثبت‌شده)</span></td><td>پایین‌تر</td><td>اگر دو سر یکی نباشد: قطع کامل (EOF)</td></tr>
         <tr><td class="mono">encryption / compression ON</td><td><span class="tag warn-t">↓</span></td><td><span class="tag warn-t">↑↑ روی ۱–۲ vCPU</span></td><td>بدون سود روی داده‌ی رمزشده</td></tr>
         <tr><td class="mono">QUIC / KCP transport</td><td><span class="tag warn-t">↓↓ روی مسیر reordering‌دار (ثبت‌شده ~۵–۱۲ vs ۲۵۰–۳۰۰ Mbit)</span></td><td>متوسط</td><td>پیش از سوییچ حتماً benchmark</td></tr>
-        <tr><td class="mono">poolCount بالا (۱۰۰)</td><td>بهتر زیر بار</td><td><span class="tag warn-t">↑ re-dial storm هنگام jitter</span></td><td>روی هاب تا ۷۰٪ CPU</td></tr>
+        <tr><td class="mono">poolCount بالا (۱۰۰)</td><td>بهتر زیر بار</td><td><span class="tag warn-t">↑ re-dial storm هنگام jitter</span></td><td>Auto Pool فقط با خطای pool-full بالا می‌برد و آهسته پایین می‌آورد</td></tr>
         <tr><td class="mono">BBR + بافر ۱۶MB + reordering=25</td><td><span class="tag on-t">↑</span></td><td>—</td><td>کم</td></tr>
         <tr><td class="mono">MTU 1380 + MSS clamp</td><td><span class="tag on-t">↑ (کمتر fragment)</span></td><td>—</td><td>کم</td></tr>
         <tr><td class="mono">kernel DNAT بجای FRP (پورت ساده)</td><td><span class="tag on-t">↑↑</span></td><td><span class="tag on-t">↓</span></td><td>IP واقعی کلاینت پنهان می‌شود (MASQUERADE)</td></tr>
-        <tr><td class="mono">DPI Shield (hashlimit)</td><td>—</td><td>کم</td><td>حد خیلی پایین کاربر واقعی را می‌بُرد</td></tr>
-        <tr><td class="mono">chaff</td><td>—</td><td><span class="tag warn-t">↑ حلقه‌ی bash</span></td><td>برای چند peer زیاد می‌شود</td></tr>
       </table>
       <div class="note">همه‌ی اعداد بالا از اسکیل و کامنت‌های کد آمده‌اند. هیچ اندازه‌گیری تازه نگرفتم (طبق تصمیم شما)؛ برای عدد دقیق روی مسیر فعلی باید جداگانه در netns محلی benchmark کنیم.</div>
     </div>
@@ -345,13 +342,12 @@ code{background:#0b1220;border:1px solid #1e293b;border-radius:.3rem;padding:0 .
       <h2>نقاط ضعف معماری (دیده‌شده در کد و در رخدادهای این هفته)</h2>
       <table>
         <tr><th>#</th><th>مسئله</th><th>شاهد</th><th>جهت اصلاح</th></tr>
-        <tr><td>1</td><td><b>پیکربندی دوطرفه هم‌گام نمی‌شود</b></td><td>قطعی امروز (tcpMux)، proxyProtocol، tls، pool</td><td>یک «منبع حقیقت» روی هاب + دریافت تنظیمات توسط اسپک (یا bundle v2 با فیلدهای بیشتر)</td></tr>
+        <tr><td>1</td><td><b>پیکربندی دوطرفه هم‌گام نمی‌شود</b></td><td>قطعی امروز (tcpMux)، proxyProtocol، pool</td><td>یک «منبع حقیقت» روی هاب + دریافت تنظیمات توسط اسپک (یا bundle v2 با فیلدهای بیشتر)</td></tr>
         <tr><td>2</td><td><b>watchdog فقط «down» می‌گوید، نه چرا</b></td><td>۱۲۸ شکست پیاپی بدون علت</td><td>دسته‌بندی علت (GRE، توکن، EOF/mux، پورت) در هشدار</td></tr>
         <tr><td>3</td><td><b>تغییر کانفیگ بدون ردپا</b></td><td>تست‌ها کانفیگ زنده را بازنویسی کردند و معلوم نبود چه کسی</td><td>لاگ منبع تغییر + بکاپ خودکار + rollback در UI</td></tr>
         <tr><td>4</td><td><b>هسته‌ی ۸٬۴۸۶ خطی bash + ۱۸٬۲۲۰ خط Go</b> با منطق مشترک</td><td>۲۰۹ تابع در یک فایل؛ هر باگ دو جا تکرار می‌شود (مثلاً مسیر perf.json)</td><td>shellcheck در CI، تست واحد برای توابع کلیدی، یک API داخلی بجای shell-out</td></tr>
         <tr><td>5</td><td><b>مسیرهای ثابت /etc/…</b></td><td>تست روی میزبان زنده نوشت (در این نسخه فقط بخش Go اصلاح شد)</td><td>همان الگوی <span class="mono">frpDir</span> در bash</td></tr>
-        <tr><td>6</td><td><b>مستندات و کد ناهمخوان</b></td><td>forced TLS در اسکیل ON، در کد OFF؛ لینک‌های docs/en شکسته بود</td><td>یک سند پیش‌فرض‌ها که از کد تولید شود</td></tr>
-        <tr><td>7</td><td><b>tls_enabled ↔ force_tls</b></td><td><span class="mono">tunnel.go:942</span> کلیدی می‌خواند که وجود ندارد</td><td>مهاجرت دوطرفه سپس اصلاح</td></tr>
+        <tr><td>6</td><td><b>مستندات و کد ناهمخوان</b></td><td>لینک‌های docs/en شکسته بود</td><td>یک سند پیش‌فرض‌ها که از کد تولید شود</td></tr>
         <tr><td>8</td><td><b>نصب بدون checksum</b></td><td><span class="mono">install.sh</span> اسکریپت را از main و پروکسی ثالث اجرا می‌کند</td><td>امضا/checksum و pin به tag پایدار</td></tr>
         <tr><td>9</td><td><b>یک هاب = نقطه‌ی شکست</b></td><td>frpc فقط یک serverAddr دارد</td><td>لیست چند هاب با failover</td></tr>
         <tr><td>10</td><td><b>release از main و آپدیت از latest</b></td><td>پنل خودش را از <span class="mono">releases/latest</span> آپدیت می‌کند</td><td>کانال stable/dev جدا (الان با شاخه‌ی dev شروع شده)</td></tr>

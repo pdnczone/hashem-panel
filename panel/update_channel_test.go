@@ -295,10 +295,10 @@ func TestFetchScriptPrefersReleaseTag(t *testing.T) {
 		}
 		return f.Close()
 	}
-	if err := fetchScript("v1.0.0", "hashem-chaff.sh", chaffScriptURL, dst); err != nil {
+	if err := fetchScript("v1.0.0", "hashem-backhaul.sh", scriptURL, dst); err != nil {
 		t.Fatal(err)
 	}
-	if len(urls) != 2 || urls[1] != chaffScriptURL {
+	if len(urls) != 2 || urls[1] != scriptURL {
 		t.Fatalf("urls=%v", urls)
 	}
 

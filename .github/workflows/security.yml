@@ -40,5 +40,4 @@ jobs:
       - name: Validate Shell Script Syntax
         run: |
           bash -n hashem.sh
-          bash -n hashem-chaff.sh
           bash -n hashem-backhaul.sh

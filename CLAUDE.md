@@ -2,7 +2,7 @@
 
 ## What this repo is
 Hashem Panel: a hub-and-spoke tunnel manager. An Iran hub runs `frps` / Backhaul server and owns the public ports. Foreign spokes run `frpc` / Backhaul client and dial the hub. GRE (L3) is the carrier underneath. It has two parts:
-- Installer/CLI: `hashem.sh` (installed as `hashem`), plus `hashem-backhaul.sh` and `hashem-chaff.sh`. All are bash, and systemd manages the services.
+- Installer/CLI: `hashem.sh` (installed as `hashem`), plus `hashem-backhaul.sh`. All are bash, and systemd manages the services.
 - Panel: a Go backend (`gre-panel`) with a single-page web UI.
 
 ## Layout
@@ -15,7 +15,7 @@ Hashem Panel: a hub-and-spoke tunnel manager. An Iran hub runs `frps` / Backhaul
 
 ## Build / verify
 ```
-bash -n hashem.sh                      # syntax check (also hashem-backhaul.sh, hashem-chaff.sh, install.sh)
+bash -n hashem.sh                      # syntax check (also hashem-backhaul.sh, install.sh)
 cd panel && /usr/local/go/bin/go vet ./... && /usr/local/go/bin/go build
 cd panel && /usr/local/go/bin/go test ./...
 for t in tests/test_*.sh; do bash "$t"; done

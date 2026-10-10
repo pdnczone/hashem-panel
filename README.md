@@ -44,7 +44,7 @@
 
 Hashem is a tunnel manager made of two parts:
 
-- **The installer / CLI** — `hashem.sh` (installed as `hashem`), plus `hashem-backhaul.sh` and `hashem-chaff.sh`. It sets up GRE, FRP and Backhaul services with systemd.
+- **The installer / CLI** — `hashem.sh` (installed as `hashem`), plus `hashem-backhaul.sh`. It sets up GRE, FRP and Backhaul services with systemd.
 - **The panel** — a Go backend with a single-page web UI (`gre-panel`). It runs on every server and shows the tunnel, peers, health, latency, logs, diagnostics and updates.
 
 The model is a **hub and spokes**:
@@ -70,7 +70,7 @@ The model is a **hub and spokes**:
 - 🔄 **Safe updates** — stable / dev channels, install any of the last 20 releases (upgrade or downgrade), SHA-256 verification, config backup, automatic rollback.
 - 🎯 **Carrier benchmark** and **diagnostics** (`hashem doctor`).
 - 💻 **In-browser terminal** — disabled by default, audited.
-- 🛡️ **DPI Shield and traffic chaff** — optional obfuscation and rate-limiting.
+- ⚙️ **Auto Pool** — frpc `poolCount` / frps `maxPoolCount` sized automatically from pool-full errors, load and RAM (on by default).
 - 🔒 **Hardened panel** — SHA-256 password hashes, NIST 800-63B password policy, CSRF tokens, trusted-proxy handling, audit log. See [Security notes](#security-notes).
 
 ---
@@ -153,7 +153,7 @@ Manage the main tunnel and the foreign-server peer cards.
 
 ### Performance — tuning
 
-Capacity, encryption/compression, chaff and DPI Shield.
+Auto Pool, encryption/compression and TCP multiplexing.
 <img src="docs/performance.jpg" width="100%" alt="Performance tab">
 
 **FRP TCP Multiplexing (`transport.tcpMux`) is OFF by default** (speed-first: tcpMux roughly halves throughput over GRE). New `frps`/`frpc` configs are written with `transport.tcpMux = false`. Turn it on only deliberately with `hashem perf tcpmux on` (or the Performance tab). The setting **must be identical on the Iran hub and every foreign spoke**; a mismatch makes `frpc` fail to log in with `connect to server error: EOF`, and `hashem status` / `hashem doctor` print a hint when they see it. Backhaul is unaffected.
@@ -246,8 +246,7 @@ hashem carrier        # carrier management / failover
 hashem dial status    # foreign side: route to the Iran hub
 hashem watchdog status
 hashem backup now     # encrypted backup (/var/backups/hashem)
-hashem chaff on       # traffic obfuscation (idle-gap filler)
-hashem dpi-shield on  # rate-limit reverse ports
+hashem perf autopool status  # Auto Pool: on|off|status|tick
 hashem free-ram       # free RAM
 hashem update         # update script and panel to the latest release
 hashem uninstall      # full wipe

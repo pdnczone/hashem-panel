@@ -1461,28 +1461,28 @@
         <!-- Status hero card -->
         <div class="tunnel-card wd-hero-card">
           <div class="tc-header">
-            <p class="tc-title">Performance &amp; Obfuscation</p>
+            <p class="tc-title">Performance</p>
             <div class="u-flex-center-gap10">
               <span class="status-indicator" id="perfSyncInd"><span class="dot"></span><span id="perfSyncTxt">—</span></span>
               <button class="hashem-btn hashem-btn-primary" id="perfApplyTopBtn">Apply &amp; Restart</button>
             </div>
           </div>
-          <div class="qs-hint">Speed-first controls for wire-speed streaming. Keep proxy encryption, compression, and forced TLS OFF for already-encrypted streams (VLESS, Reality, Trojan) to eliminate latency and CPU bottlenecks.</div>
+          <div class="qs-hint">Speed-first controls for wire-speed streaming. Keep proxy encryption and compression OFF for already-encrypted streams (VLESS, Reality, Trojan) to eliminate latency and CPU bottlenecks.</div>
           <div class="wd-hero-grid">
             <div class="wd-stat-box">
-              <span class="wd-stat-label">FRP Crypto &amp; TLS</span>
+              <span class="wd-stat-label">FRP Crypto &amp; Mux</span>
               <div class="wd-stat-val" id="perfCryptoVal">—</div>
               <span class="wd-stat-sub" id="perfCryptoSub">Enc: Off · Comp: Off</span>
             </div>
             <div class="wd-stat-box">
-              <span class="wd-stat-label">Chaff Obfuscation</span>
-              <div class="wd-stat-val" id="perfChaffVal">—</div>
-              <span class="wd-stat-sub" id="perfChaffSub">Idle-gap filler</span>
+              <span class="wd-stat-label" data-i18n="perf_status_pool">Work-conn pool (frpc / frps)</span>
+              <div class="wd-stat-val" id="perfPoolVal">—</div>
+              <span class="wd-stat-sub" id="perfPoolSub">—</span>
             </div>
             <div class="wd-stat-box">
-              <span class="wd-stat-label">DPI Shield</span>
-              <div class="wd-stat-val" id="perfDpiVal">—</div>
-              <span class="wd-stat-sub" id="perfDpiRateSub">60/sec (burst 120)</span>
+              <span class="wd-stat-label" data-i18n="perf_status_decision">Auto Pool decision</span>
+              <div class="wd-stat-val" id="perfDecisionVal">—</div>
+              <span class="wd-stat-sub" id="perfDecisionSub">—</span>
             </div>
           </div>
         </div>
@@ -1513,14 +1513,6 @@
             </label>
 
             <label class="wd-radio-opt u-items-start" >
-              <input type="checkbox" id="perfTlsCheck" class="u-checkbox-ac">
-              <div>
-                <b class="u-color-tx">Forced TLS (transport.tls.force &amp; disableCustomTLSFirstByte)</b>
-                <div class="qs-hint u-mt-2" >Strips custom FRP TLS header. Keep OFF (recommended) inside GRE tunnel to prevent handshake mismatches between servers.</div>
-              </div>
-            </label>
-
-            <label class="wd-radio-opt u-items-start" >
               <input type="checkbox" id="perfMuxCheck" class="u-checkbox-ac">
               <div>
                 <b class="u-color-tx" data-i18n="perf_mux_title">TCP Multiplexing (transport.tcpMux)</b>
@@ -1533,91 +1525,65 @@
           <div class="qs-actions u-mt-16" >
             <button class="hashem-btn hashem-btn-primary" id="perfApplyBtn">Apply &amp; restart tunnels</button>
             <button class="hashem-btn hashem-btn-secondary" id="perfSaveOnlyBtn">Save Settings</button>
-            <button class="hashem-btn hashem-btn-danger" id="perfResetBtn" title="Reset all performance & obfuscation settings to clean wire-speed defaults">🛡️ Reset to Safe Defaults</button>
+            <button class="hashem-btn hashem-btn-danger" id="perfResetBtn" title="Reset all performance settings to clean wire-speed defaults">🛡️ Reset to Safe Defaults</button>
           </div>
           <div class="qs-hint" id="perfApplyMsg"></div>
         </div>
 
         
-        <!-- Tunnel Tuning Card -->
-        <div class="tunnel-card" id="capacityTuningCard">
+        <!-- Auto Pool Card -->
+        <div class="tunnel-card" id="autoPoolCard">
           <div class="tc-header">
             <div>
-              <p class="tc-title" data-i18n="perf_cap_title">Capacity &amp; Tuning (FRP)</p>
-              <div class="qs-hint" data-i18n="perf_cap_sub">Adapt FRP multiplexing capacity dynamically based on server RAM and active connections.</div>
+              <p class="tc-title" data-i18n="perf_ap_title">Auto Pool (FRP work connections)</p>
+              <div class="qs-hint" data-i18n="perf_ap_sub">Sizes frpc poolCount and frps maxPoolCount from pool-full errors, active connections, CPU and free RAM. Scales up fast, scales down slowly, restarts only frpc and only when few users are connected.</div>
             </div>
-            <span class="badge ok" id="perfAutoTuneBadge">Smart Auto</span>
+            <span class="badge ok" id="perfAutoPoolBadge">Auto</span>
           </div>
-          <div class="wd-grid u-mt-12">
-            <div class="form-row">
-              <label class="sw-wrap">
-                <input type="checkbox" id="perfAutoTune" checked>
-                <span class="sw-slider"></span>
-              </label>
+          <div class="u-flex-col-gap14 u-mt-12">
+            <label class="wd-radio-opt u-items-start">
+              <input type="checkbox" id="perfAutoPool" class="u-checkbox-ac" checked>
               <div>
-                <p style="font-weight:600;margin:0 0 2px" data-i18n="perf_auto_mode">Auto-Adaptation (Dynamic Scaling)</p>
-                <div class="tc-sub" data-i18n="perf_auto_sub">Automatically scale FRP capacity dynamically. (Recommended)</div>
+                <b class="u-color-tx" data-i18n="perf_ap_toggle">Auto Pool (recommended)</b>
+                <div class="qs-hint u-mt-2" data-i18n="perf_ap_toggle_hint">When off, the manual values below are written to frpc.toml / frps.toml as typed.</div>
               </div>
+            </label>
+          </div>
+          <div class="wd-hero-grid u-mt-12">
+            <div class="wd-stat-box">
+              <span class="wd-stat-label" data-i18n="perf_ap_last_decision">Last decision</span>
+              <div class="wd-stat-val u-fs-18" id="perfApDecision">—</div>
+              <span class="wd-stat-sub" id="perfApReason">—</span>
+            </div>
+            <div class="wd-stat-box">
+              <span class="wd-stat-label" data-i18n="perf_ap_errors">Pool-full errors (last tick)</span>
+              <div class="wd-stat-val u-fs-18" id="perfApErrors">—</div>
+              <span class="wd-stat-sub" id="perfApConns">—</span>
+            </div>
+            <div class="wd-stat-box">
+              <span class="wd-stat-label" data-i18n="perf_ap_last_restart">Last frpc restart</span>
+              <div class="wd-stat-val u-fs-18" id="perfApRestart">—</div>
+              <span class="wd-stat-sub" id="perfApQuiet">—</span>
+            </div>
+          </div>
+          <div class="qs-hint u-mt-8" id="perfApFrpsNote" hidden data-i18n="perf_ap_frps_note">maxPoolCount was raised in frps.toml; restart frps during a quiet period to apply it.</div>
+          <div class="qs-row u-mt-12">
+            <div class="fg">
+              <label for="perfPoolCount" data-i18n="perf_pool_count">Client Pool Count (frpc)</label>
+              <input type="number" id="perfPoolCount" class="hashem-input" min="2" max="1000" value="20">
+              <div class="tc-sub" id="perfPoolHint" data-i18n="perf_pool_sub">Pre-opened work connections on foreign spokes.</div>
             </div>
             <div class="fg">
-              <label data-i18n="perf_profile_label">Tuning Profile Preset</label>
-              <div class="qs-seg" role="group" id="tuningProfileSeg">
-                <button type="button" id="profStd" data-prof="standard" aria-pressed="true">Standard (20/60)</button>
-                <button type="button" id="profHigh" data-prof="high" aria-pressed="false">High-Load (50/150)</button>
-                <button type="button" id="profExt" data-prof="extreme" aria-pressed="false">Extreme (100/500)</button>
-                <button type="button" id="profCustom" data-prof="custom" aria-pressed="false">Custom</button>
-              </div>
-            </div>
-            <div class="qs-row u-mt-8">
-              <div class="fg">
-                <label for="perfPoolCount" data-i18n="perf_pool_count">Client Pool Count (frpc)</label>
-                <input type="number" id="perfPoolCount" class="hashem-input" min="2" max="500" value="20">
-                <div class="tc-sub" data-i18n="perf_pool_sub">Active connection multiplex pool on foreign spokes.</div>
-              </div>
-              <div class="fg">
-                <label for="perfMaxPool" data-i18n="perf_max_pool">Max Pool Count (frps)</label>
-                <input type="number" id="perfMaxPool" class="hashem-input" min="10" max="2000" value="60">
-                <div class="tc-sub" data-i18n="perf_max_sub">Server-side maximum work connection headroom.</div>
-              </div>
-            </div>
-            <div class="qs-actions u-mt-12" style="display:flex;gap:12px;align-items:center;">
-              <button class="hashem-btn hashem-btn-primary" id="perfSaveTuningBtn" type="button" data-i18n="perf_save_tuning">
-                💾 Save &amp; Apply Capacity
-              </button>
-              <span class="u-hint-12" id="perfTuningStatus"></span>
+              <label for="perfMaxPool" data-i18n="perf_max_pool">Max Pool Count (frps)</label>
+              <input type="number" id="perfMaxPool" class="hashem-input" min="10" max="2000" value="60">
+              <div class="tc-sub" data-i18n="perf_max_sub">Server-side maximum work connection headroom (always at least 1.5 × poolCount).</div>
             </div>
           </div>
-        </div>
-
-        <!-- Traffic Chaff & DPI Shield Card -->
-        <div class="tunnel-card">
-          <div class="tc-header">
-            <p class="tc-title">Traffic Chaff &amp; DPI Shield</p>
-          </div>
-          <div class="qs-hint">Anti-censorship and flood defense. Chaff fills idle timing gaps with randomized ping packets. DPI shield protects reverse ports from active scanner floods.</div>
-
-          <div class="fg u-mt-12" >
-            <label for="perfChaffSelect">Chaff Profile</label>
-            <div class="u-flex-center-wrap10">
-              <select class="hashem-input u-max-w-200" id="perfChaffSelect" >
-                <option value="off">Off (disabled)</option>
-                <option value="low">Low (0.4-2.8s intervals)</option>
-                <option value="mid">Mid (0.15-1.2s intervals)</option>
-              </select>
-              <button class="hashem-btn hashem-btn-secondary" id="perfSaveChaffBtn">Update Chaff</button>
-              <span class="status-indicator" id="perfChaffLiveInd"><span class="dot"></span><span id="perfChaffLiveTxt">—</span></span>
-            </div>
-            <div class="ent-help">Idle-gap filler creates random dummy pings across the GRE tunnel. Default is OFF.</div>
-          </div>
-
-          <div class="fg u-mt-16" >
-            <label>DPI Flood Shield</label>
-            <div class="u-flex-center-wrap10">
-              <span class="status-indicator" id="perfDpiLiveInd"><span class="dot"></span><span id="perfDpiLiveTxt">—</span></span>
-              <button class="hashem-btn hashem-btn-secondary" id="perfDpiToggleBtn">Toggle DPI Shield</button>
-              <span class="badge" id="perfDpiRateBadge">60/sec (burst 120)</span>
-            </div>
-            <div class="ent-help" id="perfDpiHelp">Uses iptables hashlimit per source IP to protect reverse ports against aggressive port scanners without throttling normal user connections. Default is OFF.</div>
+          <div class="qs-actions u-mt-12" style="display:flex;gap:12px;align-items:center;">
+            <button class="hashem-btn hashem-btn-primary" id="perfSaveTuningBtn" type="button" data-i18n="perf_save_tuning">
+              💾 Save &amp; Apply Capacity
+            </button>
+            <span class="u-hint-12" id="perfTuningStatus"></span>
           </div>
         </div>
 
@@ -1635,7 +1601,7 @@
           </div>
           <div class="qs-hint">
             Dynamic transport switching between raw GRE (Protocol 47) and Kernel-Native Foo-over-UDP (FOU). 
-            Bypasses DPI protocol-47 throttling and random IP drops by wrapping GRE inside symmetric UDP packets.
+            Bypasses ISP protocol-47 throttling and random IP drops by wrapping GRE inside symmetric UDP packets.
           </div>
 
           <div class="wd-hero-grid u-mt-12" >
@@ -2881,28 +2847,26 @@ const I18N = {
     setup_add_tunnel_btn: "Add tunnel",
 
     // Performance & Tuning Tab
-    perf_overview_title: "Performance & DPI Shield Overview",
-    perf_overview_sub: "Wire-speed throughput tuning, traffic obfuscation, and active probing defense",
-    perf_status_sync: "Sync Status",
-    perf_status_crypto: "Crypto / Obfuscation",
-    perf_status_chaff: "Traffic Chaff",
-    perf_status_dpi: "DPI Shield",
-    perf_cap_title: "Capacity & Tuning (FRP)",
-    perf_cap_sub: "Adapt FRP multiplexing capacity based on server RAM and active connections.",
-    perf_auto_mode: "Auto-Adaptation (Dynamic Scaling)",
-    perf_auto_sub: "Automatically scale FRP capacity dynamically. (Recommended)",
-    perf_profile_label: "Tuning Profile Preset",
+    perf_status_pool: "Work-conn pool (frpc / frps)",
+    perf_status_decision: "Auto Pool decision",
+    perf_mode_auto: "Auto Pool",
+    perf_mode_manual: "Manual",
+    perf_ap_title: "Auto Pool (FRP work connections)",
+    perf_ap_sub: "Sizes frpc poolCount and frps maxPoolCount from pool-full errors, active connections, CPU and free RAM. Scales up fast, scales down slowly, restarts only frpc and only when few users are connected.",
+    perf_ap_toggle: "Auto Pool (recommended)",
+    perf_ap_toggle_hint: "When off, the manual values below are written to frpc.toml / frps.toml as typed.",
+    perf_ap_last_decision: "Last decision",
+    perf_ap_errors: "Pool-full errors (last tick)",
+    perf_ap_last_restart: "Last frpc restart",
+    perf_ap_frps_note: "maxPoolCount was raised in frps.toml; restart frps during a quiet period to apply it.",
+    perf_ap_saved: "Auto Pool updated",
+    perf_ap_on_msg: "Pool is resized automatically every minute.",
+    perf_ap_off_msg: "Manual values apply after Save & Apply.",
     perf_pool_count: "Client Pool Count (frpc)",
-    perf_pool_sub: "Active connection multiplex pool on foreign spokes.",
+    perf_pool_sub: "Pre-opened work connections on foreign spokes.",
     perf_max_pool: "Max Pool Count (frps)",
-    perf_max_sub: "Server-side maximum work connection headroom.",
+    perf_max_sub: "Server-side maximum work connection headroom (always at least 1.5 × poolCount).",
     perf_save_tuning: "💾 Save & Apply Capacity",
-    perf_chaff_title: "Traffic Chaff & DPI Shield",
-    perf_chaff_sub: "Anti-censorship and flood defense. Chaff fills idle timing gaps with randomized ping packets.",
-    perf_chaff_label: "Chaff Profile",
-    perf_chaff_update_btn: "Update Chaff",
-    perf_dpi_label: "DPI Flood Shield",
-    perf_dpi_toggle_btn: "Toggle DPI Shield",
     perf_carrier_title: "Carrier & UDP Encapsulation (FOU)",
     perf_carrier_save: "Save Mode",
 
@@ -3291,28 +3255,26 @@ const I18N = {
     setup_add_tunnel_btn: "افزودن و اتصال تونل جدید",
 
     // Performance & Tuning Tab
-    perf_overview_title: "نمای کلی عملکرد، تیونینگ و سپر DPI",
-    perf_overview_sub: "بهینه‌سازی نرخ ترافیک عبوری، پکت‌های فریبنده Chaff و مسدودسازی اسکنرهای فعال",
-    perf_status_sync: "وضعیت همگام‌سازی",
-    perf_status_crypto: "رمزنگاری و مبهم‌سازی",
-    perf_status_chaff: "پکت‌های فریبنده Chaff",
-    perf_status_dpi: "سپر ضد اسکنر DPI",
-    perf_cap_title: "ظرفیت و تیونینگ پویا (FRP Capacity)",
-    perf_cap_sub: "تنظیم هوشمند استریم‌های Multiplexing بر اساس حافظه RAM و تعداد اتصالات همزمان کاربران.",
-    perf_auto_mode: "تنظیم خودکار و هوشمند (Dynamic Scaling)",
-    perf_auto_sub: "محاسبه و تنظیم خودکار Pool بر اساس اتصالات زنده و رم آزاد سرور (پیشنهادی)",
-    perf_profile_label: "پروفایل‌های آماده تیونینگ",
-    perf_pool_count: "تعداد استخرهای کلاینت (frpc Pool Count)",
-    perf_pool_sub: "تعداد استخرهای اتصال مالتی‌پلکس در سرورهای خارج.",
+    perf_status_pool: "استخر اتصال کاری (frpc / frps)",
+    perf_status_decision: "تصمیم Auto Pool",
+    perf_mode_auto: "Auto Pool",
+    perf_mode_manual: "دستی",
+    perf_ap_title: "Auto Pool (اتصال‌های کاری FRP)",
+    perf_ap_sub: "اندازه poolCount در frpc و maxPoolCount در frps را بر اساس خطاهای پر شدن استخر، تعداد اتصال‌های فعال، CPU و رم آزاد تنظیم می‌کند. افزایش سریع، کاهش آهسته؛ فقط frpc ری‌استارت می‌شود و فقط وقتی کاربران کمی وصل‌اند.",
+    perf_ap_toggle: "Auto Pool (پیشنهادی)",
+    perf_ap_toggle_hint: "در حالت خاموش، مقادیر دستی زیر دقیقاً همان‌طور که وارد شده در frpc.toml و frps.toml نوشته می‌شوند.",
+    perf_ap_last_decision: "آخرین تصمیم",
+    perf_ap_errors: "خطاهای پر بودن استخر (آخرین بررسی)",
+    perf_ap_last_restart: "آخرین ری‌استارت frpc",
+    perf_ap_frps_note: "maxPoolCount در frps.toml افزایش یافت؛ برای اعمال آن، frps را در زمان کم‌ترافیک ری‌استارت کنید.",
+    perf_ap_saved: "Auto Pool به‌روز شد",
+    perf_ap_on_msg: "استخر هر دقیقه به‌صورت خودکار تنظیم می‌شود.",
+    perf_ap_off_msg: "مقادیر دستی پس از «ذخیره و اعمال» فعال می‌شوند.",
+    perf_pool_count: "تعداد استخر کلاینت (frpc Pool Count)",
+    perf_pool_sub: "تعداد اتصال‌های کاری از پیش بازشده در سرورهای خارج.",
     perf_max_pool: "حداکثر سقف استخر سرور (frps Max Pool)",
-    perf_max_sub: "سقف کانکشن‌های فعال کار در سرور ایران جهت پاسخگویی به بار سنگین.",
+    perf_max_sub: "سقف اتصال‌های کاری در سرور ایران (همیشه حداقل ۱٫۵ برابر poolCount).",
     perf_save_tuning: "💾 ذخیره و اعمال ظرفیت",
-    perf_chaff_title: "پکت‌های فریبنده Chaff و سپر محافظتی DPI",
-    perf_chaff_sub: "پوشش الگوهای رفتاری ترافیک و پر کردن فواصل زمانی با پینگ‌های تصادفی رمزنگاری‌شده.",
-    perf_chaff_label: "پروفایل چف (Chaff Profile)",
-    perf_chaff_update_btn: "بروزرسانی Chaff",
-    perf_dpi_label: "سپر مقابله با حملات اسکن DPI",
-    perf_dpi_toggle_btn: "تغییر وضعیت سپر DPI",
     perf_carrier_title: "مدیریت کریرها و کپسوله‌سازی UDP (FOU)",
     perf_carrier_save: "ذخیره حالت کریر",
 
@@ -5878,13 +5840,23 @@ window.addEventListener('resize', () => {
   if (!$('tab-terminal').hidden && termState.fit) { try { termState.fit.fit(); termSendResize(); } catch(_){ /* term.fit / ws send / close: harmless if terminal not ready */ } }
   const c = $('trafficChart'); if (c && c._hist && !$('tab-dashboard').hidden) { drawChart(c._hist, c._isDown); drawActivityChart(c._hist, c._isDown); }
 });
-// ---------- Performance & Obfuscation (tab-perf) ----------
-let perfState = { proxy_encryption: false, proxy_compression: false, force_tls: false, chaff_profile: 'off', dpi_enabled: false };
+// ---------- Performance (tab-perf) ----------
+let perfState = { proxy_encryption: false, proxy_compression: false, auto_pool: true };
+
+function perfAgo(ts) {
+  if (!ts) return '—';
+  const d = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+  if (d < 90) return d + 's ago';
+  if (d < 5400) return Math.round(d / 60) + ' min ago';
+  if (d < 172800) return Math.round(d / 3600) + ' h ago';
+  return new Date(ts * 1000).toLocaleDateString();
+}
 
 async function loadPerf() {
   try {
     const s = await api('/api/perf');
     perfState = s;
+    const ap = s.auto_pool_state || {};
 
     // Status hero card
     const ind = $('perfSyncInd');
@@ -5893,24 +5865,17 @@ async function loadPerf() {
       $('perfSyncTxt').textContent = s.in_sync ? 'In Sync' : 'Needs Apply';
     }
     const cVal = $('perfCryptoVal');
-    if (cVal) cVal.textContent = s.force_tls ? 'TLS: On' : 'TLS: Off';
+    if (cVal) cVal.textContent = 'Mux: ' + (s.tcp_mux_live ? s.tcp_mux_live : (s.tcp_mux ? 'On' : 'Off'));
     const cSub = $('perfCryptoSub');
-    if (cSub) cSub.textContent = `Enc: ${s.proxy_encryption ? 'On' : 'Off'} · Comp: ${s.proxy_compression ? 'On' : 'Off'} · Mux: ${s.tcp_mux_live ? s.tcp_mux_live : (s.tcp_mux ? 'On' : 'Off')}`;
-
-    const chVal = $('perfChaffVal');
-    if (chVal) chVal.textContent = s.chaff_profile ? s.chaff_profile.toUpperCase() : 'OFF';
-    const chSub = $('perfChaffSub');
-    if (chSub) chSub.textContent = s.chaff_active ? '● Running' : '○ Inactive';
-
-    const dVal = $('perfDpiVal');
-    if (dVal) dVal.textContent = s.dpi_active ? 'Active' : (s.dpi_enabled ? 'Enabled' : 'Disabled');
-    const dSub = $('perfDpiRateSub');
-    if (dSub) dSub.textContent = `${s.dpi_rate || '60/sec'} (burst ${s.dpi_burst || 120})`;
+    if (cSub) cSub.textContent = `Enc: ${s.proxy_encryption ? 'On' : 'Off'} · Comp: ${s.proxy_compression ? 'On' : 'Off'}`;
+    if ($('perfPoolVal')) $('perfPoolVal').textContent = `${s.effective_pool_count} / ${s.effective_max_pool}`;
+    if ($('perfPoolSub')) $('perfPoolSub').textContent = s.auto_pool ? tr('perf_mode_auto', 'Auto Pool') : tr('perf_mode_manual', 'Manual');
+    if ($('perfDecisionVal')) $('perfDecisionVal').textContent = s.auto_pool ? (ap.last_decision || 'waiting') : 'off';
+    if ($('perfDecisionSub')) $('perfDecisionSub').textContent = s.auto_pool ? (ap.last_reason || 'first tick pending (runs every minute)') : tr('perf_mode_manual', 'Manual');
 
     // Checkboxes
     if ($('perfEncCheck')) $('perfEncCheck').checked = !!s.proxy_encryption;
     if ($('perfCompCheck')) $('perfCompCheck').checked = !!s.proxy_compression;
-    if ($('perfTlsCheck')) $('perfTlsCheck').checked = !!s.force_tls;
     if ($('perfMuxCheck')) $('perfMuxCheck').checked = !!s.tcp_mux;
     if ($('perfMuxLive')) {
       const live = s.tcp_mux_live || 'n/a';
@@ -5927,86 +5892,46 @@ async function loadPerf() {
       $('perfRoleBadge').className = 'badge ' + (s.role === 'iran' ? 'ok' : 'info');
     }
 
-    // Chaff selector & live status
-    if ($('perfChaffSelect')) $('perfChaffSelect').value = s.chaff_profile || 'off';
-    const chInd = $('perfChaffLiveInd');
-    if (chInd) {
-      chInd.className = 'status-indicator ' + (s.chaff_active ? 'active' : 'offline');
-      $('perfChaffLiveTxt').textContent = s.chaff_active ? 'Active' : 'Stopped';
-    }
-
-    // DPI live status & rate badge
-    const dpiInd = $('perfDpiLiveInd');
-    if (dpiInd) {
-      dpiInd.className = 'status-indicator ' + (s.dpi_active ? 'active' : 'offline');
-      $('perfDpiLiveTxt').textContent = s.dpi_active ? 'Active' : 'Inactive';
-    }
-    const dpiTog = $('perfDpiToggleBtn');
-    if (dpiTog) {
-      dpiTog.textContent = s.dpi_enabled ? 'Disable Shield' : 'Enable Shield';
-      dpiTog.className = 'hashem-btn ' + (s.dpi_enabled ? 'hashem-btn-ghost' : 'hashem-btn-secondary');
-    }
-    if ($('perfDpiRateBadge')) {
-      $('perfDpiRateBadge').textContent = `Rate: ${s.dpi_rate || '300/min'} · Burst: ${s.dpi_burst || 100}`;
-    }
-
-    // Capacity & Tuning
-    if ($('perfAutoTune')) $('perfAutoTune').checked = !!s.auto_tune;
-    if ($('perfPoolCount')) $('perfPoolCount').value = s.frp_pool_count || 20;
-    if ($('perfMaxPool')) $('perfMaxPool').value = s.frp_max_pool || 60;
-    updateTuningUI(!!s.auto_tune, s.tuning_profile || 'standard');
+    // Auto Pool card
+    if ($('perfAutoPool')) $('perfAutoPool').checked = !!s.auto_pool;
+    if ($('perfApDecision')) $('perfApDecision').textContent = ap.last_decision || '—';
+    if ($('perfApReason')) $('perfApReason').textContent = ap.last_reason || '—';
+    if ($('perfApErrors')) $('perfApErrors').textContent = ap.last_tick ? String(ap.errors_last_tick || 0) : '—';
+    if ($('perfApConns')) $('perfApConns').textContent = ap.last_tick ? `active conns ≈ ${ap.active_conns || 0}` : '—';
+    if ($('perfApRestart')) $('perfApRestart').textContent = perfAgo(ap.last_restart);
+    if ($('perfApQuiet')) $('perfApQuiet').textContent = ap.last_tick ? `quiet ticks: ${ap.quiet_ticks || 0}` : '—';
+    if ($('perfApFrpsNote')) $('perfApFrpsNote').hidden = !(s.auto_pool && ap.frps_restart_needed);
+    if ($('perfPoolCount')) $('perfPoolCount').value = s.auto_pool ? s.effective_pool_count : (s.frp_pool_count || 20);
+    if ($('perfMaxPool')) $('perfMaxPool').value = s.auto_pool ? s.effective_max_pool : (s.frp_max_pool || 60);
+    updateAutoPoolUI(!!s.auto_pool);
   } catch (e) {
     toastErr('performance error', e.message);
   }
 }
 
-function updateTuningUI(isAuto, prof) {
-  const badge = $('perfAutoTuneBadge');
+function updateAutoPoolUI(isAuto) {
+  const badge = $('perfAutoPoolBadge');
   if (badge) {
     badge.className = 'badge ' + (isAuto ? 'ok' : 'info');
-    badge.textContent = isAuto ? 'Smart Auto' : 'Manual Tuning';
+    badge.textContent = isAuto ? tr('perf_mode_auto', 'Auto Pool') : tr('perf_mode_manual', 'Manual');
   }
-  const poolIn = $('perfPoolCount');
-  const maxIn = $('perfMaxPool');
-  if (poolIn && maxIn) {
-    poolIn.disabled = isAuto;
-    maxIn.disabled = isAuto;
-  }
-  const seg = $('tuningProfileSeg');
-  if (seg) {
-    seg.querySelectorAll('button').forEach(btn => {
-      const p = btn.dataset.prof;
-      btn.setAttribute('aria-pressed', p === prof ? 'true' : 'false');
-    });
-  }
+  if ($('perfPoolCount')) $('perfPoolCount').readOnly = isAuto;
+  if ($('perfMaxPool')) $('perfMaxPool').readOnly = isAuto;
+  if ($('perfSaveTuningBtn')) $('perfSaveTuningBtn').disabled = isAuto;
 }
 
-if ($('tuningProfileSeg')) {
-  $('tuningProfileSeg').querySelectorAll('button').forEach(btn => {
-    btn.onclick = () => {
-      const p = btn.dataset.prof;
-      if ($('perfAutoTune')) {
-        $('perfAutoTune').checked = false;
-      }
-      if (p === 'standard') {
-        if ($('perfPoolCount')) $('perfPoolCount').value = 20;
-        if ($('perfMaxPool')) $('perfMaxPool').value = 60;
-      } else if (p === 'high') {
-        if ($('perfPoolCount')) $('perfPoolCount').value = 50;
-        if ($('perfMaxPool')) $('perfMaxPool').value = 150;
-      } else if (p === 'extreme') {
-        if ($('perfPoolCount')) $('perfPoolCount').value = 100;
-        if ($('perfMaxPool')) $('perfMaxPool').value = 500;
-      }
-      updateTuningUI(false, p);
-    };
-  });
-}
-
-if ($('perfAutoTune')) {
-  $('perfAutoTune').onchange = () => {
-    const isAuto = $('perfAutoTune').checked;
-    updateTuningUI(isAuto, isAuto ? 'auto' : 'custom');
+if ($('perfAutoPool')) {
+  $('perfAutoPool').onchange = async () => {
+    const on = $('perfAutoPool').checked;
+    updateAutoPoolUI(on);
+    try {
+      await api('/api/perf', { action: 'update', auto_pool: on });
+      toastOk(tr('perf_ap_saved', 'Auto Pool updated'), on ? tr('perf_ap_on_msg', 'Pool is resized automatically every minute.') : tr('perf_ap_off_msg', 'Manual values apply after Save & Apply.'));
+      await loadPerf();
+    } catch (e) {
+      toastErr('Auto Pool error', e.message);
+      await loadPerf();
+    }
   };
 }
 
@@ -6014,22 +5939,14 @@ if ($('perfSaveTuningBtn')) {
   $('perfSaveTuningBtn').onclick = async () => {
     const btn = $('perfSaveTuningBtn');
     btn.disabled = true;
-    const isAuto = $('perfAutoTune') ? $('perfAutoTune').checked : false;
     const pool = parseInt($('perfPoolCount') ? $('perfPoolCount').value : 20, 10) || 20;
     const maxPool = parseInt($('perfMaxPool') ? $('perfMaxPool').value : 60, 10) || 60;
-    let prof = 'custom';
-    if (isAuto) prof = 'auto';
-    else if (pool === 20 && maxPool === 60) prof = 'standard';
-    else if (pool === 50 && maxPool === 150) prof = 'high';
-    else if (pool === 100 && maxPool === 500) prof = 'extreme';
-
     try {
       const res = await api('/api/perf', {
         action: 'set-tuning',
-        auto_tune: isAuto,
+        auto_pool: false,
         frp_pool_count: pool,
         frp_max_pool: maxPool,
-        tuning_profile: prof,
       });
       toastOk('Capacity Updated', res.detail || 'FRP scaling settings saved and applied.');
       if ($('perfTuningStatus')) {
@@ -6053,13 +5970,11 @@ async function doPerfApply(btnEl) {
   try {
     const enc = $('perfEncCheck') ? $('perfEncCheck').checked : perfState.proxy_encryption;
     const comp = $('perfCompCheck') ? $('perfCompCheck').checked : perfState.proxy_compression;
-    const tls = $('perfTlsCheck') ? $('perfTlsCheck').checked : perfState.force_tls;
     const mux = $('perfMuxCheck') ? $('perfMuxCheck').checked : !!perfState.tcp_mux;
     const res = await api('/api/perf', {
       action: 'apply',
       proxy_encryption: enc,
       proxy_compression: comp,
-      force_tls: tls,
       tcp_mux: mux
     });
     toastOk('Settings applied', res.detail || 'Live tunnels updated and restarted.');
@@ -6076,14 +5991,12 @@ async function doPerfApply(btnEl) {
 async function doPerfSaveOnly() {
   const enc = $('perfEncCheck') ? $('perfEncCheck').checked : perfState.proxy_encryption;
   const comp = $('perfCompCheck') ? $('perfCompCheck').checked : perfState.proxy_compression;
-  const tls = $('perfTlsCheck') ? $('perfTlsCheck').checked : perfState.force_tls;
   const mux = $('perfMuxCheck') ? $('perfMuxCheck').checked : !!perfState.tcp_mux;
   try {
     await api('/api/perf', {
       action: 'update',
       proxy_encryption: enc,
       proxy_compression: comp,
-      force_tls: tls,
       tcp_mux: mux
     });
     toastOk('Settings saved', 'Remember to Apply & restart tunnels to make them active.');
@@ -6100,44 +6013,10 @@ if (perfApplyTopBtn) perfApplyTopBtn.onclick = () => doPerfApply(perfApplyTopBtn
 const perfSaveOnlyBtn = $('perfSaveOnlyBtn');
 if (perfSaveOnlyBtn) perfSaveOnlyBtn.onclick = () => doPerfSaveOnly();
 
-const perfSaveChaffBtn = $('perfSaveChaffBtn');
-if (perfSaveChaffBtn) {
-  perfSaveChaffBtn.onclick = async () => {
-    const prof = $('perfChaffSelect') ? $('perfChaffSelect').value : 'low';
-    perfSaveChaffBtn.disabled = true;
-    try {
-      const res = await api('/api/perf', { action: 'set-chaff', chaff_profile: prof });
-      toastOk('Chaff profile updated', res.detail || 'Profile set to ' + prof);
-      await loadPerf();
-    } catch (e) {
-      toastErr('chaff error', e.message);
-    } finally {
-      perfSaveChaffBtn.disabled = false;
-    }
-  };
-}
-
-const perfDpiToggleBtn = $('perfDpiToggleBtn');
-if (perfDpiToggleBtn) {
-  perfDpiToggleBtn.onclick = async () => {
-    perfDpiToggleBtn.disabled = true;
-    try {
-      const next = !perfState.dpi_enabled;
-      const res = await api('/api/perf', { action: 'set-dpi', dpi_enabled: next });
-      toastOk('DPI shield updated', res.detail || (next ? 'Shield enabled' : 'Shield disabled'));
-      await loadPerf();
-    } catch (e) {
-      toastErr('DPI shield error', e.message);
-    } finally {
-      perfDpiToggleBtn.disabled = false;
-    }
-  };
-}
-
 const perfResetBtn = $('perfResetBtn');
 if (perfResetBtn) {
   perfResetBtn.onclick = async () => {
-    const ok = await entConfirm('Reset Performance Settings', 'This will disable DPI shield, stop chaff pings, disable extra proxy encryption/compression, and restart tunnels in clean wire-speed mode. Continue?', 'Reset to Safe Defaults');
+    const ok = await entConfirm('Reset Performance Settings', 'This will turn Auto Pool on, disable extra proxy encryption/compression and TCP multiplexing, and restart tunnels in clean wire-speed mode. Continue?', 'Reset to Safe Defaults');
     if (!ok) return;
     perfResetBtn.disabled = true;
     try {
@@ -7105,7 +6984,7 @@ if ($('docIperfBtn')) $('docIperfBtn').onclick = toggleIperf;
 
 // boot: if already logged in, status works; else show login
 (async () => {
-  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); if (!localStorage.getItem('v1_perf_alert')) { toastOk('Performance Defaults Updated', 'TLS, Chaff, and AutoTune are now disabled by default to minimize ping overhead. Opt back in via the Performance tab if needed.'); localStorage.setItem('v1_perf_alert', '1'); } }
+  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); }
   catch(e) { showLogin(); }
 })();
 // light pollers: skip when the tab is in the background (background tabs

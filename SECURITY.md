@@ -59,7 +59,7 @@ If you discover a security vulnerability in `hashem-panel`, please report it res
 - Password change automatically invalidates all existing sessions (`dropAllSessions`), preventing hijacked sessions from persisting.
 
 ### 6. Script Download & Dynamic Execution Hardening (CWE-95)
-- **Mitigation**: Installer scripts (`hashem.sh`, `hashem-chaff.sh`) downloaded from the repository must pass:
+- **Mitigation**: Installer scripts (`hashem.sh`) downloaded from the repository must pass:
   1. Size and shebang integrity validation (`#!/bin/bash` or `#!/usr/bin/env bash`).
   2. Non-execution syntax verification (`bash -n`).
   3. Domain origin verification.

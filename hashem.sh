@@ -30,6 +30,17 @@ PANEL_CONFIG_DIR="${GRE_PANEL_DIR:-/etc/gre-panel}"
 WATCHDOG_FILE="${PANEL_CONFIG_DIR}/watchdog.json"
 PERF_FILE="${PANEL_CONFIG_DIR}/perf.json"
 CARRIER_FILE="${PANEL_CONFIG_DIR}/carrier.json"
+AUTO_POOL_STATE="${PANEL_CONFIG_DIR}/auto_pool.json"
+# Auto Pool tuning (env-overridable): frpc poolCount 20..200, frps maxPoolCount 60..500 (also RAM-capped)
+AUTOPOOL_MIN="${AUTOPOOL_MIN:-20}"
+AUTOPOOL_MAX="${AUTOPOOL_MAX:-200}"
+AUTOPOOL_MAXPOOL_MIN="${AUTOPOOL_MAXPOOL_MIN:-60}"
+AUTOPOOL_MAXPOOL_MAX="${AUTOPOOL_MAXPOOL_MAX:-500}"
+AUTOPOOL_LOW_CONNS="${AUTOPOOL_LOW_CONNS:-30}"       # restart frpc only below this many active user conns
+AUTOPOOL_COOLDOWN="${AUTOPOOL_COOLDOWN:-300}"        # min seconds between automatic frpc restarts
+AUTOPOOL_SEVERE_ERRS="${AUTOPOOL_SEVERE_ERRS:-20}"   # pool-full lines per tick that justify a restart under load
+AUTOPOOL_DOWN_QUIET="${AUTOPOOL_DOWN_QUIET:-15}"     # consecutive quiet ticks before scaling down
+AUTOPOOL_MIN_FREE_MB="${AUTOPOOL_MIN_FREE_MB:-150}"  # below this free RAM, never scale up
 BACKUP_DIR="/var/backups/hashem"
 
 ensure_hashem_bin() {
@@ -97,27 +108,6 @@ backup_configs() {
     echo "$bdir" > "${BACKUP_DIR}/latest" 2>/dev/null || true
     log_msg "installer" "INFO" "Created config backup at $bdir"
     echo "$bdir"
-}
-
-rollback_configs() {
-    local bdir="$1"
-    [[ -z "$bdir" && -f "${BACKUP_DIR}/latest" ]] && bdir=$(cat "${BACKUP_DIR}/latest" 2>/dev/null)
-    if [[ -z "$bdir" || ! -d "$bdir" ]]; then
-        echo -e "${RED}[!] No valid backup directory found for rollback.${NC}"
-        return 1
-    fi
-    echo -e "${YELLOW}[*] Rolling back configurations from: $bdir ...${NC}"
-    log_msg "installer" "WARN" "Initiating rollback from $bdir"
-    
-    [[ -d "$bdir/hashem" ]] && cp -rp "$bdir/hashem" /etc/ 2>/dev/null || true
-    [[ -d "$bdir/gre-panel" ]] && cp -rp "$bdir/gre-panel" /etc/ 2>/dev/null || true
-    [[ -d "$bdir/frp" ]] && cp -rp "$bdir/frp" /etc/ 2>/dev/null || true
-    if [[ -d "$bdir/systemd" ]]; then
-        cp -p "$bdir/systemd/"* /etc/systemd/system/ 2>/dev/null || true
-        systemctl daemon-reload >/dev/null 2>&1 || true
-    fi
-    echo -e "${GREEN}[✔️] Rollback completed.${NC}"
-    log_msg "installer" "INFO" "Rollback completed successfully"
 }
 
 # Component States: NOT_INSTALLED, INSTALLED, RUNNING, STOPPED, BROKEN, UNKNOWN
@@ -375,7 +365,7 @@ cli_bundle_inspect() {
 }
 
 
-# ---- Performance / Obfuscation Configuration (/etc/gre-panel/perf.json) ----
+# ---- Performance Configuration (/etc/gre-panel/perf.json) ----
 init_perf_json() {
     mkdir -p /etc/gre-panel
     if [[ ! -f "$PERF_FILE" ]]; then
@@ -383,12 +373,8 @@ init_perf_json() {
 {
   "proxy_encryption": false,
   "proxy_compression": false,
-  "force_tls": false,
   "tcp_mux": false,
-  "chaff_profile": "off",
-  "dpi_enabled": false,
-  "dpi_rate": "60/sec",
-  "dpi_burst": 120
+  "auto_pool": true
 }
 EOF
         chmod 600 "$PERF_FILE" 2>/dev/null || true
@@ -486,97 +472,6 @@ except Exception:
     echo 0
 }
 
-perf_get_tls() {
-    if [[ -n "${PERF_TLS:-}" ]]; then
-        [[ "$PERF_TLS" == "1" || "$PERF_TLS" == "true" ]] && echo 1 || echo 0
-        return 0
-    fi
-    if [[ -f "$PERF_FILE" ]] && command -v python3 >/dev/null 2>&1; then
-        python3 -c '
-import json
-try:
-    with open("'"$PERF_FILE"'") as f:
-        print(1 if json.load(f).get("force_tls", False) else 0)
-except Exception:
-    print(0)
-' 2>/dev/null && return 0
-    elif [[ -f "$PERF_FILE" ]]; then
-        grep -q '"force_tls"[[:space:]]*:[[:space:]]*true' "$PERF_FILE" && echo 1 || echo 0
-        return 0
-    fi
-    echo 0
-}
-
-perf_get_chaff() {
-    if [[ -n "${CHAFF_PROFILE:-}" ]]; then
-        echo "$CHAFF_PROFILE"
-        return 0
-    fi
-    if [[ -f "$PERF_FILE" ]] && command -v python3 >/dev/null 2>&1; then
-        python3 -c '
-import json
-try:
-    with open("'"$PERF_FILE"'") as f:
-        p = json.load(f).get("chaff_profile", "off")
-        print(p if p in ("off", "low", "mid") else "off")
-except Exception:
-    print("off")
-' 2>/dev/null && return 0
-    fi
-    echo "off"
-}
-
-perf_get_dpi_enabled() {
-    if [[ -n "${PERF_DPI:-}" ]]; then
-        [[ "$PERF_DPI" == "1" || "$PERF_DPI" == "true" ]] && echo 1 || echo 0
-        return 0
-    fi
-    if [[ -f "$PERF_FILE" ]] && command -v python3 >/dev/null 2>&1; then
-        python3 -c '
-import json
-try:
-    with open("'"$PERF_FILE"'") as f:
-        print(1 if json.load(f).get("dpi_enabled", False) else 0)
-except Exception:
-    print(0)
-' 2>/dev/null && return 0
-    elif [[ -f "$PERF_FILE" ]]; then
-        grep -q '"dpi_enabled"[[:space:]]*:[[:space:]]*true' "$PERF_FILE" && echo 1 || echo 0
-        return 0
-    fi
-    echo 0
-}
-
-perf_get_dpi_rate() {
-    if [[ -f "$PERF_FILE" ]] && command -v python3 >/dev/null 2>&1; then
-        python3 -c '
-import json
-try:
-    with open("'"$PERF_FILE"'") as f:
-        r = json.load(f).get("dpi_rate", "60/sec")
-        print(r if r else "60/sec")
-except Exception:
-    print("60/sec")
-' 2>/dev/null && return 0
-    fi
-    echo "60/sec"
-}
-
-perf_get_dpi_burst() {
-    if [[ -f "$PERF_FILE" ]] && command -v python3 >/dev/null 2>&1; then
-        python3 -c '
-import json
-try:
-    with open("'"$PERF_FILE"'") as f:
-        b = json.load(f).get("dpi_burst", 120)
-        print(int(b) if int(b) > 0 else 120)
-except Exception:
-    print(120)
-' 2>/dev/null && return 0
-    fi
-    echo 120
-}
-
 perf_set_val() {
     local key="$1" val="$2" is_raw="${3:-0}"
     init_perf_json
@@ -604,11 +499,326 @@ if raw:
             d[key] = val_str
 else:
     d[key] = val_str
+for k in ("force_tls", "chaff_profile", "dpi_enabled", "dpi_rate", "dpi_burst", "auto_tune", "tuning_profile"):
+    d.pop(k, None)
 with open(path, "w") as f:
     json.dump(d, f, indent=2)
 '
         chmod 600 "$PERF_FILE" 2>/dev/null || true
     fi
+}
+
+# drop keys of removed features from an existing perf.json (idempotent)
+perf_prune_legacy_keys() {
+    [[ -f "$PERF_FILE" ]] && command -v python3 >/dev/null 2>&1 || return 0
+    python3 -c '
+import json
+path = "'"$PERF_FILE"'"
+try:
+    with open(path) as f:
+        d = json.load(f)
+    n = len(d)
+    for k in ("force_tls", "chaff_profile", "dpi_enabled", "dpi_rate", "dpi_burst", "auto_tune", "tuning_profile"):
+        d.pop(k, None)
+    if len(d) != n:
+        with open(path, "w") as f:
+            json.dump(d, f, indent=2)
+except Exception:
+    pass
+' 2>/dev/null || true
+}
+
+# ---- Auto Pool: one place decides poolCount (frpc) / maxPoolCount (frps) ----
+# auto_pool in perf.json (missing = on). On: poolCount follows $AUTO_POOL_STATE written by autopool_tick;
+# off: frp_pool_count / frp_max_pool from perf.json apply as typed.
+perf_get_auto_pool() {
+    if [[ -n "${PERF_AUTO_POOL:-}" ]]; then
+        [[ "$PERF_AUTO_POOL" == "0" || "$PERF_AUTO_POOL" == "false" ]] && echo 0 || echo 1
+        return 0
+    fi
+    if [[ -f "$PERF_FILE" ]] && command -v python3 >/dev/null 2>&1; then
+        python3 -c '
+import json
+try:
+    with open("'"$PERF_FILE"'") as f:
+        print(1 if json.load(f).get("auto_pool", True) else 0)
+except Exception:
+    print(1)
+' 2>/dev/null && return 0
+    fi
+    echo 1
+}
+
+# integer value from perf.json, $2 when missing/invalid
+perf_get_int() {
+    local key="$1" def="$2"
+    [[ -f "$PERF_FILE" ]] && command -v python3 >/dev/null 2>&1 || { echo "$def"; return 0; }
+    python3 -c '
+import json
+try:
+    with open("'"$PERF_FILE"'") as f:
+        print(int(json.load(f).get("'"$key"'", '"$def"')))
+except Exception:
+    print('"$def"')
+' 2>/dev/null || echo "$def"
+}
+
+# pool_clamp VALUE MIN MAX
+pool_clamp() {
+    local v="$1" lo="$2" hi="$3"
+    [[ "$v" =~ ^[0-9]+$ ]] || v="$lo"
+    (( v < lo )) && v="$lo"
+    (( v > hi )) && v="$hi"
+    echo "$v"
+}
+
+# RAM ceiling for maxPoolCount: budget 10% of RAM at ~64KB per pooled work conn
+# => cap = RAM_MB * 1024 * 0.10 / 64 = RAM_MB * 8 / 5, clamped to [AUTOPOOL_MAXPOOL_MIN, AUTOPOOL_MAXPOOL_MAX].
+pool_ram_cap() {
+    local ram="${AUTOPOOL_RAM_MB:-}"
+    [[ "$ram" =~ ^[0-9]+$ ]] || ram=$(awk '/^MemTotal:/ {printf "%d", $2 / 1024}' /proc/meminfo 2>/dev/null)
+    [[ "$ram" =~ ^[0-9]+$ && "$ram" -gt 0 ]] || ram=1024
+    pool_clamp $(( ram * 8 / 5 )) "$AUTOPOOL_MAXPOOL_MIN" "$AUTOPOOL_MAXPOOL_MAX"
+}
+
+# state file accessors (auto_pool.json)
+autopool_state_get() { # $1=key $2=default
+    local def="${2:-}"
+    [[ -f "$AUTO_POOL_STATE" ]] && command -v python3 >/dev/null 2>&1 || { echo "$def"; return 0; }
+    python3 - "$AUTO_POOL_STATE" "$1" "$def" <<'PY' 2>/dev/null || echo "$def"
+import json, sys
+path, key, default = sys.argv[1:4]
+try:
+    with open(path) as f:
+        v = json.load(f).get(key, default)
+    print(str(v).lower() if isinstance(v, bool) else v)
+except Exception:
+    print(default)
+PY
+}
+
+autopool_state_set() { # key=value ...  (ints / true / false stay typed)
+    command -v python3 >/dev/null 2>&1 || return 0
+    mkdir -p "$(dirname "$AUTO_POOL_STATE")" 2>/dev/null || true
+    python3 - "$AUTO_POOL_STATE" "$@" <<'PY' 2>/dev/null || true
+import json, os, sys
+path = sys.argv[1]
+try:
+    with open(path) as f:
+        d = json.load(f)
+except Exception:
+    d = {}
+for kv in sys.argv[2:]:
+    k, _, v = kv.partition("=")
+    if v in ("true", "false"):
+        d[k] = (v == "true")
+    else:
+        try:
+            d[k] = int(v)
+        except ValueError:
+            d[k] = v
+with open(path + ".tmp", "w") as f:
+    json.dump(d, f, indent=2)
+os.chmod(path + ".tmp", 0o600)
+os.replace(path + ".tmp", path)
+PY
+}
+
+# THE helper every frps/frpc writer uses. Prints "<poolCount> <maxPoolCount>".
+# maxPoolCount is always >= 1.5 * poolCount; auto mode keeps poolCount <= 2/3 of the RAM cap so that holds.
+pool_effective_values() {
+    local cap pool maxp
+    cap=$(pool_ram_cap)
+    if [[ "$(perf_get_auto_pool)" == "1" ]]; then
+        local hi=$(( cap * 2 / 3 ))
+        (( hi > AUTOPOOL_MAX )) && hi="$AUTOPOOL_MAX"
+        (( hi < AUTOPOOL_MIN )) && hi="$AUTOPOOL_MIN"
+        pool=$(pool_clamp "$(autopool_state_get pool "$AUTOPOOL_MIN")" "$AUTOPOOL_MIN" "$hi")
+        maxp="$cap"
+    else
+        pool=$(pool_clamp "$(perf_get_int frp_pool_count "$AUTOPOOL_MIN")" 2 1000)
+        maxp=$(perf_get_int frp_max_pool 0)
+        (( maxp >= 10 )) || maxp="$cap"
+    fi
+    local need=$(( (pool * 3 + 1) / 2 ))
+    (( maxp < need )) && maxp="$need"
+    echo "$pool $maxp"
+}
+
+# rewrite "<key> = N" in a toml header (before the first [[proxies]]); appends when missing
+autopool_set_toml_key() { # $1=file $2=key $3=value
+    local f="$1" key="$2" val="$3"
+    [[ -f "$f" ]] || return 1
+    if grep -Eq "^[[:space:]]*${key}[[:space:]]*=" "$f"; then
+        sed -i -E "s|^([[:space:]]*${key}[[:space:]]*=[[:space:]]*).*|\1${val}|" "$f"
+    else
+        local hdr_end
+        hdr_end=$(grep -n -m1 -E '^\[\[' "$f" | cut -d: -f1)
+        if [[ -n "$hdr_end" ]]; then
+            sed -i "$((hdr_end - 1))a ${key} = ${val}" "$f"
+        else
+            printf '%s = %s\n' "$key" "$val" >> "$f"
+        fi
+    fi
+}
+
+autopool_live_toml_int() { # $1=file $2=key
+    grep -E "^[[:space:]]*$2[[:space:]]*=" "$1" 2>/dev/null | head -1 | sed -E 's/.*=[[:space:]]*([0-9]+).*/\1/'
+}
+
+# "work connection pool is full" lines logged by frpc since epoch $1
+autopool_count_errors() {
+    local since="$1" n=0
+    if command -v journalctl >/dev/null 2>&1; then
+        n=$(journalctl -u frpc --since "$(date -d "@${since}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)" --no-pager -q 2>/dev/null \
+            | grep -c 'work connection pool is full')
+    elif [[ -f "${AUTOPOOL_LOG_FILE:-/var/log/frpc.log}" ]]; then
+        n=$(tail -n 2000 "${AUTOPOOL_LOG_FILE:-/var/log/frpc.log}" 2>/dev/null | grep -c 'work connection pool is full')
+    fi
+    [[ "$n" =~ ^[0-9]+$ ]] || n=0
+    echo "$n"
+}
+
+# Established TCP conns to the hub (control + idle pool + in-flight work conns). "tunnel total"
+autopool_conn_counts() { # $1=hub port
+    local total tunnel=0
+    total=$(ss -Htn state established 2>/dev/null | wc -l)
+    [[ -n "$1" ]] && tunnel=$(ss -Htn state established "( dport = :$1 )" 2>/dev/null | wc -l)
+    echo "$tunnel $total"
+}
+
+autopool_free_mb() {
+    awk '/^MemAvailable:/ {printf "%d", $2 / 1024}' /proc/meminfo 2>/dev/null || echo 1024
+}
+
+# 1 when 1-min load exceeds 2x CPU count
+autopool_cpu_hot() {
+    local l ncpu
+    l=$(awk '{printf "%d", $1 * 100}' /proc/loadavg 2>/dev/null)
+    ncpu=$(nproc 2>/dev/null || echo 1)
+    [[ "$l" =~ ^[0-9]+$ ]] || l=0
+    (( l > ncpu * 200 )) && echo 1 || echo 0
+}
+
+# Called once a minute from watchdog_tick. Spoke: size frpc poolCount from pool-full errors, user
+# conns and CPU/RAM; scale up x1.5 at once, scale down x0.8 only after AUTOPOOL_DOWN_QUIET quiet ticks.
+# A change reaches frpc via a restart (never frps) only when <AUTOPOOL_LOW_CONNS user conns are active
+# or errors are severe, and never within AUTOPOOL_COOLDOWN of the previous restart.
+# Hub: never restarts frps; it only raises maxPoolCount in the toml and flags frps_restart_needed.
+autopool_tick() {
+    [[ "$(perf_get_auto_pool)" == "1" ]] || return 0
+    local now cap
+    now=$(date +%s)
+    cap=$(pool_ram_cap)
+
+    if [[ ! -f "${CONFIG_DIR}/frpc.toml" ]]; then
+        local f live want need=0 f_ok=0
+        read -r _ want <<< "$(pool_effective_values)"
+        for f in "${CONFIG_DIR}"/frps*.toml; do
+            [[ -f "$f" ]] || continue
+            f_ok=1
+            live=$(autopool_live_toml_int "$f" transport.maxPoolCount)
+            if [[ -z "$live" ]] || (( live < want )); then
+                autopool_set_toml_key "$f" transport.maxPoolCount "$want"
+                need=1
+            fi
+        done
+        [[ "$f_ok" -eq 1 ]] || return 0
+        if [[ "$need" -eq 1 ]]; then
+            autopool_state_set max_pool="$want" frps_restart_needed=true last_tick="$now" \
+                last_decision=hub_raise_max "last_reason=maxPoolCount raised to ${want} in frps toml; restart frps when idle to apply"
+        else
+            autopool_state_set max_pool="$want" last_tick="$now"
+        fi
+        return 0
+    fi
+
+    local pool applied last_tick last_restart quiet hi
+    hi=$(( cap * 2 / 3 ))
+    (( hi > AUTOPOOL_MAX )) && hi="$AUTOPOOL_MAX"
+    (( hi < AUTOPOOL_MIN )) && hi="$AUTOPOOL_MIN"
+    applied=$(autopool_live_toml_int "${CONFIG_DIR}/frpc.toml" transport.poolCount)
+    [[ "$applied" =~ ^[0-9]+$ ]] || applied="$AUTOPOOL_MIN"
+    pool=$(pool_clamp "$(autopool_state_get pool "$applied")" "$AUTOPOOL_MIN" "$hi")
+    last_tick=$(autopool_state_get last_tick $(( now - 60 )))
+    last_restart=$(autopool_state_get last_restart 0)
+    quiet=$(autopool_state_get quiet_ticks 0)
+    [[ "$last_tick" =~ ^[0-9]+$ ]] || last_tick=$(( now - 60 ))
+    [[ "$last_restart" =~ ^[0-9]+$ ]] || last_restart=0
+    [[ "$quiet" =~ ^[0-9]+$ ]] || quiet=0
+
+    local hub_port errs counts tunnel total active free_mb hot
+    hub_port=$(autopool_live_toml_int "${CONFIG_DIR}/frpc.toml" serverPort)
+    errs=$(autopool_count_errors "$last_tick")
+    counts=$(autopool_conn_counts "$hub_port")
+    read -r tunnel total <<< "$counts"
+    active=$(( tunnel - 1 - applied ))
+    (( active < 0 )) && active=0
+    free_mb=$(autopool_free_mb)
+    hot=$(autopool_cpu_hot)
+
+    local decision="hold" reason="steady" new="$pool"
+    if (( free_mb < AUTOPOOL_MIN_FREE_MB )) && (( errs > 0 || active > pool )); then
+        reason="free RAM ${free_mb}MB below ${AUTOPOOL_MIN_FREE_MB}MB, not scaling up"
+        quiet=0
+    elif (( errs > 0 )) || { (( active > pool )) && [[ "$hot" -eq 0 ]]; }; then
+        quiet=0
+        new=$(( (pool * 3 + 1) / 2 ))
+        (( new <= pool )) && new=$(( pool + 1 ))
+        new=$(pool_clamp "$new" "$AUTOPOOL_MIN" "$hi")
+        if (( new > pool )); then
+            decision="scale_up"
+            (( errs > 0 )) && reason="${errs} pool-full errors since last tick" || reason="${active} active conns exceed pool ${pool}"
+        else
+            reason="at ceiling ${hi} (errors=${errs})"
+        fi
+    elif (( errs == 0 )) && [[ "$hot" -eq 0 ]] && (( active < pool )); then
+        quiet=$(( quiet + 1 ))
+        if (( quiet >= AUTOPOOL_DOWN_QUIET )) && (( pool > AUTOPOOL_MIN )); then
+            new=$(( pool * 4 / 5 ))
+            (( new < active )) && new="$active"
+            new=$(pool_clamp "$new" "$AUTOPOOL_MIN" "$hi")
+            if (( new < pool )); then
+                decision="scale_down"
+                reason="${quiet} quiet ticks"
+                quiet=0
+            else
+                new="$pool"
+            fi
+        else
+            reason="quiet ${quiet}/${AUTOPOOL_DOWN_QUIET}"
+        fi
+    else
+        quiet=0
+        reason="busy (active=${active} load_hot=${hot})"
+    fi
+    pool="$new"
+
+    local last_change; last_change=$(autopool_state_get last_change 0)
+    [[ "$decision" == "scale_up" || "$decision" == "scale_down" ]] && last_change="$now"
+    local max_pool="$cap" need_max=$(( (pool * 3 + 1) / 2 ))
+    (( max_pool < need_max )) && max_pool="$need_max"
+
+    # a pending change (state pool != live poolCount) reaches frpc only through the restart gate
+    if (( pool != applied )); then
+        local since=$(( now - last_restart ))
+        if (( since < AUTOPOOL_COOLDOWN )); then
+            decision="deferred"; reason="${reason}; cooldown $(( AUTOPOOL_COOLDOWN - since ))s left"
+        elif (( active < AUTOPOOL_LOW_CONNS )) || (( errs >= AUTOPOOL_SEVERE_ERRS )); then
+            autopool_set_toml_key "${CONFIG_DIR}/frpc.toml" transport.poolCount "$pool"
+            systemctl restart frpc >/dev/null 2>&1 || true
+            applied="$pool"; last_restart="$now"
+            [[ "$decision" == "deferred" || "$decision" == "hold" ]] && decision="applied"
+            reason="${reason}; frpc restarted"
+        else
+            decision="deferred"; reason="${reason}; ${active} active conns, waiting for <${AUTOPOOL_LOW_CONNS}"
+        fi
+    fi
+
+    autopool_state_set pool="$pool" max_pool="$max_pool" applied_pool="$applied" quiet_ticks="$quiet" \
+        last_tick="$now" last_restart="$last_restart" last_change="$last_change" last_decision="$decision" \
+        "last_reason=${reason}" errors_last_tick="$errs" active_conns="$active" tunnel_conns="$tunnel" \
+        total_conns="$total" free_mb="$free_mb" cpu_hot="$hot" role=foreign
 }
 
 # ---- input validation (same rules as the web panel: IPv4, port 1-65535) ----
@@ -1968,540 +2178,22 @@ EOF
     echo -e "${GREEN}[✔️] GRE Tunnel service active with IP ${CLEAN_GRE_IP} (MTU 1380, MSS 1340).${NC}"
 }
 
-# ---- Traffic Obfuscation / Chaff Service (idle gap filler) ----
-CHAFF_BIN="/usr/local/bin/hashem-chaff.sh"
-
-install_chaff_script() {
-    cat <<'EOF' > "$CHAFF_BIN"
-#!/usr/bin/env bash
-# /usr/local/bin/hashem-chaff.sh - GRE tunnel idle-gap chaff generator
-
-PEER_IP="${1:-}"
-if [[ -z "$PEER_IP" ]]; then
-    echo "Usage: $0 <peer_inner_ip> [low|mid]" >&2
-    exit 1
-fi
-
-PROFILE="${2:-${CHAFF_PROFILE:-low}}"
-
-trap 'exit 0' SIGTERM SIGINT
-
-while true; do
-    if [[ "$PROFILE" == "mid" ]]; then
-        # mid: intervals 0.15-1.2s, size 200-1280 (fits within MTU 1380)
-        ms=$(( 150 + RANDOM % 1051 ))
-        sleep_sec=$(printf "%d.%03d" $((ms / 1000)) $((ms % 1000)))
-        size=$(( 200 + RANDOM % 1081 ))
-    else
-        # low (default): intervals 0.4-2.8s, size 64-1200
-        ms=$(( 400 + RANDOM % 2401 ))
-        sleep_sec=$(printf "%d.%03d" $((ms / 1000)) $((ms % 1000)))
-        size=$(( 64 + RANDOM % 1137 ))
-    fi
-
-    sleep "$sleep_sec"
-
-    # 16 random hex bytes (32 hex characters)
-    pattern=$(printf '%04x%04x%04x%04x%04x%04x%04x%04x' $RANDOM $RANDOM $RANDOM $RANDOM $RANDOM $RANDOM $RANDOM $RANDOM)
-
-    ping -c1 -W1 -s "$size" -p "$pattern" "$PEER_IP" >/dev/null 2>&1 || true
-done
-EOF
-    chmod +x "$CHAFF_BIN"
-}
-
-# setup_chaff: $1=ifname_suffix("" for legacy, "-N" for peers) $2=peer_gre_ip
-setup_chaff() {
-    local SUF=$1 PEER_GRE=$2
-    local PROFILE="${CHAFF_PROFILE:-$(perf_get_chaff)}"
-    if [[ "$PROFILE" == "off" ]]; then
-        return 0
-    fi
-    is_valid_ip "$PEER_GRE" || return 1
-    install_chaff_script || return 1
-
-    local SVC="gre-chaff"
-    local GRE_IF="$TUNNEL_NAME"
-    if [[ -n "$SUF" ]]; then
-        local ID="${SUF#-}"
-        SVC="gre-chaff-${ID}"
-        GRE_IF="gre-t${ID}"
-    fi
-
-    local AFTER_GRE=""
-    if [[ -f "/etc/systemd/system/${GRE_IF}.service" ]]; then
-        AFTER_GRE=" ${GRE_IF}.service"
-    fi
-
-    cat <<EOF > "/etc/systemd/system/${SVC}.service"
-[Unit]
-Description=GRE Tunnel Chaff Service (idle gap filler)${SUF:+ (peer${SUF#-})}
-After=network.target${AFTER_GRE}
-${AFTER_GRE:+Wants=${GRE_IF}.service}
-
-[Service]
-Type=simple
-User=root
-Restart=always
-RestartSec=3s
-ExecStart=${CHAFF_BIN} ${PEER_GRE} ${PROFILE}
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    systemctl daemon-reload
-    systemctl enable "${SVC}.service" >/dev/null 2>&1
-    systemctl restart "${SVC}.service" >/dev/null 2>&1 || true
-    echo -e "${GREEN}[✔️] Chaff service ${SVC} configured for peer ${PEER_GRE} (profile: ${PROFILE}).${NC}"
-}
-
-update_chaff_existing_tunnels() {
-    if [[ "${CHAFF_PROFILE:-off}" == "off" ]]; then
-        return 0
-    fi
-    # 1. Multi-peer registry (/etc/gre-panel/peers.json)
-    if [[ -f "$PEERS_FILE" ]] && command -v python3 >/dev/null 2>&1; then
-        local PEER_DATA
-        PEER_DATA=$(PEERS_F="$PEERS_FILE" python3 -c '
-import json, os
-try:
-    d = json.load(open(os.environ["PEERS_F"]))
-    for p in d.get("peers", []):
-        suf = "" if p.get("legacy") else f"-{p.get(\"id\", \"\")}"
-        pgre = p.get("peer_gre", "")
-        prof = p.get("chaff_profile", "")
-        if pgre:
-            print(f"{suf}:{pgre}:{prof}")
-except Exception:
-    pass
-' 2>/dev/null)
-        if [[ -n "$PEER_DATA" ]]; then
-            while IFS=':' read -r suf pgre prof; do
-                [[ -n "$pgre" ]] || continue
-                local saved_prof="${CHAFF_PROFILE:-}"
-                [[ -n "$prof" ]] && CHAFF_PROFILE="$prof"
-                setup_chaff "$suf" "$pgre"
-                CHAFF_PROFILE="$saved_prof"
-            done <<< "$PEER_DATA"
-            return 0
-        fi
-    fi
-
-    # 2. Foreign server (/etc/frp/frpc.toml)
-    if [[ -f "${CONFIG_DIR}/frpc.toml" ]]; then
-        local PEER_GRE
-        PEER_GRE=$(grep -E '^[[:space:]]*serverAddr[[:space:]]*=' "${CONFIG_DIR}/frpc.toml" | cut -d'=' -f2 | tr -d ' "' | tr -d " \t\r\n")
-        if is_valid_ip "$PEER_GRE"; then
-            setup_chaff "" "$PEER_GRE"
-            return 0
-        fi
-    fi
-
-    # 3. Legacy Iran server (/etc/systemd/system/gre-tunnel.service or /etc/frp/frps.toml)
-    if [[ -f "/etc/systemd/system/${TUNNEL_NAME}.service" || -f "${CONFIG_DIR}/frps.toml" ]]; then
-        local INNER_IP=""
-        if [[ -f "/etc/systemd/system/${TUNNEL_NAME}.service" ]]; then
-            INNER_IP=$(grep -oE 'addr add [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "/etc/systemd/system/${TUNNEL_NAME}.service" | awk '{print $3}' | head -1)
-        fi
-        if [[ -z "$INNER_IP" ]] && ip addr show "$TUNNEL_NAME" >/dev/null 2>&1; then
-            INNER_IP=$(ip addr show "$TUNNEL_NAME" 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -1)
-        fi
-        if is_valid_ip "$INNER_IP"; then
-            local last=${INNER_IP##*.}; local prefix=${INNER_IP%.*}
-            if (( last % 2 == 0 )); then last=$((last - 1)); else last=$((last + 1)); fi
-            local P_GRE="${prefix}.${last}"
-            if is_valid_ip "$P_GRE"; then
-                setup_chaff "" "$P_GRE"
-            fi
-        fi
-    fi
-}
-
-cli_chaff() {
-    local ACTION="${1:-status}"
-    case "$ACTION" in
-        on)
-            echo -e "${CYAN}[*] Enabling and starting GRE chaff services...${NC}"
-            local found=0
-            for u in /etc/systemd/system/gre-chaff*.service; do
-                [[ -f "$u" ]] || continue
-                found=1
-                local bname
-                bname=$(basename "$u")
-                systemctl enable "$bname" >/dev/null 2>&1
-                systemctl restart "$bname" >/dev/null 2>&1
-                echo -e "${GREEN}[✔️] Started and enabled ${bname}.${NC}"
-            done
-            if [[ "$found" -eq 0 ]]; then
-                echo -e "${YELLOW}[*] No existing chaff services found — configuring for active tunnels...${NC}"
-                update_chaff_existing_tunnels
-            fi
-            ;;
-        off)
-            echo -e "${CYAN}[*] Stopping and disabling GRE chaff services...${NC}"
-            local found=0
-            for u in /etc/systemd/system/gre-chaff*.service; do
-                [[ -f "$u" ]] || continue
-                found=1
-                local bname
-                bname=$(basename "$u")
-                systemctl stop "$bname" >/dev/null 2>&1
-                systemctl disable "$bname" >/dev/null 2>&1
-                echo -e "${GREEN}[✔️] Stopped and disabled ${bname}.${NC}"
-            done
-            if [[ "$found" -eq 0 ]]; then
-                echo -e "${YELLOW}[*] No chaff services found.${NC}"
-            fi
-            ;;
-        status)
-            echo -e "${CYAN}=== GRE Chaff (Traffic Obfuscation) Status ===${NC}"
-            echo -e "${YELLOW}Notice: Fills idle gaps to break timing analysis; does not hide volume under load.${NC}"
-            local found=0
-            for u in /etc/systemd/system/gre-chaff*.service; do
-                [[ -f "$u" ]] || continue
-                found=1
-                local bname
-                bname=$(basename "$u")
-                local active enabled exec_line peer_ip prof
-                active=$(systemctl is-active "$bname" 2>/dev/null)
-                [[ -z "$active" ]] && active="inactive"
-                enabled=$(systemctl is-enabled "$bname" 2>/dev/null)
-                [[ -z "$enabled" ]] && enabled="disabled"
-                exec_line=$(grep -E '^[[:space:]]*ExecStart[[:space:]]*=' "$u" | head -1)
-                peer_ip=$(echo "$exec_line" | awk '{print $2}')
-                prof=$(echo "$exec_line" | awk '{print $3}')
-                prof=${prof:-low}
-                if [[ "$active" == "active" ]]; then
-                    echo -e "  ${bname}: ${GREEN}ACTIVE${NC} (${enabled}) | peer: ${CYAN}${peer_ip}${NC} | profile: ${YELLOW}${prof}${NC}"
-                else
-                    echo -e "  ${bname}: ${RED}${active}${NC} (${enabled}) | peer: ${CYAN}${peer_ip}${NC} | profile: ${YELLOW}${prof}${NC}"
-                fi
-            done
-            if [[ "$found" -eq 0 ]]; then
-                echo -e "${YELLOW}[*] No chaff services currently installed.${NC}"
-            fi
-            ;;
-        *)
-            echo -e "${RED}[!] Usage: hashem chaff on|off|status${NC}"
-            return 1
-            ;;
-    esac
-}
-
-menu_chaff() {
-    echo -e "\n${YELLOW}=== Traffic Chaff / Obfuscation (Idle-Gap Filler) ===${NC}"
-    echo -e "Random pings fill idle gaps to break timing analysis (low overhead, ~few KB/s)."
-    cli_chaff status
-    echo ""
-    echo "  1) Enable / Start chaff services (on)"
-    echo "  2) Disable / Stop chaff services (off)"
-    echo "  3) Check status"
-    echo "  0) Back to main menu"
-    echo ""
-    read -p "Select an action [0-3]: " CH_OPT
-    case "$CH_OPT" in
-        1) cli_chaff on ;;
-        2) cli_chaff off ;;
-        3) cli_chaff status ;;
-        0) return 0 ;;
-        *) echo -e "${RED}[!] Invalid option.${NC}"; return 1 ;;
-    esac
-}
-
-# ---- DPI Shield: protect reverse proxy ports against scanner floods ----
-DPI_PORTS_FILE="/etc/gre-panel/dpi-ports.conf"
-
-dpi_collect_reverse_ports() {
-    local PORTS=()
-    local EXCLUDE_PORTS=()
-
-    # 1. Collect FRP bind/control ports to exclude
-    local f
-    for f in "${CONFIG_DIR}"/frps*.toml /etc/frp/frps*.toml; do
-        [[ -f "$f" ]] || continue
-        while read -r bp; do
-            [[ -n "$bp" ]] && EXCLUDE_PORTS+=("$bp")
-        done < <(grep -E '^\s*bindPort\s*=' "$f" 2>/dev/null | awk -F= '{print $2}' | tr -d ' "' | tr -d " \t\r\n")
+# Retire features removed from this release (chaff pinger, DPI shield). Older installs may still
+# have their units, script and iptables chain; stop and delete them so nothing keeps running orphaned.
+purge_legacy_obfuscation() {
+    local u
+    for u in /etc/systemd/system/gre-chaff*.service /etc/systemd/system/hashem-chaff*.service /etc/systemd/system/hashem-dpi.service; do
+        [[ -f "$u" ]] || continue
+        systemctl disable --now "$(basename "$u")" >/dev/null 2>&1 || true
+        rm -f "$u"
     done
-    for f in "${CONFIG_DIR}/frpc.toml" /etc/frp/frpc.toml; do
-        [[ -f "$f" ]] || continue
-        while read -r sp; do
-            [[ -n "$sp" ]] && EXCLUDE_PORTS+=("$sp")
-        done < <(grep -E '^\s*serverPort\s*=' "$f" 2>/dev/null | awk -F= '{print $2}' | tr -d ' "' | tr -d " \t\r\n")
-    done
-    if [[ -f "$PEERS_FILE" ]] && command -v python3 >/dev/null 2>&1; then
-        while read -r fp; do
-            [[ -n "$fp" ]] && EXCLUDE_PORTS+=("$fp")
-        done < <(PEERS_F="$PEERS_FILE" python3 -c '
-import json, os
-try:
-    with open(os.environ["PEERS_F"]) as f:
-        d = json.load(f)
-        for p in d.get("peers", []):
-            pt = p.get("frp_port")
-            if pt:
-                print(pt)
-except Exception:
-    pass
-' 2>/dev/null)
+    pkill -f "hashem-chaff.sh" >/dev/null 2>&1 || true
+    rm -f /usr/local/bin/hashem-chaff.sh /usr/local/bin/gre-chaff.sh
+    if command -v iptables >/dev/null 2>&1; then
+        iptables -D INPUT -j HASHEM-DPI 2>/dev/null || true
+        iptables -F HASHEM-DPI 2>/dev/null || true
+        iptables -X HASHEM-DPI 2>/dev/null || true
     fi
-
-    # 2. Collect panel ports to exclude
-    if [[ -f /etc/gre-panel/panel.json ]]; then
-        while read -r pp; do
-            [[ -n "$pp" ]] && EXCLUDE_PORTS+=("$pp")
-        done < <(grep -oE '"(port|tls_port)":\s*[0-9]+' /etc/gre-panel/panel.json 2>/dev/null | grep -oE '[0-9]+')
-    fi
-    EXCLUDE_PORTS+=(7777 7443)
-
-    # 3. Collect SSH ports to exclude
-    EXCLUDE_PORTS+=(22)
-    if command -v ss >/dev/null 2>&1; then
-        while read -r sp; do
-            [[ -n "$sp" ]] && EXCLUDE_PORTS+=("$sp")
-        done < <(ss -ltnp 2>/dev/null | grep 'sshd' | awk '{print $4}' | awk -F: '{print $NF}')
-    fi
-
-    # Candidate reverse ports:
-    # A. peers.json
-    if [[ -f "$PEERS_FILE" ]] && command -v python3 >/dev/null 2>&1; then
-        while read -r p; do
-            [[ -n "$p" ]] && PORTS+=("$p")
-        done < <(PEERS_F="$PEERS_FILE" python3 -c '
-import json, os
-try:
-    with open(os.environ["PEERS_F"]) as f:
-        d = json.load(f)
-        for p in d.get("peers", []):
-            for pt in p.get("ports", []):
-                print(pt)
-except Exception:
-    pass
-' 2>/dev/null)
-    fi
-
-    # B. frpc.toml remotePort
-    for f in "${CONFIG_DIR}/frpc.toml" /etc/frp/frpc.toml; do
-        [[ -f "$f" ]] || continue
-        while read -r p; do
-            [[ -n "$p" ]] && PORTS+=("$p")
-        done < <(grep -E '^\s*remotePort\s*=' "$f" 2>/dev/null | awk -F= '{print $2}' | tr -d ' "' | tr -d " \t\r\n")
-    done
-
-    # C. Active frps listeners via ss -ltn (excluding control ports)
-    if command -v ss >/dev/null 2>&1; then
-        while read -r p; do
-            [[ -n "$p" ]] && PORTS+=("$p")
-        done < <(ss -ltnp 2>/dev/null | grep -E 'users:.*\("frps"' | awk '{print $4}' | awk -F: '{print $NF}')
-    fi
-
-    # D. Saved DPI ports cache (for reboots before frps connects)
-    if [[ -f "$DPI_PORTS_FILE" ]]; then
-        while read -r p; do
-            [[ -n "$p" ]] && PORTS+=("$p")
-        done < "$DPI_PORTS_FILE"
-    fi
-
-    # Filter candidates: remove excluded, check validity (1..65535)
-    local FINAL_PORTS=()
-    local p ex excluded
-    for p in "${PORTS[@]}"; do
-        [[ "$p" =~ ^[0-9]+$ ]] || continue
-        (( p >= 1 && p <= 65535 )) || continue
-        excluded=0
-        for ex in "${EXCLUDE_PORTS[@]}"; do
-            if [[ "$p" -eq "$ex" ]]; then
-                excluded=1
-                break
-            fi
-        done
-        [[ "$excluded" -eq 0 ]] && FINAL_PORTS+=("$p")
-    done
-
-    if [[ ${#FINAL_PORTS[@]} -gt 0 ]]; then
-        printf "%s\n" "${FINAL_PORTS[@]}" | sort -n -u
-    fi
-}
-
-dpi_shield_on() {
-    command -v iptables >/dev/null 2>&1 || {
-        echo -e "${RED}[!] iptables is required for DPI shield but not installed.${NC}"
-        return 1
-    }
-
-    local REVERSE_PORTS=()
-    while read -r p; do
-        [[ -n "$p" ]] && REVERSE_PORTS+=("$p")
-    done < <(dpi_collect_reverse_ports)
-
-    if [[ ${#REVERSE_PORTS[@]} -eq 0 ]]; then
-        echo -e "${YELLOW}[!] No reverse tunnel ports found in peers.json, frpc.toml, or active frps listeners.${NC}"
-        echo -e "${YELLOW}[*] Set up a tunnel or configure reverse ports first.${NC}"
-        return 1
-    fi
-
-    mkdir -p "$(dirname "$DPI_PORTS_FILE")"
-    printf "%s\n" "${REVERSE_PORTS[@]}" > "$DPI_PORTS_FILE"
-
-    echo -e "${CYAN}[*] Installing DPI shield for reverse ports: ${REVERSE_PORTS[*]}...${NC}"
-
-    # Idempotent chain setup: flush existing HASHEM-DPI chain or create it
-    if iptables -L HASHEM-DPI -n >/dev/null 2>&1; then
-        iptables -F HASHEM-DPI
-    else
-        iptables -N HASHEM-DPI
-    fi
-
-    # Remove old blanket jump from INPUT (legacy: was sending ALL traffic through DPI chain)
-    while iptables -C INPUT -j HASHEM-DPI 2>/dev/null; do
-        iptables -D INPUT -j HASHEM-DPI
-    done
-
-    # 1. DPI chain rules: only SYN flood defense (ESTABLISHED traffic never enters this chain)
-    # Kernel SYN flood hardening
-    sysctl -w net.ipv4.tcp_syncookies=1 >/dev/null 2>&1 || true
-    sysctl -w net.ipv4.tcp_max_syn_backlog=8192 >/dev/null 2>&1 || true
-
-    # 2. Per source IP hashlimit (blocks abusive scanners > 60/sec from one IP)
-    local port
-    for port in "${REVERSE_PORTS[@]}"; do
-        if ! iptables -A HASHEM-DPI -p tcp --dport "$port" --syn -m hashlimit --hashlimit-name "hsh_${port}" --hashlimit-mode srcip --hashlimit-above 60/sec --hashlimit-burst 120 -j DROP 2>/dev/null; then
-            iptables -A HASHEM-DPI -p tcp --dport "$port" --syn -j ACCEPT 2>/dev/null || true
-        fi
-    done
-    # RETURN at end: non-matching packets pass through instantly
-    iptables -A HASHEM-DPI -j RETURN 2>/dev/null || true
-
-    # 3. Jump into HASHEM-DPI only for reverse tunnel port SYN packets (not ALL traffic)
-    for port in "${REVERSE_PORTS[@]}"; do
-        if ! iptables -C INPUT -p tcp --dport "$port" --syn -j HASHEM-DPI 2>/dev/null; then
-            iptables -I INPUT -p tcp --dport "$port" --syn -j HASHEM-DPI 2>/dev/null || true
-        fi
-    done
-
-    # 5. If UFW is active, also ensure reverse ports are allowed so UFW does not block them
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
-        for port in "${REVERSE_PORTS[@]}"; do
-            ufw allow "$port"/tcp >/dev/null 2>&1 || true
-            ufw allow "$port"/udp >/dev/null 2>&1 || true
-        done
-    fi
-
-    # Persist across reboot via systemd oneshot unit
-    [[ -x "$HASHEM_BIN" ]] || { cp "$0" "$HASHEM_BIN" 2>/dev/null && chmod +x "$HASHEM_BIN"; } || true
-    cat << 'EOF' > /etc/systemd/system/hashem-dpi.service
-[Unit]
-Description=Hashem DPI Shield Protection
-DefaultDependencies=no
-After=systemd-modules-load.service local-fs.target
-Before=network-pre.target
-Wants=network-pre.target
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/usr/local/bin/hashem dpi-shield on
-
-[Install]
-WantedBy=network-pre.target
-EOF
-    systemctl daemon-reload
-    systemctl enable hashem-dpi.service >/dev/null 2>&1 || true
-
-    echo -e "${GREEN}[✔️] DPI shield ACTIVE: ${#REVERSE_PORTS[@]} port(s) protected (${REVERSE_PORTS[*]}).${NC}"
-    echo -e "${GREEN}[✔️] Persisted via systemd unit hashem-dpi.service (WantedBy=network-pre.target).${NC}"
-}
-
-dpi_shield_off() {
-    # Read ports file before deletion so we can clean up per-port iptables rules
-    local SAVED_PORTS=()
-    if [[ -f "$DPI_PORTS_FILE" ]]; then
-        while read -r port; do
-            [[ -n "$port" ]] && SAVED_PORTS+=("$port")
-        done < "$DPI_PORTS_FILE"
-    fi
-
-    # Disable and remove systemd persistence unit
-    systemctl disable --now hashem-dpi.service >/dev/null 2>&1 || true
-    rm -f /etc/systemd/system/hashem-dpi.service "$DPI_PORTS_FILE"
-    systemctl daemon-reload
-
-    # Remove legacy blanket jump from INPUT
-    while iptables -C INPUT -j HASHEM-DPI 2>/dev/null; do
-        iptables -D INPUT -j HASHEM-DPI
-    done
-
-    # Remove per-port targeted jumps from INPUT (new format)
-    local port
-    for port in "${SAVED_PORTS[@]}"; do
-        while iptables -C INPUT -p tcp --dport "$port" --syn -j HASHEM-DPI 2>/dev/null; do
-            iptables -D INPUT -p tcp --dport "$port" --syn -j HASHEM-DPI
-        done
-    done
-
-    # Flush and delete HASHEM-DPI chain
-    iptables -F HASHEM-DPI 2>/dev/null || true
-    iptables -X HASHEM-DPI 2>/dev/null || true
-
-    echo -e "${GREEN}[✔️] DPI shield DISABLED (HASHEM-DPI chain removed and service disabled).${NC}"
-}
-
-dpi_shield_status() {
-    if iptables -L HASHEM-DPI -n >/dev/null 2>&1; then
-        echo -e "${GREEN}[✔️] DPI shield is ACTIVE (chain HASHEM-DPI installed).${NC}"
-        echo -e "${CYAN}Packet counters and rules in HASHEM-DPI:${NC}"
-        iptables -L HASHEM-DPI -v -n
-        if systemctl is-enabled hashem-dpi.service >/dev/null 2>&1; then
-            echo -e "${GREEN}[✔️] Persistence: hashem-dpi.service is enabled.${NC}"
-        else
-            echo -e "${YELLOW}[!] Persistence: hashem-dpi.service is not enabled.${NC}"
-        fi
-    else
-        echo -e "${YELLOW}[!] DPI shield is INACTIVE (chain HASHEM-DPI does not exist).${NC}"
-        if systemctl is-enabled hashem-dpi.service >/dev/null 2>&1; then
-            echo -e "${YELLOW}[*] hashem-dpi.service is enabled for boot.${NC}"
-        fi
-    fi
-}
-
-cli_dpi_shield() {
-    local ACTION="${1:-}"
-    case "$ACTION" in
-        on)
-            dpi_shield_on
-            ;;
-        off)
-            dpi_shield_off
-            ;;
-        status)
-            dpi_shield_status
-            ;;
-        *)
-            echo -e "${RED}[!] Usage: hashem dpi-shield on|off|status${NC}"
-            return 1
-            ;;
-    esac
-}
-
-menu_dpi_shield() {
-    echo -e "\n${YELLOW}=== DPI Shield (Reverse Port Flood Protection) ===${NC}"
-    echo -e "Protects reverse ports against DPI scanner floods using iptables rate limiting."
-    echo ""
-    cli_dpi_shield status
-    echo ""
-    echo "  1) Enable DPI Shield (on)"
-    echo "  2) Disable DPI Shield (off)"
-    echo "  3) Check status"
-    echo "  0) Back to main menu"
-    echo ""
-    read -p "Select an action [0-3]: " DPI_OPT
-    case "$DPI_OPT" in
-        1) cli_dpi_shield on ;;
-        2) cli_dpi_shield off ;;
-        3) cli_dpi_shield status ;;
-        0) return 0 ;;
-        *) echo -e "${RED}[!] Invalid option.${NC}"; return 1 ;;
-    esac
 }
 
 # ---- Performance & Obfuscation Controls (CLI + Menu 22) ----
@@ -2510,8 +2202,9 @@ perf_apply() {
     init_perf_json
     local EFF_ENC=$(perf_get_enc)
     local EFF_COMP=$(perf_get_comp)
-    local EFF_TLS=$(perf_get_tls)
     local EFF_MUX=$(perf_get_tcpmux)
+    local EFF_POOL EFF_MAXPOOL
+    read -r EFF_POOL EFF_MAXPOOL <<< "$(pool_effective_values)"
 
     local IS_FOREIGN=0
     local IS_IRAN=0
@@ -2527,7 +2220,7 @@ perf_apply() {
         return 1
     fi
 
-    echo -e "${CYAN}[*] Applying performance settings (enc=${EFF_ENC} comp=${EFF_COMP} tls=${EFF_TLS} tcpmux=${EFF_MUX:-unchanged})...${NC}"
+    echo -e "${CYAN}[*] Applying performance settings (enc=${EFF_ENC} comp=${EFF_COMP} tcpmux=${EFF_MUX:-unchanged} pool=${EFF_POOL}/${EFF_MAXPOOL})...${NC}"
 
     if [[ "$IS_FOREIGN" -eq 1 ]]; then
         local TOML_FILE="${CONFIG_DIR}/frpc.toml"
@@ -2536,8 +2229,8 @@ perf_apply() {
 path = "'"$TOML_FILE"'"
 enc = ("'"$EFF_ENC"'".strip() in ("1", "true", "True"))
 comp = ("'"$EFF_COMP"'".strip() in ("1", "true", "True"))
-tls = ("'"$EFF_TLS"'".strip() in ("1", "true", "True"))
 mux_raw = "'"$EFF_MUX"'".strip()
+pool_cnt = "'"$EFF_POOL"'".strip()
 
 with open(path, "r") as f:
     lines = f.read().splitlines()
@@ -2557,51 +2250,19 @@ if current:
 out_sections = []
 for i, sec in enumerate(sections):
     if i == 0 and not sec[0].strip().startswith("[[proxies]]"):
-        new_sec = []
-        has_tls_enable = False
+        final_hdr = []
         for l in sec:
             s = l.strip()
-            if s.startswith("transport.tls.disableCustomTLSFirstByte"):
+            if s.startswith("transport.tls.disableCustomTLSFirstByte") or s.startswith("transport.poolCount"):
                 continue
             if mux_raw in ("0", "1") and (s.startswith("transport.tcpMux ") or s.startswith("transport.tcpMux=") or s.startswith("transport.tcpMuxKeepaliveInterval")):
                 continue
-            if s.startswith("transport.tls.enable"):
-                has_tls_enable = True
-            new_sec.append(l)
-        final_hdr = []
-        for l in new_sec:
             final_hdr.append(l)
-            if l.strip().startswith("transport.tls.enable") and tls:
-                final_hdr.append("transport.tls.disableCustomTLSFirstByte = true")
-        if tls and not any("transport.tls.disableCustomTLSFirstByte" in x for x in final_hdr):
-            if not has_tls_enable:
-                final_hdr.append("transport.tls.enable = true")
-            final_hdr.append("transport.tls.disableCustomTLSFirstByte = true")
         if mux_raw in ("0", "1"):
             final_hdr.append("transport.tcpMux = true" if mux_raw == "1" else "transport.tcpMux = false")
             if mux_raw == "1":
                 final_hdr.append("transport.tcpMuxKeepaliveInterval = 30")
-        import json
-        pool_cnt = ""
-        try:
-            with open("'"$PERF_FILE"'") as jf:
-                p_val = json.load(jf).get("frp_pool_count", 0)
-                if p_val and int(p_val) >= 2:
-                    pool_cnt = str(int(p_val))
-        except:
-            pass
-        if pool_cnt:
-            pool_updated = False
-            pool_hdr = []
-            for l in final_hdr:
-                if l.strip().startswith("transport.poolCount"):
-                    pool_hdr.append(f"transport.poolCount = {pool_cnt}")
-                    pool_updated = True
-                else:
-                    pool_hdr.append(l)
-            if not pool_updated:
-                pool_hdr.append(f"transport.poolCount = {pool_cnt}")
-            final_hdr = pool_hdr
+        final_hdr.append("transport.poolCount = " + pool_cnt)
         out_sections.append(final_hdr)
     else:
         new_sec = []
@@ -2627,6 +2288,7 @@ with open(path, "w") as f:
         fi
         systemctl daemon-reload >/dev/null 2>&1 || true
         systemctl restart frpc
+        autopool_state_set applied_pool="$EFF_POOL" last_restart="$(date +%s)"
         echo -e "${GREEN}[✔️] frpc.toml updated & frpc service restarted.${NC}"
     fi
 
@@ -2636,16 +2298,8 @@ with open(path, "w") as f:
             if command -v python3 >/dev/null 2>&1; then
                 python3 -c '
 path = "'"$TOML_FILE"'"
-tls = ("'"$EFF_TLS"'".strip() in ("1", "true", "True"))
 mux_raw = "'"$EFF_MUX"'".strip()
-
-import json, os
-max_pool = "500"
-try:
-    with open("'"$PERF_FILE"'") as jf:
-        max_pool = str(json.load(jf).get("frp_max_pool", 500))
-except:
-    pass
+max_pool = "'"$EFF_MAXPOOL"'".strip()
 
 with open(path, "r") as f:
     lines = f.read().splitlines()
@@ -2659,18 +2313,7 @@ for l in lines:
         continue
     new_lines.append(l)
 
-final_lines = []
-if tls:
-    has_tls = False
-    for l in new_lines:
-        final_lines.append(l)
-        if l.strip().startswith("auth.token"):
-            final_lines.append("transport.tls.force = true")
-            has_tls = True
-    if not has_tls:
-        final_lines.append("transport.tls.force = true")
-else:
-    final_lines = new_lines
+final_lines = new_lines
 
 if mux_raw in ("0", "1"):
     mux_lines = ["transport.tcpMux = true" if mux_raw == "1" else "transport.tcpMux = false"]
@@ -2703,23 +2346,8 @@ with open(path, "w") as f:
             local sname=$(basename "$s")
             systemctl restart "$sname" >/dev/null 2>&1 || true
         done
+        autopool_state_set frps_restart_needed=false
         echo -e "${GREEN}[✔️] frps toml(s) updated & frps service(s) restarted.${NC}"
-    fi
-
-    # Also apply chaff profile
-    local CHAFF_PROF=$(perf_get_chaff)
-    if [[ "$CHAFF_PROF" == "off" ]]; then
-        cli_chaff off >/dev/null 2>&1 || true
-    else
-        CHAFF_PROFILE="$CHAFF_PROF" cli_chaff on >/dev/null 2>&1 || true
-    fi
-
-    # Also apply DPI shield setting
-    local DPI_EN=$(perf_get_dpi_enabled)
-    if [[ "$DPI_EN" == "1" ]]; then
-        dpi_shield_on >/dev/null 2>&1 || true
-    else
-        dpi_shield_off >/dev/null 2>&1 || true
     fi
 
     echo -e "${GREEN}[✔️] Performance settings successfully applied.${NC}"
@@ -2733,26 +2361,21 @@ cli_perf() {
             init_perf_json
             local ENC=$(perf_get_enc)
             local COMP=$(perf_get_comp)
-            local TLS=$(perf_get_tls)
-            local CHAFF=$(perf_get_chaff)
-            local DPI_EN=$(perf_get_dpi_enabled)
-            local DPI_R=$(perf_get_dpi_rate)
-            local DPI_B=$(perf_get_dpi_burst)
 
             echo -e "\n${CYAN}==========================================================${NC}"
-            echo -e "${CYAN}            Performance & Obfuscation Status              ${NC}"
+            echo -e "${CYAN}                 Performance Status                       ${NC}"
             echo -e "${CYAN}==========================================================${NC}"
             echo -e "Settings (/etc/gre-panel/perf.json):"
             echo -e "  Proxy Encryption:  $([[ "$ENC" == "1" ]] && echo -e "${GREEN}on${NC}" || echo -e "${YELLOW}off${NC}")"
             echo -e "  Proxy Compression: $([[ "$COMP" == "1" ]] && echo -e "${GREEN}on${NC}" || echo -e "${YELLOW}off${NC}")"
-            echo -e "  Forced TLS:        $([[ "$TLS" == "1" ]] && echo -e "${GREEN}on${NC}" || echo -e "${YELLOW}off${NC}")"
             local MUX_CFG=$(perf_get_tcpmux)
             echo -e "  TCP Multiplexing:  $([[ "$MUX_CFG" == "1" ]] && echo -e "${YELLOW}on (slower over GRE)${NC}" || { [[ "$MUX_CFG" == "0" ]] && echo -e "${GREEN}off (speed-first)${NC}" || echo -e "${CYAN}not set (live toml unchanged)${NC}"; })"
-            echo -e "  Chaff Profile:     ${CYAN}${CHAFF}${NC}"
-            echo -e "  DPI Shield:        $([[ "$DPI_EN" == "1" ]] && echo -e "${GREEN}enabled${NC} (${DPI_R}, burst ${DPI_B})" || echo -e "${YELLOW}disabled${NC}")"
+            local EP EM
+            read -r EP EM <<< "$(pool_effective_values)"
+            echo -e "  Auto Pool:         $([[ "$(perf_get_auto_pool)" == "1" ]] && echo -e "${GREEN}on${NC}" || echo -e "${YELLOW}off (manual)${NC}") — poolCount ${EP}, maxPoolCount ${EM}"
 
-            if [[ -n "${PERF_ENC:-}" || -n "${PERF_COMP:-}" || -n "${PERF_TLS:-}" ]]; then
-                echo -e "${YELLOW}[!] Env overrides active: PERF_ENC=${PERF_ENC:-unset} PERF_COMP=${PERF_COMP:-unset} PERF_TLS=${PERF_TLS:-unset}${NC}"
+            if [[ -n "${PERF_ENC:-}" || -n "${PERF_COMP:-}" ]]; then
+                echo -e "${YELLOW}[!] Env overrides active: PERF_ENC=${PERF_ENC:-unset} PERF_COMP=${PERF_COMP:-unset}${NC}"
             fi
 
             echo ""
@@ -2760,10 +2383,9 @@ cli_perf() {
             local MATCH=1
 
             if [[ -f "${CONFIG_DIR}/frpc.toml" ]]; then
-                local LIVE_ENC=0 LIVE_COMP=0 LIVE_TLS=0
+                local LIVE_ENC=0 LIVE_COMP=0
                 grep -E -q '^[[:space:]]*transport\.useEncryption[[:space:]]*=[[:space:]]*true' "${CONFIG_DIR}/frpc.toml" && LIVE_ENC=1
                 grep -E -q '^[[:space:]]*transport\.useCompression[[:space:]]*=[[:space:]]*true' "${CONFIG_DIR}/frpc.toml" && LIVE_COMP=1
-                grep -E -q '^[[:space:]]*transport\.tls\.disableCustomTLSFirstByte[[:space:]]*=[[:space:]]*true' "${CONFIG_DIR}/frpc.toml" && LIVE_TLS=1
 
                 if [[ "$MUX_CFG" == "0" || "$MUX_CFG" == "1" ]]; then
                     local LIVE_MUX=1
@@ -2778,17 +2400,13 @@ cli_perf() {
                 echo -e "  Role: Foreign client (frpc)"
                 echo -e "  Live Proxy Encryption:  $([[ "$LIVE_ENC" == "1" ]] && echo "on" || echo "off") $([[ "$LIVE_ENC" == "$ENC" ]] && echo -e "${GREEN}[MATCH]${NC}" || echo -e "${RED}[MISMATCH]${NC}")"
                 echo -e "  Live Proxy Compression: $([[ "$LIVE_COMP" == "1" ]] && echo "on" || echo "off") $([[ "$LIVE_COMP" == "$COMP" ]] && echo -e "${GREEN}[MATCH]${NC}" || echo -e "${RED}[MISMATCH]${NC}")"
-                echo -e "  Live Forced TLS:        $([[ "$LIVE_TLS" == "1" ]] && echo "on" || echo "off") $([[ "$LIVE_TLS" == "$TLS" ]] && echo -e "${GREEN}[MATCH]${NC}" || echo -e "${RED}[MISMATCH]${NC}")"
+                local LIVE_POOL; LIVE_POOL=$(autopool_live_toml_int "${CONFIG_DIR}/frpc.toml" transport.poolCount)
+                echo -e "  Live poolCount:         ${LIVE_POOL:-unset}"
                 # MATCH=0 inside $(...) is lost (subshell) - evaluate mismatches here instead
-                [[ "$LIVE_ENC" == "$ENC" && "$LIVE_COMP" == "$COMP" && "$LIVE_TLS" == "$TLS" ]] || MATCH=0
+                [[ "$LIVE_ENC" == "$ENC" && "$LIVE_COMP" == "$COMP" ]] || MATCH=0
                 [[ "$MUX_CFG" != "0" && "$MUX_CFG" != "1" ]] || [[ "$LIVE_MUX" == "$MUX_CFG" ]] || MATCH=0
             elif [[ -f "${CONFIG_DIR}/frps.toml" ]] || ls "${CONFIG_DIR}"/frps*.toml >/dev/null 2>&1; then
-                local LIVE_TLS=0
                 local F
-                for F in "${CONFIG_DIR}"/frps*.toml; do
-                    [[ -f "$F" ]] || continue
-                    grep -E -q '^[[:space:]]*transport\.tls\.force[[:space:]]*=[[:space:]]*true' "$F" && LIVE_TLS=1
-                done
                 if [[ "$MUX_CFG" == "0" || "$MUX_CFG" == "1" ]]; then
                     local LIVE_MUX=1
                     for F in "${CONFIG_DIR}"/frps*.toml; do
@@ -2805,26 +2423,10 @@ cli_perf() {
                     echo -e "  Live TCP Multiplexing:  ${UNSET_MUX} (must match every spoke; a missing line means FRP's default = on)"
                 fi
                 echo -e "  Role: Iran server (frps)"
-                echo -e "  Live Forced TLS:        $([[ "$LIVE_TLS" == "1" ]] && echo "on" || echo "off") $([[ "$LIVE_TLS" == "$TLS" ]] && echo -e "${GREEN}[MATCH]${NC}" || echo -e "${RED}[MISMATCH]${NC}")"
-                [[ "$LIVE_TLS" == "$TLS" ]] || MATCH=0
                 [[ "$MUX_CFG" != "0" && "$MUX_CFG" != "1" ]] || [[ "$LIVE_MUX" == "$MUX_CFG" ]] || MATCH=0
                 echo -e "  (Proxy encryption & compression are client-side settings on Foreign VPS)"
             else
                 echo -e "  No live tunnel configs found."
-            fi
-
-            # DPI live
-            if iptables -L HASHEM-DPI -n >/dev/null 2>&1; then
-                echo -e "  DPI Shield (iptables):  ${GREEN}ACTIVE${NC}"
-            else
-                echo -e "  DPI Shield (iptables):  ${YELLOW}INACTIVE${NC}"
-            fi
-
-            # Chaff live
-            if systemctl is-active --quiet gre-chaff 2>/dev/null || systemctl list-units --type=service 2>/dev/null | grep -q 'gre-chaff.*running'; then
-                echo -e "  Chaff Service:          ${GREEN}RUNNING${NC}"
-            else
-                echo -e "  Chaff Service:          ${YELLOW}STOPPED${NC}"
             fi
 
             echo ""
@@ -2850,14 +2452,6 @@ cli_perf() {
                 *)   echo -e "${RED}[!] Usage: hashem perf comp on|off${NC}"; return 1 ;;
             esac
             ;;
-        tls)
-            local VAL="${2:-}"
-            case "$VAL" in
-                on)  perf_set_val "force_tls" "true" 1; echo -e "${GREEN}[✔️] Forced TLS set to 'on'. Run 'hashem perf apply' to apply and restart tunnels.${NC}" ;;
-                off) perf_set_val "force_tls" "false" 1; echo -e "${GREEN}[✔️] Forced TLS set to 'off'. Run 'hashem perf apply' to apply and restart tunnels.${NC}" ;;
-                *)   echo -e "${RED}[!] Usage: hashem perf tls on|off${NC}"; return 1 ;;
-            esac
-            ;;
         tcpmux|mux)
             local VAL="${2:-}"
             case "$VAL" in
@@ -2866,43 +2460,24 @@ cli_perf() {
                 *)   echo -e "${RED}[!] Usage: hashem perf tcpmux on|off${NC}"; return 1 ;;
             esac
             ;;
-        chaff)
-            local VAL="${2:-}"
+        autopool|auto-pool)
+            local VAL="${2:-status}"
             case "$VAL" in
-                off)
-                    perf_set_val "chaff_profile" "off" 0
-                    cli_chaff off
-                    echo -e "${GREEN}[✔️] Chaff profile set to 'off' and services stopped.${NC}"
+                on)  perf_set_val "auto_pool" "true" 1; echo -e "${GREEN}[✔️] Auto Pool set to 'on'. The 1-min timer (watchdog) resizes frpc poolCount; no restart now.${NC}" ;;
+                off) perf_set_val "auto_pool" "false" 1; echo -e "${GREEN}[✔️] Auto Pool set to 'off' (manual frp_pool_count / frp_max_pool). Run 'hashem perf apply' to apply.${NC}" ;;
+                tick) autopool_tick ;;
+                status)
+                    local EP EM
+                    read -r EP EM <<< "$(pool_effective_values)"
+                    echo "auto_pool=$(perf_get_auto_pool) poolCount=${EP} maxPoolCount=${EM}"
+                    echo "last_decision=$(autopool_state_get last_decision none) reason=$(autopool_state_get last_reason -)"
+                    echo "quiet_ticks=$(autopool_state_get quiet_ticks 0) last_restart=$(autopool_state_get last_restart 0) frps_restart_needed=$(autopool_state_get frps_restart_needed false)"
                     ;;
-                low|mid)
-                    perf_set_val "chaff_profile" "$VAL" 0
-                    CHAFF_PROFILE="$VAL" cli_chaff on
-                    echo -e "${GREEN}[✔️] Chaff profile set to '$VAL' and services started.${NC}"
-                    ;;
-                *)
-                    echo -e "${RED}[!] Usage: hashem perf chaff off|low|mid${NC}"
-                    return 1
-                    ;;
+                *)   echo -e "${RED}[!] Usage: hashem perf autopool on|off|status|tick${NC}"; return 1 ;;
             esac
             ;;
-        dpi)
-            local VAL="${2:-}"
-            case "$VAL" in
-                on)
-                    perf_set_val "dpi_enabled" "true" 1
-                    dpi_shield_on
-                    echo -e "${GREEN}[✔️] DPI shield enabled.${NC}"
-                    ;;
-                off)
-                    perf_set_val "dpi_enabled" "false" 1
-                    dpi_shield_off
-                    echo -e "${GREEN}[✔️] DPI shield disabled.${NC}"
-                    ;;
-                *)
-                    echo -e "${RED}[!] Usage: hashem perf dpi on|off${NC}"
-                    return 1
-                    ;;
-            esac
+        pool)
+            pool_effective_values
             ;;
         apply)
             perf_apply
@@ -2911,21 +2486,17 @@ cli_perf() {
             init_perf_json
             perf_set_val "proxy_encryption" "false" 1
             perf_set_val "proxy_compression" "false" 1
-            perf_set_val "force_tls" "false" 1
             perf_set_val "tcp_mux" "false" 1
-            perf_set_val "chaff_profile" "off" 0
-            perf_set_val "dpi_enabled" "false" 1
-            dpi_shield_off >/dev/null 2>&1 || true
-            cli_chaff off >/dev/null 2>&1 || true
+            perf_set_val "auto_pool" "true" 1
             perf_apply
-            echo -e "${GREEN}[✔️] Performance & Obfuscation RESET to safe defaults (encryption: off, compression: off, TLS: standard, chaff: off, DPI shield: off).${NC}"
+            echo -e "${GREEN}[✔️] Performance RESET to safe defaults (encryption: off, compression: off, tcpMux: off, Auto Pool: on).${NC}"
             ;;
         -h|--help|help)
-            echo "Usage: hashem perf status|enc on|off|comp on|off|tls on|off|tcpmux on|off|chaff off|low|mid|dpi on|off|apply|reset"
+            echo "Usage: hashem perf status|enc on|off|comp on|off|tcpmux on|off|autopool on|off|status|tick|pool|apply|reset"
             ;;
         *)
             echo -e "${RED}[!] Unknown subcommand: $SUB${NC}"
-            echo "Usage: hashem perf status|enc on|off|comp on|off|tls on|off|tcpmux on|off|chaff off|low|mid|dpi on|off|apply|reset"
+            echo "Usage: hashem perf status|enc on|off|comp on|off|tcpmux on|off|autopool on|off|status|tick|pool|apply|reset"
             return 1
             ;;
     esac
@@ -2937,14 +2508,12 @@ menu_perf() {
         echo ""
         echo "  1) Toggle Proxy Encryption (enc on/off)"
         echo "  2) Toggle Proxy Compression (comp on/off)"
-        echo "  3) Toggle Forced TLS (tls on/off)"
-        echo "  4) Set Chaff Profile (off / low / mid)"
-        echo "  5) Toggle DPI Shield (on/off)"
-        echo "  6) Apply settings & restart tunnels"
-        echo "  7) Toggle TCP Multiplexing (tcpmux on/off - must match on hub AND spokes)"
+        echo "  3) Toggle Auto Pool (autopool on/off)"
+        echo "  4) Apply settings & restart tunnels"
+        echo "  5) Toggle TCP Multiplexing (tcpmux on/off - must match on hub AND spokes)"
         echo "  0) Back to main menu"
         echo ""
-        read -p "Select an option [0-7]: " P_OPT
+        read -p "Select an option [0-5]: " P_OPT
         case "$P_OPT" in
             1)
                 local cur=$(perf_get_enc)
@@ -2955,30 +2524,13 @@ menu_perf() {
                 if [[ "$cur" == "1" ]]; then cli_perf comp off; else cli_perf comp on; fi
                 ;;
             3)
-                local cur=$(perf_get_tls)
-                if [[ "$cur" == "1" ]]; then cli_perf tls off; else cli_perf tls on; fi
+                local cur=$(perf_get_auto_pool)
+                if [[ "$cur" == "1" ]]; then cli_perf autopool off; else cli_perf autopool on; fi
                 ;;
             4)
-                echo "Select chaff profile:"
-                echo "  1) off"
-                echo "  2) low (default)"
-                echo "  3) mid"
-                read -p "Option [1-3]: " C_OPT
-                case "$C_OPT" in
-                    1) cli_perf chaff off ;;
-                    2) cli_perf chaff low ;;
-                    3) cli_perf chaff mid ;;
-                    *) echo "Invalid option." ;;
-                esac
-                ;;
-            5)
-                local cur=$(perf_get_dpi_enabled)
-                if [[ "$cur" == "1" ]]; then cli_perf dpi off; else cli_perf dpi on; fi
-                ;;
-            6)
                 cli_perf apply
                 ;;
-            7)
+            5)
                 local cur=$(perf_get_tcpmux)
                 if [[ "$cur" == "1" ]]; then cli_perf tcpmux off; else cli_perf tcpmux on; fi
                 ;;
@@ -3080,13 +2632,8 @@ setup_iran_server_noninteractive() {
         FRP_ERR="FRP installation failed (binary download or extraction error)"
         log_msg "tunnel" "ERROR" "FRP binaries failed to install"
     fi
-    local EFF_TLS=$(perf_get_tls)
-    local MAX_POOL=500
-    if [[ -f "$PERF_FILE" ]] && command -v python3 >/dev/null 2>&1; then
-        MAX_POOL=$(python3 -c "import json; print(json.load(open('$PERF_FILE')).get('frp_max_pool', 500))" 2>/dev/null || echo 500)
-    fi
-    local TLS_LINE=""
-    [[ "$EFF_TLS" == "1" ]] && TLS_LINE="transport.tls.force = true"
+    local _POOL MAX_POOL
+    read -r _POOL MAX_POOL <<< "$(pool_effective_values)"
     local QUIC_PORT=$((BIND_PORT + 1))
     if [[ "$QUIC_PORT" -gt 65535 ]]; then QUIC_PORT=$((BIND_PORT - 1)); fi
     mkdir -p "${CONFIG_DIR}"
@@ -3097,8 +2644,7 @@ kcpBindPort = ${BIND_PORT}
 quicBindPort = ${QUIC_PORT}
 auth.method = "token"
 auth.token = "${TOKEN}"
-${TLS_LINE:+$TLS_LINE
-}$(perf_tcpmux_lines)
+$(perf_tcpmux_lines)
 transport.tcpKeepalive = 30
 transport.heartbeatTimeout = 90
 transport.maxPoolCount = ${MAX_POOL}
@@ -3148,16 +2694,10 @@ EOF
         log_msg "tunnel" "ERROR" "frps service failed to start"
     fi
 
-    # Chaff is now opt-in: users can enable it from Performance menu or `hashem chaff on`.
-    # Removed automatic activation to avoid unnecessary bandwidth and jitter overhead.
     if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
         ufw allow "${BIND_PORT}/tcp" >/dev/null 2>&1
     fi
 
-    local DPI_EN=$(perf_get_dpi_enabled)
-    if [[ "$DPI_EN" == "1" ]]; then
-        dpi_shield_on >/dev/null 2>&1 || true
-    fi
     tune_apply >/dev/null 2>&1 || true
     install_watchdog_units >/dev/null 2>&1 || true
     init_watchdog_json >/dev/null 2>&1 || true
@@ -3276,15 +2816,10 @@ _setup_foreign_full() {
     fi
 
     install_frp_binaries
-    local EFF_TLS=$(perf_get_tls)
     local EFF_ENC=$(perf_get_enc)
     local EFF_COMP=$(perf_get_comp)
-    local TLS_ENABLE=""
-    local TLS_CUSTOM=""
-    if [[ "$EFF_TLS" == "1" ]]; then
-        TLS_ENABLE="transport.tls.enable = true"
-        TLS_CUSTOM="transport.tls.disableCustomTLSFirstByte = true"
-    fi
+    local EFF_POOL _MAXPOOL
+    read -r EFF_POOL _MAXPOOL <<< "$(pool_effective_values)"
     local EFF_SERVER_PORT="${SERVER_PORT}"
     if [[ "$FRP_TRANSPORT" == "quic" ]]; then
         EFF_SERVER_PORT=$((SERVER_PORT + 1))
@@ -3305,16 +2840,14 @@ serverAddr = "${DIAL_ADDR}"
 serverPort = ${EFF_SERVER_PORT}
 auth.method = "token"
 auth.token = "${TOKEN}"
-${TLS_ENABLE:+$TLS_ENABLE
-}${TLS_CUSTOM:+$TLS_CUSTOM
-}loginFailExit = false
+loginFailExit = false
 transport.protocol = "${FRP_TRANSPORT}"
 $(perf_tcpmux_lines)
 transport.heartbeatInterval = 30
 transport.heartbeatTimeout = 90
 transport.dialServerTimeout = 15
 transport.dialServerKeepalive = 30
-transport.poolCount = 20
+transport.poolCount = ${EFF_POOL}
 
 EOF
     local PROXY_TARGET_IP="${RELAY_IP:-127.0.0.1}"
@@ -3394,11 +2927,6 @@ EOF
         log_msg "tunnel" "ERROR" "frpc service failed to start"
     fi
 
-    # Chaff is now opt-in: users can enable it from Performance menu or `hashem chaff on`.
-    local DPI_EN=$(perf_get_dpi_enabled)
-    if [[ "$DPI_EN" == "1" ]]; then
-        dpi_shield_on >/dev/null 2>&1 || true
-    fi
     tune_apply >/dev/null 2>&1 || true
     install_watchdog_units >/dev/null 2>&1 || true
     init_watchdog_json >/dev/null 2>&1 || true
@@ -3444,7 +2972,7 @@ EOF
     echo "=============================================================="
 
     # Success: GRE interface up + frpc connected = tunnel functional.
-    # PING=WARN is acceptable: ICMP is often filtered by DPI/ISP on GRE tunnels
+    # PING=WARN is acceptable: ICMP is often filtered by the ISP on GRE tunnels
     # in Iran while TCP (used by frpc) works fine. Only treat ping as blocking
     # failure if frpc itself also failed.
     local _ping_blocking=0
@@ -3687,10 +3215,6 @@ setup_gre_backhaul_iran_server_noninteractive() {
         ufw allow "${BIND_PORT}/tcp" >/dev/null 2>&1 || true
     fi
 
-    local DPI_EN=$(perf_get_dpi_enabled)
-    if [[ "$DPI_EN" == "1" ]]; then
-        dpi_shield_on >/dev/null 2>&1 || true
-    fi
     tune_apply >/dev/null 2>&1 || true
     install_watchdog_units >/dev/null 2>&1 || true
     init_watchdog_json >/dev/null 2>&1 || true
@@ -3813,10 +3337,6 @@ setup_gre_backhaul_foreign_server_noninteractive() {
         fi
     fi
 
-    local DPI_EN=$(perf_get_dpi_enabled)
-    if [[ "$DPI_EN" == "1" ]]; then
-        dpi_shield_on >/dev/null 2>&1 || true
-    fi
     tune_apply >/dev/null 2>&1 || true
     install_watchdog_units >/dev/null 2>&1 || true
     init_watchdog_json >/dev/null 2>&1 || true
@@ -3940,20 +3460,14 @@ peer_token() {
 # write one frps instance: $1=suffix("" for legacy, "-N" for peers) $2=bind_port $3=token
 peer_write_frps() {
     local SUF=$1 BIND_PORT=$2 TOKEN=$3
-    local EFF_TLS=$(perf_get_tls)
-    local MAX_POOL=500
-    if [[ -f "$PERF_FILE" ]] && command -v python3 >/dev/null 2>&1; then
-        MAX_POOL=$(python3 -c "import json; print(json.load(open('$PERF_FILE')).get('frp_max_pool', 500))" 2>/dev/null || echo 500)
-    fi
-    local TLS_LINE=""
-    [[ "$EFF_TLS" == "1" ]] && TLS_LINE="transport.tls.force = true"
+    local _POOL MAX_POOL
+    read -r _POOL MAX_POOL <<< "$(pool_effective_values)"
     cat <<EOF > "${CONFIG_DIR}/frps${SUF}.toml"
 bindAddr = "0.0.0.0"
 bindPort = ${BIND_PORT}
 auth.method = "token"
 auth.token = "${TOKEN}"
-${TLS_LINE:+$TLS_LINE
-}$(perf_tcpmux_lines)
+$(perf_tcpmux_lines)
 transport.tcpKeepalive = 30
 transport.heartbeatTimeout = 90
 transport.maxPoolCount = ${MAX_POOL}
@@ -3991,7 +3505,7 @@ EOF
 }
 
 # add a peer tunnel on the Iran side.
-# Flags: --name --local-pub --remote-pub --frp-port --token --local-gre --peer-gre --ports "443, 2083" [--bundle hsh1_...] [--chaff low|mid|off] [--force]
+# Flags: --name --local-pub --remote-pub --frp-port --token --local-gre --peer-gre --ports "443, 2083" [--bundle hsh1_...] [--force]
 # --bundle pastes a foreign-setup string: empty flags are filled from it,
 # explicit flags always win.
 cli_add_peer() {
@@ -4007,18 +3521,12 @@ cli_add_peer() {
             --peer-gre) PEER_GRE="$2"; shift 2 ;;
             --ports) PORTS="$2"; shift 2 ;;
             --bundle) BUNDLE="$2"; shift 2 ;;
-            --chaff) CHAFF_PROFILE="$2"; shift 2 ;;
             --force) FORCE=1; shift ;;
-            -h|--help) echo 'Usage: hashem.sh add-peer --local-pub IP --remote-pub IP [--frp-port N] --token T --local-gre IP --peer-gre IP --ports "443, 2083" [--name LABEL] [--bundle hsh1_...] [--chaff low|mid|off] [--force]'; return 0 ;;
+            -h|--help) echo 'Usage: hashem.sh add-peer --local-pub IP --remote-pub IP [--frp-port N] --token T --local-gre IP --peer-gre IP --ports "443, 2083" [--name LABEL] [--bundle hsh1_...] [--force]'; return 0 ;;
             *) echo -e "${RED}[!] Unknown flag: $1${NC}"; return 1 ;;
         esac
     done
     case "${FRP_DIAL:-auto}" in auto|gre|public) ;; *) echo -e "${YELLOW}[!] Unknown --dial '${FRP_DIAL}', using auto.${NC}"; FRP_DIAL=auto ;; esac
-    CHAFF_PROFILE="${CHAFF_PROFILE:-$(perf_get_chaff)}"
-    case "$CHAFF_PROFILE" in
-        low|mid|off) ;;
-        *) echo -e "${YELLOW}[!] Unknown chaff profile '${CHAFF_PROFILE}', defaulting to off.${NC}"; CHAFF_PROFILE="off" ;;
-    esac
     if [[ -n "$BUNDLE" ]]; then
         bundle_parse "$BUNDLE" || { echo -e "${RED}[!] Bad --bundle (want hsh1_<IRAN_PUB>_<PORT>_<IRAN_GRE>_<FOREIGN_GRE>_<TOKEN>[_<PORTS>]).${NC}"; return 1; }
         # add-peer runs on Iran: bundle Iran pub/GRE are OURS, foreign GRE is THEIRS
@@ -4077,16 +3585,14 @@ cli_add_peer() {
         setup_gre_systemd "$LOCAL_PUB" "$REMOTE_PUB" "$LOCAL_GRE" "$PEER_GRE"
         peer_write_frps "" "$FRP_PORT" "$TOKEN"
         GRE_IF="$TUNNEL_NAME"; FRPS_SVC="frps"; LEGACY=true
-        # Chaff is now opt-in: not activated during setup.
-    else
+        else
         GRE_IF="gre-t${ID}"; FRPS_SVC="frps-${ID}"; LEGACY=false
         setup_gre_iface "$GRE_IF" "$LOCAL_PUB" "$REMOTE_PUB" "$LOCAL_GRE" "$PEER_GRE"
         peer_write_frps "-${ID}" "$FRP_PORT" "$TOKEN"
         # point the new unit at the right interface
         sed -i "s/After=network.target/After=network.target ${GRE_IF}.service/" /etc/systemd/system/${FRPS_SVC}.service
         systemctl daemon-reload; systemctl restart "$FRPS_SVC"
-        # Chaff is now opt-in: not activated during setup.
-    fi
+        fi
     sleep 1
     if ! systemctl is-active --quiet "$FRPS_SVC"; then
         echo -e "${RED}[!] Error: ${FRPS_SVC} failed to start. Generated configuration might be invalid.${NC}"
@@ -4099,15 +3605,15 @@ cli_add_peer() {
     # registry record (ports as JSON array)
     local PORTS_JSON
     PORTS_JSON=$(echo "$CLEANED" | python3 -c 'import json,sys; print(json.dumps([int(x) for x in sys.stdin.read().split()]))')
-    PEERS_F="$PEERS_FILE" python3 - "$ID" "$NAME" "$LOCAL_PUB" "$REMOTE_PUB" "$FRP_PORT" "$TOKEN" "$LOCAL_GRE" "$PEER_GRE" "$PORTS_JSON" "$GRE_IF" "$FRPS_SVC" "$LEGACY" "${CHAFF_PROFILE:-off}" <<'PYEOF'
+    PEERS_F="$PEERS_FILE" python3 - "$ID" "$NAME" "$LOCAL_PUB" "$REMOTE_PUB" "$FRP_PORT" "$TOKEN" "$LOCAL_GRE" "$PEER_GRE" "$PORTS_JSON" "$GRE_IF" "$FRPS_SVC" "$LEGACY" <<'PYEOF'
 import json, os, sys
 f = os.environ["PEERS_F"]
-iid, name, lip, rip, fport, tok, lgre, pgre, pjson, gif, svc, leg, prof = sys.argv[1:]
+iid, name, lip, rip, fport, tok, lgre, pgre, pjson, gif, svc, leg = sys.argv[1:]
 d = json.load(open(f))
 d.setdefault("peers", []).append({"id": int(iid), "name": name, "local_pub": lip,
   "remote_pub": rip, "frp_port": int(fport), "token": tok, "local_gre": lgre,
   "peer_gre": pgre, "ports": json.loads(pjson), "gre_if": gif, "frps_svc": svc,
-  "legacy": leg == "true", "chaff_profile": prof})
+  "legacy": leg == "true"})
 json.dump(d, open(f, "w"), indent=2)
 PYEOF
     echo -e "${GREEN}[✔️] Peer '${NAME}' (id ${ID}) added: GRE ${LOCAL_PUB} <-> ${REMOTE_PUB} (${LOCAL_GRE} peer ${PEER_GRE} on ${GRE_IF}), ${FRPS_SVC} :${FRP_PORT}${NC}"
@@ -4142,9 +3648,9 @@ cli_remove_peer() {
         remove_tunnel_force
     else
         frps_wss_front_remove "-${ID}"
-        systemctl stop "$SVC" "${GIF}.service" "gre-chaff-${ID}.service" >/dev/null 2>&1
-        systemctl disable "$SVC" "${GIF}.service" "gre-chaff-${ID}.service" >/dev/null 2>&1
-        rm -f "/etc/systemd/system/${SVC}.service" "/etc/systemd/system/${GIF}.service" "/etc/frp/frps-${ID}.toml" "/etc/backhaul/server-${ID}.toml" "/etc/systemd/system/gre-chaff-${ID}.service"
+        systemctl stop "$SVC" "${GIF}.service" >/dev/null 2>&1
+        systemctl disable "$SVC" "${GIF}.service" >/dev/null 2>&1
+        rm -f "/etc/systemd/system/${SVC}.service" "/etc/systemd/system/${GIF}.service" "/etc/frp/frps-${ID}.toml" "/etc/backhaul/server-${ID}.toml"
         systemctl daemon-reload; systemctl reset-failed >/dev/null 2>&1 || true
         if [[ "$GIF" != "none" && -n "$GIF" ]]; then
             ip tunnel del "$GIF" >/dev/null 2>&1 || true
@@ -4629,10 +4135,6 @@ menu_edit_peer() {
     cli_edit_peer "${ARGS[@]}"
 }
 
-menu_edit_peer_ports() {
-    menu_edit_peer
-}
-
 setup_foreign_server() {
     echo -e "\n${YELLOW}====================================================${NC}"
     echo -e "${YELLOW}   STEP 2: CONFIGURING FOREIGN SERVER (GRE + FRPC)  ${NC}"
@@ -4757,7 +4259,7 @@ show_logs() {
 restart_all() {
     echo -e "\n${CYAN}[*] Restarting GRE and FRP/Backhaul services (all tunnels)...${NC}"
     local u
-    for u in /etc/systemd/system/gre-t*.service /etc/systemd/system/gre-tunnel.service /etc/systemd/system/frps*.service /etc/systemd/system/frpc.service /etc/systemd/system/backhaul*.service /etc/systemd/system/gre-chaff*.service; do
+    for u in /etc/systemd/system/gre-t*.service /etc/systemd/system/gre-tunnel.service /etc/systemd/system/frps*.service /etc/systemd/system/frpc.service /etc/systemd/system/backhaul*.service; do
         [[ -f "$u" ]] || continue
         systemctl restart "$(basename "$u")" >/dev/null 2>&1 && echo -e "${GREEN}[✔️] $(basename "$u") restarted.${NC}"
     done
@@ -5080,10 +4582,10 @@ doctor_health_check() {
             RTT=$(echo "$P_OUT" | awk -F'/' '/rtt/ {print $5}')
             report_item "GRE Peer Connectivity" "PASS" "Reachable (${RTT:-<50} ms)"
         else
-            # ICMP may be filtered by ISP/DPI (common in Iran with GRE tunnels).
+            # ICMP may be filtered by the ISP (common in Iran with GRE tunnels).
             # If frpc is active, TCP through GRE is working — downgrade to WARN.
             if systemctl is-active --quiet frpc 2>/dev/null; then
-                report_item "GRE Peer Connectivity" "WARN" "ICMP filtered (DPI/ISP) but frpc TCP tunnel is active — tunnel functional"
+                report_item "GRE Peer Connectivity" "WARN" "ICMP filtered (ISP) but frpc TCP tunnel is active — tunnel functional"
             else
                 report_item "GRE Peer Connectivity" "FAIL" "Cannot ping peer ${PEER_PING_TARGET}"
             fi
@@ -5270,24 +4772,23 @@ uninstall_all_force() {
         echo -e "${CYAN}[*] Performing complete uninstallation of Hashem...${NC}"
         # 1. Stop & disable all services & timers
         systemctl stop 'frps-wss*' >/dev/null 2>&1 || true
-        systemctl stop frps frpc "${TUNNEL_NAME}.service" gre-panel gre-chaff hashem-chaff hashem-watchdog.timer hashem-watchdog.service backhaul-server backhaul-client backhaul hashem-dpi >/dev/null 2>&1 || true
-        systemctl stop 'frps*' 'frpc*' 'backhaul*' 'gre-t*' 'gre-chaff*' 'hashem-chaff*' >/dev/null 2>&1 || true
-        systemctl disable frps frpc "${TUNNEL_NAME}.service" gre-panel gre-chaff hashem-chaff hashem-watchdog.timer hashem-watchdog.service backhaul-server backhaul-client backhaul hashem-dpi >/dev/null 2>&1 || true
-        systemctl disable 'frps*' 'frpc*' 'backhaul*' 'gre-t*' 'gre-chaff*' 'hashem-chaff*' >/dev/null 2>&1 || true
+        systemctl stop frps frpc "${TUNNEL_NAME}.service" gre-panel hashem-watchdog.timer hashem-watchdog.service backhaul-server backhaul-client backhaul >/dev/null 2>&1 || true
+        systemctl stop 'frps*' 'frpc*' 'backhaul*' 'gre-t*' >/dev/null 2>&1 || true
+        systemctl disable frps frpc "${TUNNEL_NAME}.service" gre-panel hashem-watchdog.timer hashem-watchdog.service backhaul-server backhaul-client backhaul >/dev/null 2>&1 || true
+        systemctl disable 'frps*' 'frpc*' 'backhaul*' 'gre-t*' >/dev/null 2>&1 || true
+        purge_legacy_obfuscation
 
         # 2. Terminate any leftover processes
         pkill -9 -f "${INSTALL_DIR}/frps" >/dev/null 2>&1 || true
         pkill -9 -f "${INSTALL_DIR}/frpc" >/dev/null 2>&1 || true
         pkill -9 -f "${INSTALL_DIR}/backhaul" >/dev/null 2>&1 || true
         pkill -9 -f "${INSTALL_DIR}/gre-panel" >/dev/null 2>&1 || true
-        pkill -9 -f "hashem-chaff.sh" >/dev/null 2>&1 || true
 
         # 3. Remove all systemd files
         rm -f /etc/systemd/system/frps*.service /etc/systemd/system/frpc*.service \
               /etc/systemd/system/backhaul*.service /etc/systemd/system/${TUNNEL_NAME}.service \
               /etc/systemd/system/gre-t*.service /etc/systemd/system/gre-panel.service \
-              /etc/systemd/system/gre-chaff*.service /etc/systemd/system/hashem-chaff*.service \
-              /etc/systemd/system/hashem-watchdog.* /etc/systemd/system/hashem-dpi.service
+              /etc/systemd/system/hashem-watchdog.*
         rm -f /var/lock/hashem-watchdog.lock
         remove_legacy_units
         systemctl daemon-reload
@@ -5307,9 +4808,6 @@ uninstall_all_force() {
 
         # 5. Clean iptables / firewall rules
         if command -v iptables >/dev/null 2>&1; then
-            iptables -D INPUT -j HASHEM-DPI 2>/dev/null || true
-            iptables -F HASHEM-DPI 2>/dev/null || true
-            iptables -X HASHEM-DPI 2>/dev/null || true
             iptables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
             iptables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1340 2>/dev/null || true
             iptables -t nat -D OUTPUT -p udp --dport 19999 -j DNAT --to-destination 127.0.0.1:19999 2>/dev/null || true
@@ -5324,7 +4822,6 @@ uninstall_all_force() {
         # 7. Remove all binaries
         rm -f "${INSTALL_DIR}/frps" "${INSTALL_DIR}/frpc" "${INSTALL_DIR}/backhaul"
         rm -f /usr/local/bin/gre-panel /usr/local/bin/grepanel
-        rm -f /usr/local/bin/hashem-chaff.sh /usr/local/bin/gre-chaff.sh
 
         # 8. Remove configs, data, registries, logs, cron
         rm -rf "$CONFIG_DIR" "$BACKHAUL_CONFIG_DIR"
@@ -5355,22 +4852,21 @@ remove_tunnel_force() {
         echo -e "${CYAN}[*] Removing all tunnel components...${NC}"
         # Stop & disable services
         frps_wss_front_remove ""
-        systemctl stop frps frpc "${TUNNEL_NAME}.service" gre-chaff hashem-chaff backhaul-server backhaul-client backhaul hashem-dpi >/dev/null 2>&1 || true
-        systemctl stop 'frps*' 'frpc*' 'backhaul*' 'gre-t*' 'gre-chaff*' 'hashem-chaff*' >/dev/null 2>&1 || true
-        systemctl disable frps frpc "${TUNNEL_NAME}.service" gre-chaff hashem-chaff backhaul-server backhaul-client backhaul hashem-dpi >/dev/null 2>&1 || true
-        systemctl disable 'frps*' 'frpc*' 'backhaul*' 'gre-t*' 'gre-chaff*' 'hashem-chaff*' >/dev/null 2>&1 || true
+        systemctl stop frps frpc "${TUNNEL_NAME}.service" backhaul-server backhaul-client backhaul >/dev/null 2>&1 || true
+        systemctl stop 'frps*' 'frpc*' 'backhaul*' 'gre-t*' >/dev/null 2>&1 || true
+        systemctl disable frps frpc "${TUNNEL_NAME}.service" backhaul-server backhaul-client backhaul >/dev/null 2>&1 || true
+        systemctl disable 'frps*' 'frpc*' 'backhaul*' 'gre-t*' >/dev/null 2>&1 || true
+        purge_legacy_obfuscation
 
         # Kill stray tunnel processes
         pkill -9 -f "${INSTALL_DIR}/frps" >/dev/null 2>&1 || true
         pkill -9 -f "${INSTALL_DIR}/frpc" >/dev/null 2>&1 || true
         pkill -9 -f "${INSTALL_DIR}/backhaul" >/dev/null 2>&1 || true
-        pkill -9 -f "hashem-chaff.sh" >/dev/null 2>&1 || true
 
         # Remove systemd files
         rm -f /etc/systemd/system/frps*.service /etc/systemd/system/frpc.service \
               /etc/systemd/system/backhaul*.service /etc/systemd/system/${TUNNEL_NAME}.service \
-              /etc/systemd/system/gre-t*.service /etc/systemd/system/gre-chaff*.service \
-              /etc/systemd/system/hashem-chaff*.service /etc/systemd/system/hashem-dpi.service
+              /etc/systemd/system/gre-t*.service
         systemctl daemon-reload
         systemctl reset-failed >/dev/null 2>&1 || true
 
@@ -5388,9 +4884,6 @@ remove_tunnel_force() {
 
         # Clean firewall rules
         if command -v iptables >/dev/null 2>&1; then
-            iptables -D INPUT -j HASHEM-DPI 2>/dev/null || true
-            iptables -F HASHEM-DPI 2>/dev/null || true
-            iptables -X HASHEM-DPI 2>/dev/null || true
             iptables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
             iptables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1340 2>/dev/null || true
             iptables -t nat -D OUTPUT -p udp --dport 19999 -j DNAT --to-destination 127.0.0.1:19999 2>/dev/null || true
@@ -5400,7 +4893,6 @@ remove_tunnel_force() {
         # Remove configs
         rm -rf "$CONFIG_DIR" "$BACKHAUL_CONFIG_DIR"
         rm -f "$PEERS_FILE"
-        rm -f /usr/local/bin/hashem-chaff.sh /usr/local/bin/gre-chaff.sh
 
         echo -e "${GREEN}[✔️] Tunnel removed — GRE interface, FRP/Backhaul services, binaries and configs gone. Panel still running.${NC}"
 }
@@ -6258,7 +5750,6 @@ except Exception:
 
 watchdog_check() {
     init_watchdog_json
-    autotune_tick
     local PEER_GRE
     PEER_GRE=$(watchdog_get_peer_gre)
     local GRE_OK=0
@@ -6437,24 +5928,6 @@ restart_all_lite() {
 }
 
 
-autotune_tick() {
-    [[ ! -f "$PERF_FILE" ]] && return 0
-    local DO_TUNE=$(python3 -c "import json; print(json.load(open('$PERF_FILE')).get('auto_tune', False))" 2>/dev/null || echo "False")
-    [[ "$DO_TUNE" != "True" && "$DO_TUNE" != "true" ]] && return 0
-
-    local CONN=$(ss -tn state established 2>/dev/null | wc -l)
-    local RAM=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')
-    [[ -z "$RAM" ]] && RAM=1024
-
-    # Dynamically tune network stack without restarting live tunnel services (never kill active conns!)
-    if [[ "$CONN" -gt 300 ]]; then
-        sysctl -w net.core.somaxconn=65535 >/dev/null 2>&1 || true
-        sysctl -w net.ipv4.tcp_max_syn_backlog=65535 >/dev/null 2>&1 || true
-        sysctl -w net.core.netdev_max_backlog=65535 >/dev/null 2>&1 || true
-        sysctl -w net.ipv4.tcp_tw_reuse=1 >/dev/null 2>&1 || true
-    fi
-}
-
 watchdog_tick() {
     local LOCKFILE="/var/lock/hashem-watchdog.lock"
     mkdir -p /var/lock 2>/dev/null || true
@@ -6466,6 +5939,7 @@ watchdog_tick() {
 
     init_watchdog_json
     dial_watch_tick 2>/dev/null || true
+    autopool_tick 2>/dev/null || true
 
     local TICK_ACTION
     TICK_ACTION=$(python3 -c '
@@ -6658,7 +6132,7 @@ backup_now() {
     for f in /etc/frp/*.toml /etc/gre-panel/panel.json /etc/gre-panel/peers.json /etc/gre-panel/watchdog.json \
              /etc/gre-panel/perf.json /etc/gre-panel/backup.key \
              /etc/systemd/system/gre-*.service /etc/systemd/system/frps*.service \
-             /etc/systemd/system/frpc*.service /etc/systemd/system/gre-chaff*.service; do
+             /etc/systemd/system/frpc*.service; do
         [[ -f "$f" ]] && FILES+=("$f")
     done
 
@@ -7411,39 +6885,11 @@ update_all() {
     cp "$TMP_U/hashem.sh" "$HASHEM_SCRIPT" 2>/dev/null && chmod +x "$HASHEM_SCRIPT" || true
     cp "$TMP_U/hashem.sh" "$HASHEM_BIN" 2>/dev/null && chmod +x "$HASHEM_BIN" || true
     ln -sf "$HASHEM_SCRIPT" /usr/local/bin/gre.sh 2>/dev/null || true
-    install_chaff_script || true
-    rm -f /usr/local/bin/gre-chaff.sh 2>/dev/null || true
-    update_chaff_existing_tunnels || true
-    # 5. If DPI shield is active or enabled, refresh with safe rules so old drop-all rules are replaced
-    if iptables -L HASHEM-DPI -n >/dev/null 2>&1; then
-        local DPI_EN
-        DPI_EN=$(perf_get_dpi_enabled)
-        if [[ "$DPI_EN" == "1" ]]; then
-            dpi_shield_on >/dev/null 2>&1 || true
-        else
-            dpi_shield_off >/dev/null 2>&1 || true
-        fi
-    fi
+    # 5. Retire removed features (chaff service, DPI shield, force_tls/auto_tune keys) left by older releases
+    purge_legacy_obfuscation
+    perf_prune_legacy_keys
 
-    # 6. Ping overhead migration for existing users
-    if command -v python3 >/dev/null 2>&1; then
-        python3 -c "
-import json
-path = '$PERF_FILE'
-try:
-    with open(path, 'r') as f:
-        d = json.load(f)
-    changed = False
-    if d.get('force_tls') != False: d['force_tls'] = False; changed = True
-    if d.get('chaff_profile') != 'off': d['chaff_profile'] = 'off'; changed = True
-    if d.get('auto_tune') != False: d['auto_tune'] = False; changed = True
-    if changed:
-        with open(path, 'w') as f: json.dump(d, f)
-except Exception:
-    pass
-" 2>/dev/null
-    fi
-    # 7. Legacy hub tomls with no transport.tcpMux line run FRP's default (ON) while new spokes
+    # 6. Legacy hub tomls with no transport.tcpMux line run FRP's default (ON) while new spokes
     # write false => EOF. Warn only: changing it automatically would flip a live pair.
     if [[ -z "$(perf_get_tcpmux)" ]]; then
         local _frps_f
@@ -7742,24 +7188,20 @@ menu_optimization() {
         echo -e "${CYAN}--- [3] PERFORMANCE & SECURITY ---${NC}"
         echo "  1) Network Optimization (BBR + sysctl TCP buffers + MTU clamp)"
         echo "  2) Tunnel Carrier Switch (Direct GRE <-> FOU UDP <-> WSS Obfuscated)"
-        echo "  3) DPI Shield (Anti-scan rate limit on reverse ports)"
-        echo "  4) Traffic Chaff / Obfuscation (Idle traffic generator)"
-        echo "  5) Tunnel Watchdog & Auto Failover / Telegram Alerts"
-        echo "  6) Performance & Encryption Toggles (Proxy crypto/comp, forced TLS)"
-        echo "  7) Free RAM & Cache (Cap journald 16MB + drop cache + 1GB swapfile)"
-        echo "  8) Restore Network Tuning (Revert to default sysctl)"
+        echo "  3) Tunnel Watchdog & Auto Failover / Telegram Alerts"
+        echo "  4) Performance & Encryption Toggles (Proxy crypto/comp, Auto Pool)"
+        echo "  5) Free RAM & Cache (Cap journald 16MB + drop cache + 1GB swapfile)"
+        echo "  6) Restore Network Tuning (Revert to default sysctl)"
         echo "  0) Back to Main Menu"
         echo ""
-        read -p "Select an option [0-8]: " O_OPT
+        read -p "Select an option [0-6]: " O_OPT
         case "$O_OPT" in
             1) tune_apply; pause_prompt ;;
             2) menu_carrier ;;
-            3) menu_dpi_shield ;;
-            4) menu_chaff ;;
-            5) menu_watchdog ;;
-            6) menu_perf ;;
-            7) free_ram; pause_prompt ;;
-            8) tune_restore; pause_prompt ;;
+            3) menu_watchdog ;;
+            4) menu_perf ;;
+            5) free_ram; pause_prompt ;;
+            6) tune_restore; pause_prompt ;;
             0) return 0 ;;
             *) echo -e "${RED}[!] Invalid option.${NC}"; sleep 1 ;;
         esac
@@ -7940,13 +7382,6 @@ menu_uninstall() {
     done
 }
 
-# Legacy menu stubs for backwards compatibility
-menu_installation() { menu_tunnel; }
-menu_server() { menu_optimization; }
-menu_bundle() { menu_tunnel; }
-menu_diagnostics() { menu_diagnostics_backup; }
-menu_update() { menu_maintenance; }
-
 ensure_modified_backhaul_core() {
     mkdir -p "/root/backhaul-core" 2>/dev/null || true
     install_backhaul_binaries
@@ -8029,8 +7464,8 @@ Usage:
   hashem                                    # first run: auto-install (deps + FRP + panel) & show credentials
                                             # after install: show panel credentials & exit
   hashem menu                               # interactive management menu (all options)
-  hashem setup-iran    --local-pub IP --remote-pub IP [--frp-port N] [--local-gre IP] [--peer-gre IP] [--token T] [--chaff low|mid|off] [--force]
-  hashem setup-foreign --local-pub IP --remote-pub IP [--frp-port N] --token T --ports "443, 2083" [--local-gre IP] [--peer-gre IP] [--chaff low|mid|off] [--force]
+  hashem setup-iran    --local-pub IP --remote-pub IP [--frp-port N] [--local-gre IP] [--peer-gre IP] [--token T] [--force]
+  hashem setup-foreign --local-pub IP --remote-pub IP [--frp-port N] --token T --ports "443, 2083" [--local-gre IP] [--peer-gre IP] [--force]
                        # ... or: hashem setup-foreign --bundle hsh1_... / bh1_... / gh1_...
   hashem setup-backhaul-iran    --remote-pub IP --port P [--transport tcpmux] [--token K] [--ports "..."]
   hashem setup-backhaul-foreign --bundle bh1_... | --remote-pub IP --port P --token K [--transport tcpmux]
@@ -8039,15 +7474,13 @@ Usage:
   hashem add-backhaul-peer      --remote-pub IP --port P --transport T --token K --ports "..." [--no-gre]
   hashem status | remove-tunnel [--force] | show-panel-url | reset-password [new_pass]
   hashem uninstall [--force]                   # full wipe: tunnel + panel + 'hashem' itself
-  hashem add-peer --local-pub IP --remote-pub IP [--frp-port N] --token T --local-gre IP --peer-gre IP --ports "443, 2083" [--name LABEL] [--bundle hsh1_...] [--chaff low|mid|off]
+  hashem add-peer --local-pub IP --remote-pub IP [--frp-port N] --token T --local-gre IP --peer-gre IP --ports "443, 2083" [--name LABEL] [--bundle hsh1_...]
   hashem remove-peer --id N [--force] | edit-peer --id N [--name L] [--remote-pub IP] [--carrier C] [--ports "..."] | edit-peer-ports --id N --ports "443, 2083" | peer-list | peer-token --id N
   hashem logs | restart | panel-tls [domain] [email]   # (also: bash hashem.sh ...)
   hashem optimize | restore | tune-status
   hashem carrier [status|mode auto|direct|fou:P|wss:P|set direct|fou:P|wss:P|next] # multi-carrier failover
   hashem dial [status|auto|gre|public]         # foreign side: reach the Iran hub over GRE, its public IP, or auto (GRE if it works)
-  hashem perf status|enc on|off|comp on|off|tls on|off|tcpmux on|off|chaff off|low|mid|dpi on|off|apply
-  hashem chaff on|off|status                   # traffic obfuscation (idle-gap filler)
-  hashem dpi-shield on|off|status              # rate-limit reverse ports against DPI flood
+  hashem perf status|enc on|off|comp on|off|tcpmux on|off|autopool on|off|status|tick|pool|apply
   hashem watchdog on|off|status|test|tick      # tunnel watchdog monitoring & alerts
   hashem backup now [--keep N] | restore <f> | schedule ... | status
   hashem tgsend "msg"                          # send Telegram alert manually
@@ -8080,17 +7513,11 @@ cli_setup_iran() {
             --token) TOKEN="$2"; shift 2 ;;
             --ports) PORTS="$2"; shift 2 ;;
             --frp-transport) FRP_TRANSPORT="$2"; shift 2 ;;
-            --chaff) CHAFF_PROFILE="$2"; shift 2 ;;
             --force) FORCE=1; shift ;;
             -h|--help) usage_cli; return 0 ;;
             *) echo -e "${RED}[!] Unknown flag: $1${NC}"; usage_cli; return 1 ;;
         esac
     done
-    CHAFF_PROFILE="${CHAFF_PROFILE:-$(perf_get_chaff)}"
-    case "$CHAFF_PROFILE" in
-        low|mid|off) ;;
-        *) echo -e "${YELLOW}[!] Unknown chaff profile '${CHAFF_PROFILE}', defaulting to off.${NC}"; CHAFF_PROFILE="off" ;;
-    esac
     LOCAL_PUB=${LOCAL_PUB:-$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}')}
     [[ -z "$LOCAL_PUB" ]] && LOCAL_PUB=$(curl -sSL --max-time 5 https://api.ipify.org 2>/dev/null)
     FRP_PORT=${FRP_PORT:-$(gen_random_port)}
@@ -8130,17 +7557,11 @@ cli_setup_foreign() {
             --frp-encryption) FRP_ENCRYPTION="$2"; shift 2 ;;
             --frp-compression) FRP_COMPRESSION="$2"; shift 2 ;;
             --dial) FRP_DIAL="$2"; shift 2 ;;
-            --chaff) CHAFF_PROFILE="$2"; shift 2 ;;
             --force) FORCE=1; shift ;;
             -h|--help) usage_cli; return 0 ;;
             *) echo -e "${RED}[!] Unknown flag: $1${NC}"; usage_cli; return 1 ;;
         esac
     done
-    CHAFF_PROFILE="${CHAFF_PROFILE:-$(perf_get_chaff)}"
-    case "$CHAFF_PROFILE" in
-        low|mid|off) ;;
-        *) echo -e "${YELLOW}[!] Unknown chaff profile '${CHAFF_PROFILE}', defaulting to off.${NC}"; CHAFF_PROFILE="off" ;;
-    esac
     if [[ -n "$BUNDLE" ]]; then
         bundle_parse "$BUNDLE" || { echo -e "${RED}[!] Bad --bundle (want hsh1_<IRAN_PUB>_<PORT>_<IRAN_GRE>_<FOREIGN_GRE>_<TOKEN>[_<PORTS>]).${NC}"; return 1; }
         if [[ "$B_ENGINE" == "backhaul" ]]; then
@@ -8466,8 +7887,6 @@ if [[ $# -gt 0 ]]; then
         restart) restart_all ;;
         restart-lite|tunnel-restart-lite) restart_all_lite; echo -e "${GREEN}[✔️] Tunnel services restarted successfully.${NC}" ;;
         perf) shift; cli_perf "$@" ;;
-        chaff) shift; cli_chaff "$@" ;;
-        dpi-shield|dpi_shield|dpishield) shift; cli_dpi_shield "$@" ;;
         watchdog) shift; cli_watchdog "$@" ;;
         backup) shift; cli_backup "$@" ;;
         tgsend) shift; watchdog_send "$1" ;;

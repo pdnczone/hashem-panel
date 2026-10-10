@@ -112,14 +112,7 @@ func controlSession(port int, remotes ...string) (linked bool, rttMs float64) {
 	return len(ss) > 0, minRTT(ss)
 }
 
-func controlLinked(port int, remotePub, peerGre string) bool {
-	l, _ := controlSession(port, remotePub, peerGre)
-	return l
-}
-
 // linkedFromSS is the pure helper used by tests.
 func linkedFromSS(out string, ports []int, remotes ...string) bool {
 	return len(sessionsOn(parseSS(out), ports, remotes...)) > 0
 }
-
-func itoa(n int) string { return strconv.Itoa(n) }
