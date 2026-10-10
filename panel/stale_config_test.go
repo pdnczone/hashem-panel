@@ -129,3 +129,22 @@ func TestStaleConfigDoctorIssue(t *testing.T) {
 		t.Fatalf("no stale issue expected with binaries present, got %v", got)
 	}
 }
+
+func TestPerPeerBackhaulUnitSetsRole(t *testing.T) {
+	staleLab(t)
+	st := localStatusFrom(&hostView{active: map[string]bool{"backhaul-server-3": true, "backhaul-server-2": true}})
+	if st.Role != "iran (backhaul)" || st.FrpSvc != "backhaul-server-2" || !st.FrpUp {
+		t.Fatalf("per-peer backhaul unit must set role, got role=%q svc=%q up=%v", st.Role, st.FrpSvc, st.FrpUp)
+	}
+	if st.Engine != "backhaul" && st.Engine != "gre-backhaul" {
+		t.Errorf("engine should be a backhaul variant, got %q", st.Engine)
+	}
+}
+
+func TestBaseUnitStillWinsOverPerPeer(t *testing.T) {
+	staleLab(t)
+	st := localStatusFrom(&hostView{active: map[string]bool{"backhaul-server": true, "backhaul-server-2": true}})
+	if st.FrpSvc != "backhaul-server" {
+		t.Fatalf("base unit must win, got %q", st.FrpSvc)
+	}
+}

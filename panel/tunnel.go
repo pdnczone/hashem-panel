@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -664,6 +665,21 @@ func localStatusFrom(v *hostView) tunnelStatus {
 				st.Role = "foreign (backhaul)"
 			}
 			break
+		}
+	}
+	if st.Role == "" {
+		// per-peer Backhaul units (backhaul-server-N) created for extra peers
+		var per []string
+		for u, on := range v.active {
+			if on && strings.HasPrefix(u, "backhaul-server-") {
+				per = append(per, u)
+			}
+		}
+		if len(per) > 0 {
+			sort.Strings(per) // deterministic: lowest unit name wins
+			st.FrpUp = true
+			st.FrpSvc = per[0]
+			st.Role = "iran (backhaul)"
 		}
 	}
 	if st.Role == "" {
