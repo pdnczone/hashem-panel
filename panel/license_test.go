@@ -92,6 +92,22 @@ func TestLicenseVerificationAndFeatures(t *testing.T) {
 	if _, err := verifyLicenseKey("invalid_token_without_dot"); err == nil {
 		t.Fatalf("expected format error, got nil")
 	}
+
+	// 7. Multi-server / Comma-separated machine hash (e.g. 1 Iran + 1 Foreign)
+	multiMachineToken := generateTestToken(t, "MultiServer", "otherhash1234,"+mHash+",thirdhash999", []string{"*"}, expFuture, priv)
+	pMulti, err := verifyLicenseKey(multiMachineToken)
+	if err != nil {
+		t.Fatalf("expected multi-server token to be valid for current machine, got err: %v", err)
+	}
+	if pMulti.Customer != "MultiServer" {
+		t.Errorf("multi-server customer mismatch: %s", pMulti.Customer)
+	}
+
+	// 8. Multi-server token with no match
+	multiMismatchToken := generateTestToken(t, "MultiFail", "otherhash1234,thirdhash999", []string{"*"}, expFuture, priv)
+	if _, err := verifyLicenseKey(multiMismatchToken); err == nil {
+		t.Fatalf("expected multi-machine mismatch error, got nil")
+	}
 }
 
 func HasFeatureString(features []string, f string) bool {

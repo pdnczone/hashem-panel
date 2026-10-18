@@ -191,7 +191,14 @@ func verifyLicenseKey(token string) (*LicensePayload, error) {
 
 	mHash := getMachineHash()
 	if payload.MachineHash != "" && payload.MachineHash != "*" {
-		if !strings.EqualFold(payload.MachineHash, mHash) {
+		matched := false
+		for _, h := range strings.Split(payload.MachineHash, ",") {
+			if strings.EqualFold(strings.TrimSpace(h), mHash) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
 			return nil, fmt.Errorf("license locked to machine %s, this server is %s", payload.MachineHash, mHash)
 		}
 	}
