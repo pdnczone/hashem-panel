@@ -105,7 +105,10 @@ jobs:
       - name: Tunnel combinations lab (Backhaul x 7 transports with/without GRE, GRE <-> public route for Backhaul and FRP)
         run: sudo env "PATH=$PATH" bash tests/test_tunnel_combos_lab.sh
       - name: IPv6 lab (users over IPv6 and the link over IPv6, Backhaul x 8 and FRP, byte-exact TCP and UDP)
-        run: sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" bash tests/test_ipv6_lab.sh
+        run: |
+          # sit and ip6_gre (the 6to4 / 4in6 carriers) can ship in modules-extra on the runner kernel
+          sudo modprobe sit && sudo modprobe ip6_gre || sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)" || true
+          sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" bash tests/test_ipv6_lab.sh
       - name: Path test lab (Benchmark tab, all transports between two servers, blocked ones detected, safe next to a live tunnel)
         run: |
           # Pro feature: a throwaway lab key, trusted only by this lab build

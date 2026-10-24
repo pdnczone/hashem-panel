@@ -47,12 +47,12 @@ func TestParsePortList(t *testing.T) {
 }
 
 func TestValidRemoteIP(t *testing.T) {
-	for _, in := range []string{"203.0.113.102", " 198.51.100.22 "} {
+	for _, in := range []string{"203.0.113.102", " 198.51.100.22 ", "2001:db8::1"} {
 		if _, err := validRemoteIP(in); err != nil {
 			t.Fatalf("%q should pass: %v", in, err)
 		}
 	}
-	for _, in := range []string{"", "127.0.0.1", "0.0.0.0", "224.0.0.1", "169.254.1.1", "::1", "2001:db8::1", "example.com", "1.2.3", "1.2.3.4; rm -rf /", "1.2.3.4\nfoo"} {
+	for _, in := range []string{"", "127.0.0.1", "0.0.0.0", "224.0.0.1", "169.254.1.1", "::1", "fe80::1", "ff02::1", "example.com", "1.2.3", "1.2.3.4; rm -rf /", "1.2.3.4\nfoo"} {
 		if _, err := validRemoteIP(in); err == nil {
 			t.Fatalf("%q must be rejected", in)
 		}

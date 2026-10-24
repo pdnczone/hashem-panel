@@ -138,7 +138,7 @@ spoke() { $S bash -c "source '$TMP/funcs.sh'; $*"; }
 fail=0
 results=()
 check() {
-    if [[ "$2" != "$3" ]]; then echo "FAIL: $1 (want [$2] got [$3])"; fail=1; results+=("FAIL $1"); else echo "ok:   $1"; results+=("ok $1"); fi
+    if [[ "$2" != "$3" ]]; then echo "FAIL: $1 (want [$2] got [$3])"; fail=1; results+=("FAIL $1 (want [$2] got [$3])"); else echo "ok:   $1"; results+=("ok $1"); fi
 }
 SP=""
 server_start() { # transport ports [udp]
@@ -248,6 +248,7 @@ v4_unblock
     done
 } > "$TMP/carrier.sh"
 mkdir -p "$TMP/cfg-hub" "$TMP/cfg-spoke"
+{ echo "== kernel $(uname -r)"; for m in sit ip6_gre ip6_tunnel; do modprobe "$m" 2>&1 && echo "module $m: ok" || echo "module $m: missing"; done; } >>"$TMP/carrier.log"
 # each call is traced into carrier.log, shown on the CI run when a check fails
 hubc()   { echo "== hub: $*" >>"$TMP/carrier.log"; $H env PANEL_CONFIG_DIR="$TMP/cfg-hub" bash -c "source '$TMP/carrier.sh'; set -x; $*" 2>>"$TMP/carrier.log"; }
 spokec() { echo "== spoke: $*" >>"$TMP/carrier.log"; $S env PANEL_CONFIG_DIR="$TMP/cfg-spoke" bash -c "source '$TMP/carrier.sh'; set -x; $*" 2>>"$TMP/carrier.log"; }
@@ -303,11 +304,12 @@ if [[ -n ${GITHUB_ACTIONS:-} ]]; then
     ok=0 bad=0
     for r in "${results[@]}"; do [[ $r == ok* ]] && ok=$((ok + 1)) || bad=$((bad + 1)); done
     echo "::notice title=IPv6 lab::$ok checks passed, $bad failed (Backhaul x 8 + FRP, users and the link over IPv6, GRE over 6to4 and 4in6)"
-    for r in "${results[@]}"; do [[ $r == FAIL* ]] && echo "::error title=IPv6 lab::${r#FAIL }"; done
+    # a warning, not an error: GitHub keeps only 10 errors per step
     if printf '%s\n' "${results[@]}" | grep -q '^FAIL carrier'; then
-        trace=$(grep -E '^(==|\+* *(ip |gre6_rebuild|gre_dev|modprobe|sysctl|return))|RTNETLINK|Error|rror:|Cannot|Unknown|not found|unknown' "$TMP/carrier.log" | head -c 6000 | sed -e 's/%/%25/g' | sed -e ':a;N;$!ba;s/\n/%0A/g')
-        echo "::error title=IPv6 lab carrier trace::$trace"
+        trace=$(grep -E '^(==|module|\+* *(ip |gre6_rebuild|gre_dev|modprobe|sysctl|return))|RTNETLINK|Error|rror:|Cannot|Unknown|not found|unknown' "$TMP/carrier.log" | head -c 6000 | sed -e 's/%/%25/g' | sed -e ':a;N;$!ba;s/\n/%0A/g')
+        echo "::warning title=IPv6 lab carrier trace::$trace"
     fi
+    for r in "${results[@]}"; do [[ $r == FAIL* ]] && echo "::error title=IPv6 lab::${r#FAIL }"; done
 fi
 (( fail )) && { echo "FAIL: test_ipv6_lab"; exit 1; }
 echo "PASS: test_ipv6_lab"
