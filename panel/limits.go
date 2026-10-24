@@ -658,16 +658,10 @@ type limitServer struct {
 }
 
 // gre6Remote is the other server's IPv6 that the 4in6 carrier of GRE
-// interface ifname uses (hashem.sh keeps it in gre6/IF.env), or "".
+// interface ifname uses, or "".
 func gre6Remote(ifname string) string {
-	data, err := os.ReadFile(filepath.Join(configDir, "gre6", ifname+".env"))
-	if err != nil {
-		return ""
-	}
-	for _, l := range strings.Split(string(data), "\n") {
-		if v, ok := strings.CutPrefix(strings.TrimSpace(l), "REMOTE6="); ok && validPublicIP(v, 6) {
-			return v
-		}
+	if v := gre6Env(ifname)["REMOTE6"]; validPublicIP(v, 6) {
+		return v
 	}
 	return ""
 }

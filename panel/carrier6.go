@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -25,6 +27,36 @@ const (
 )
 
 func isCarrier6(t string) bool { return t == carrier6to4 || t == carrier4in6 }
+
+// gre6Env reads the ends hashem.sh keeps for GRE interface ifname
+// (gre6/IF.env: REMOTE4, LOCAL4, REMOTE6, LOCAL6). An ip6gre device no longer
+// shows its IPv4 ends, so this is where they are read from.
+func gre6Env(ifname string) map[string]string {
+	m := map[string]string{}
+	data, err := os.ReadFile(filepath.Join(configDir, "gre6", ifname+".env"))
+	if err != nil {
+		return m
+	}
+	for _, l := range strings.Split(string(data), "\n") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(l), "="); ok && ipFamily(v) != 0 {
+			m[k] = v
+		}
+	}
+	return m
+}
+
+// gre6Ends is "remote, local" of an ip6gre interface as public addresses:
+// the IPv4 ends under 6to4, the IPv6 ones under 4in6.
+func gre6Ends(ifname string) (remote, local string) {
+	e := gre6Env(ifname)
+	if loadCarrierConfig().ActiveCarrier == carrier4in6 && e["REMOTE6"] != "" {
+		return e["REMOTE6"], e["LOCAL6"]
+	}
+	if e["REMOTE4"] != "" {
+		return e["REMOTE4"], e["LOCAL4"]
+	}
+	return e["REMOTE6"], e["LOCAL6"]
+}
 
 // carrier6Opts are the IPv6 ends of a 4in6 tunnel, seen from this server.
 type carrier6Opts struct {

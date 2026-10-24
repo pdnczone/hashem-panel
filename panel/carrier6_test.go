@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -125,5 +127,39 @@ func TestPeerApplyCarrier4in6(t *testing.T) {
 	// valid addresses get through to hashem.sh (not installed here)
 	if rr.Code == 400 || loadCarrierConfig().ActiveCarrier != "4in6" {
 		t.Errorf("4in6 from the master: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+// On 6to4 / 4in6 the device is ip6gre, which `ip tunnel show` does not list:
+// the status reads the other server from gre6/IF.env instead.
+func TestLocalStatusIP6GRE(t *testing.T) {
+	old := configDir
+	configDir = t.TempDir()
+	defer func() { configDir = old }()
+	_ = os.MkdirAll(filepath.Join(configDir, "gre6"), 0700)
+	env := "REMOTE4=198.51.100.2\nLOCAL4=198.51.100.1\nREMOTE6=2001:db8::2\nLOCAL6=2001:db8::1\n"
+	if err := os.WriteFile(filepath.Join(configDir, "gre6", "gre-tunnel.env"), []byte(env), 0600); err != nil {
+		t.Fatal(err)
+	}
+	v := &hostView{tunnelOK: true, tunnelShow: "gre0: gre/ip remote any local any ttl inherit nopmtudisc\n",
+		inner: map[string]string{"gre-tunnel": "10.10.10.2/30"}, active: map[string]bool{}}
+	for _, c := range []struct{ carrier, remote, local string }{
+		{carrier6to4, "198.51.100.2", "198.51.100.1"},
+		{carrier4in6, "2001:db8::2", "2001:db8::1"},
+	} {
+		cfg := loadCarrierConfig()
+		cfg.ActiveCarrier = c.carrier
+		if err := saveCarrierConfig(cfg); err != nil {
+			t.Fatal(err)
+		}
+		st := localStatusFrom(v)
+		if !st.Gre.Exists || st.Gre.PeerIP != c.remote || st.GrePeer != c.remote || st.Gre.Local != c.local {
+			t.Fatalf("%s: %+v", c.carrier, st.Gre)
+		}
+	}
+	// a plain gre device keeps reading `ip tunnel show`
+	v.tunnelShow = "gre-tunnel: gre/ip remote 203.0.113.9 local 203.0.113.8 ttl 255\n"
+	if st := localStatusFrom(v); st.Gre.PeerIP != "203.0.113.9" {
+		t.Fatalf("plain gre: %+v", st.Gre)
 	}
 }

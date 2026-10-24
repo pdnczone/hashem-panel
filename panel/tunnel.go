@@ -695,6 +695,12 @@ func localStatusFrom(v *hostView) tunnelStatus {
 		if st.Gre.Name == "" {
 			st.Gre.Name = "gre-tunnel"
 		}
+		// 6to4 / 4in6: an ip6gre device is not in `ip tunnel show`
+		if st.Gre.PeerIP == "" {
+			if r, l := gre6Ends("gre-tunnel"); r != "" {
+				st.Gre.PeerIP, st.GrePeer, st.Gre.Local = r, r, l
+			}
+		}
 	}
 	// FRP / Backhaul role: which unit file exists / is active
 	for _, svc := range baseUnits {
