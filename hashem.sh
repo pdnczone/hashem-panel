@@ -1283,9 +1283,10 @@ gre6_set() { # IF KEY VALUE
 
 gre6_sit_name() { local n="hs6-$1"; echo "${n:0:15}"; }
 
-# gre_dev_kind IF: gre, ip6gre, sit or empty
+# gre_dev_kind IF: gre, ip6gre, sit or empty (a sit prints its proto first:
+# "sit ip6ip remote ...")
 gre_dev_kind() {
-    ip -d -o link show dev "$1" 2>/dev/null | grep -oE ' (ip6gre|gre|sit) remote ' | head -n1 | awk '{print $1}'
+    ip -d -o link show dev "$1" 2>/dev/null | grep -oE ' (ip6gre|gre|sit) ([a-z0-9]+ )?remote ' | head -n1 | awk '{print $1}'
 }
 
 # gre_dev_ends IF: "REMOTE LOCAL" of a tunnel device
