@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # tests/test_pathtest_lab.sh — the Benchmark tab's path test (gre-panel pathtest)
-# between two namespaces joined by a veth (Iran 192.0.2.1, foreign 192.0.2.2),
+# between two namespaces joined by a veth (Iran 192.0.2.1 and 2001:db8:77::1,
+# foreign 192.0.2.2 and 2001:db8:77::2),
 # with the real frps/frpc and Backhaul v0.7.2 cores and no tunnel installed:
 #
-#  1. open path: every check works (plain TCP/UDP, GRE, SSH banner, FRP x 5,
-#     Backhaul x 7), data crosses each transport and a speed is measured.
-#  2. a filtered path: UDP and GRE dropped and Backhaul ws's port blocked on the
-#     way to Iran -> exactly those checks are "fail", the rest still "ok".
+#  1. open path: every check works (plain TCP/UDP, GRE, 6to4, TCP over IPv6,
+#     4in6, SSH banner, FRP x 5, Backhaul x 7), data crosses each transport and a speed is measured.
+#  2. a filtered path: UDP, GRE, protocol 41 and GRE over IPv6 dropped and
+#     Backhaul ws's port blocked on the way to Iran -> exactly those checks are "fail", the rest still "ok".
 #  3. next to a live tunnel (GRE + Backhaul tcpmux on port 41000, the test's
 #     default first port): the test picks the next free ports by itself, all
 #     checks work (its keyed GRE beside the tunnel's GRE to the same peer), and
 #     the tunnel carries data every half second during the test without a miss.
-#  4. nothing is left behind: no hpt0 interface, no core process, no temp dir.
+#  4. nothing is left behind: no hpt0/hpt6/hpt4 interface, no core process, no temp dir.
 #
 # The path test is Hashem Pro: PT_LICENSE is a license for it, and PANEL_BIN is
 # built to trust its signing key (see TestWriteLabLicense in panel/). Without a
@@ -55,8 +56,8 @@ ip netns add "$SPOKE"
 H="ip netns exec $HUB"; S="ip netns exec $SPOKE"
 ip link add pt-h type veth peer name pt-s
 ip link set pt-h netns "$HUB"; ip link set pt-s netns "$SPOKE"
-$H sh -c 'ip addr add 192.0.2.1/24 dev pt-h; ip link set pt-h up; ip link set lo up'
-$S sh -c 'ip addr add 192.0.2.2/24 dev pt-s; ip link set pt-s up; ip link set lo up'
+$H sh -c 'ip addr add 192.0.2.1/24 dev pt-h; ip -6 addr add 2001:db8:77::1/64 dev pt-h nodad; ip link set pt-h up; ip link set lo up'
+$S sh -c 'ip addr add 192.0.2.2/24 dev pt-s; ip -6 addr add 2001:db8:77::2/64 dev pt-s nodad; ip link set pt-s up; ip link set lo up'
 
 # the cores, where the panel looks for them
 mkdir -p "$TMP/cores"
@@ -79,7 +80,7 @@ check() { if [[ "$2" != "$3" ]]; then echo "FAIL: $1 (want [$2] got [$3])"; fail
 run_test() {
     : > "$TMP/hub.out"
     local port=(-port "$1"); [[ $1 == auto ]] && port=()
-    $H env GRE_PANEL_DIR="$TMP/cfg-hub" "$PANEL" pathtest serve "${port[@]}" -ip 192.0.2.1 -foreign 192.0.2.2 -ssh 2222 -minutes 3 > "$TMP/hub.out" 2>&1 &
+    $H env GRE_PANEL_DIR="$TMP/cfg-hub" "$PANEL" pathtest serve "${port[@]}" -ip 192.0.2.1 -ip6 2001:db8:77::1 -foreign 192.0.2.2 -ssh 2222 -minutes 3 > "$TMP/hub.out" 2>&1 &
     local hp=$! i code=""
     for i in $(seq 1 50); do code=$(awk '/^CODE /{print $2}' "$TMP/hub.out"); [[ -n $code ]] && break; sleep 0.2; done
     [[ -n $code ]] || { echo "FAIL: no code from serve"; cat "$TMP/hub.out"; fail=1; kill $hp; return; }
@@ -105,7 +106,7 @@ check "no license: says it is Hashem Pro" yes "$(grep -q 'Hashem Pro feature' "$
 check "no license: nothing listening" "" "$($H ss -Htln 'sport = :41000' 2>/dev/null)"
 cp "$LIC" "$TMP/cfg-hub/license.key"; cp "$LIC" "$TMP/cfg-spoke/license.key"
 
-ALL="tcp udp gre ssh frp-tcp frp-websocket frp-wss frp-kcp frp-quic bh-tcp bh-tcpmux bh-ws bh-wss bh-wsmux bh-wssmux bh-udp"
+ALL="tcp udp gre 6to4 tcp6 4in6 ssh frp-tcp frp-websocket frp-wss frp-kcp frp-quic bh-tcp bh-tcpmux bh-ws bh-wss bh-wsmux bh-wssmux bh-udp"
 
 # ---- 1. open path ----
 echo "== open path"
@@ -119,13 +120,15 @@ check "open: the foreign side got Iran's results" ok "$(status_of "$TMP/spoke.js
 echo "== filtered path"
 $S iptables -A OUTPUT -d 192.0.2.1 -p udp -j DROP
 $S iptables -A OUTPUT -d 192.0.2.1 -p 47 -j DROP
+$S iptables -A OUTPUT -d 192.0.2.1 -p 41 -j DROP
+$S ip6tables -A OUTPUT -d 2001:db8:77::1 -p 47 -j DROP
 $S iptables -A OUTPUT -d 192.0.2.1 -p tcp --dport 42006 -j DROP
 run_test 42000
-for id in udp gre frp-kcp frp-quic bh-udp bh-ws; do check "filtered: $id blocked" fail "$(status_of "$TMP/hub.json" "$id")"; done
-for id in tcp ssh frp-tcp frp-websocket frp-wss bh-tcp bh-tcpmux bh-wss bh-wsmux bh-wssmux; do
+for id in udp gre 6to4 4in6 frp-kcp frp-quic bh-udp bh-ws; do check "filtered: $id blocked" fail "$(status_of "$TMP/hub.json" "$id")"; done
+for id in tcp tcp6 ssh frp-tcp frp-websocket frp-wss bh-tcp bh-tcpmux bh-wss bh-wsmux bh-wssmux; do
     check "filtered: $id still works" ok "$(status_of "$TMP/hub.json" "$id")"
 done
-$S iptables -F OUTPUT
+$S iptables -F OUTPUT; $S ip6tables -F OUTPUT
 
 # ---- 3. next to a live tunnel ----
 echo "== next to a live tunnel"
@@ -209,6 +212,10 @@ check "live: the tunnel's GRE is still there" yes "$($H ip link show gre-tunnel 
 sleep 1
 check "no hpt0 left (Iran)" "" "$($H ip -o link show hpt0 2>/dev/null)"
 check "no hpt0 left (foreign)" "" "$($S ip -o link show hpt0 2>/dev/null)"
+for d in hpt6 hpt4; do
+    check "no $d left (Iran)" "" "$($H ip -o link show $d 2>/dev/null)"
+    check "no $d left (foreign)" "" "$($S ip -o link show $d 2>/dev/null)"
+done
 check "no core process left" "" "$(pgrep -f "$TMP/cores/" || true)"
 check "no temp dir left" "" "$(ls -d "$TMP"/hashem-pathtest-* 2>/dev/null)"
 
