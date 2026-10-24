@@ -2662,7 +2662,7 @@ window.FA_TEXT = {
 "Provider": "سرویس‌دهنده",
 "Webhook (any DNS provider or script)": "وب‌هوک (هر سرویس‌دهنده‌ی DNS یا اسکریپت)",
 "Webhook URL": "آدرس وب‌هوک",
-"The hub that leads POSTs JSON {\"name\", \"ips\", \"ttl\", \"hub\", \"at\"} whenever the working hubs change, and every 30 seconds. Your script sets the record to exactly \"ips\". Any 2xx answer counts as done.": "هابِ هماهنگ‌کننده هر بار که فهرست هاب‌های سالم عوض شود، و هر ۳۰ ثانیه، یک JSON به شکل {\"name\", \"ips\", \"ttl\", \"hub\", \"at\"} با POST می‌فرستد. اسکریپت شما رکورد را دقیقاً برابر \"ips\" می‌گذارد. هر پاسخ 2xx یعنی انجام شد.",
+"The hub that leads POSTs JSON {\"name\", \"ips\", \"ips6\", \"ttl\", \"hub\", \"at\"} whenever the working hubs change, and every 30 seconds. Your script sets the record to exactly \"ips\" (A) and \"ips6\" (AAAA). Any 2xx answer counts as done.": "هابِ هماهنگ‌کننده هر بار که فهرست هاب‌های سالم عوض شود، و هر ۳۰ ثانیه، یک JSON به شکل {\"name\", \"ips\", \"ips6\", \"ttl\", \"hub\", \"at\"} با POST می‌فرستد. اسکریپت شما رکورد را دقیقاً برابر \"ips\" (A) و \"ips6\" (AAAA) می‌گذارد. هر پاسخ 2xx یعنی انجام شد.",
 "A domain that always points to the Iran hubs that work.": "دامنه‌ای که همیشه به هاب‌های ایرانِ سالم اشاره می‌کند.",
 "Add to a pool": "افزودن به استخر",
 "Add to a pool…": "افزودن به استخر…",

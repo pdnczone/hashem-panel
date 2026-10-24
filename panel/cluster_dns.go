@@ -1,7 +1,8 @@
 package main
 
 // DNS failover: a domain whose A records are the public IPs of the Iran hubs
-// that work right now. Users who connect by name move to a working hub when
+// that work right now (and AAAA records for the IPv6 addresses of the hubs
+// without load-balanced pools, which each hub reports in its beat). Users who connect by name move to a working hub when
 // one dies (after the record's TTL). Cloudflare is built in (the record must
 // be DNS only, grey cloud, since the proxy would not carry tunnels); any other
 // DNS provider or script can take a webhook with the list of working hubs.
@@ -52,6 +53,11 @@ func dnsHealthyIPs(c ClusterConfig) (ips []string, leader bool) {
 	if self.Healthy && isIPv4(self.IP) {
 		ips = append(ips, self.IP)
 	}
+	// AAAA only for a hub without pools: the load balancer is IPv4 NAT, so an
+	// IPv6 user would reach no pooled port
+	if self.Healthy && ipFamily(self.IP6) == 6 && len(self.Pools) == 0 {
+		ips = append(ips, self.IP6)
+	}
 	leader = true
 	meshMu.Lock()
 	for _, h := range c.Hubs {
@@ -64,6 +70,9 @@ func dnsHealthyIPs(c ClusterConfig) (ips []string, leader bool) {
 		}
 		if st.Beat.Healthy && isIPv4(h.PublicIP) {
 			ips = append(ips, h.PublicIP)
+		}
+		if st.Beat.Healthy && ipFamily(st.Beat.IP6) == 6 && len(st.Beat.Pools) == 0 {
+			ips = append(ips, st.Beat.IP6)
 		}
 	}
 	meshMu.Unlock()
@@ -88,10 +97,18 @@ func dnsTick(c ClusterConfig) {
 	hubIPs := map[string]bool{}
 	if self := meshSelfBeat(c); self.IP != "" {
 		hubIPs[self.IP] = true
+		if self.IP6 != "" {
+			hubIPs[self.IP6] = true
+		}
 	}
+	meshMu.Lock()
 	for _, h := range c.Hubs {
 		hubIPs[h.PublicIP] = true
+		if st := meshState[h.ID]; st != nil && st.Beat.IP6 != "" {
+			hubIPs[st.Beat.IP6] = true
+		}
 	}
+	meshMu.Unlock()
 	var got []string
 	var err error
 	if c.DNS.Provider == "webhook" {
@@ -132,11 +149,20 @@ func dnsReady(d DNSConfig) bool {
 
 // ---- webhook ----
 
-// dnsWebhook POSTs {"name","ips","ttl","hub","at"} to the configured URL
-// (with "Authorization: Bearer <token>" when a token is set). Any 2xx answer
-// counts as done. test adds "test": true so the receiver can ignore it.
+// dnsWebhook POSTs {"name","ips","ips6","ttl","hub","at"} to the configured
+// URL (with "Authorization: Bearer <token>" when a token is set): ips are the
+// IPv4 addresses (A), ips6 the IPv6 ones (AAAA). Any 2xx answer counts as
+// done. test adds "test": true so the receiver can ignore it.
 func dnsWebhook(c ClusterConfig, ips []string, test bool) ([]string, error) {
-	body := map[string]any{"name": c.DNS.Name, "ips": ips, "ttl": c.DNS.TTL, "hub": c.NodeID,
+	v4, v6 := []string{}, []string{}
+	for _, ip := range ips {
+		if ipFamily(ip) == 6 {
+			v6 = append(v6, ip)
+		} else {
+			v4 = append(v4, ip)
+		}
+	}
+	body := map[string]any{"name": c.DNS.Name, "ips": v4, "ips6": v6, "ttl": c.DNS.TTL, "hub": c.NodeID,
 		"at": time.Now().UTC().Format(time.RFC3339)}
 	if test {
 		body["test"] = true
@@ -229,20 +255,25 @@ type cfRecord struct {
 	Proxied bool   `json:"proxied"`
 }
 
+// cfListA lists name's A and AAAA records.
 func cfListA(token, zone, name string) ([]cfRecord, error) {
-	res, err := cfCall(token, "GET", "/zones/"+zone+"/dns_records?type=A&per_page=100&name="+url.QueryEscape(name), nil)
-	if err != nil {
-		return nil, err
+	var all []cfRecord
+	for _, typ := range []string{"A", "AAAA"} {
+		res, err := cfCall(token, "GET", "/zones/"+zone+"/dns_records?type="+typ+"&per_page=100&name="+url.QueryEscape(name), nil)
+		if err != nil {
+			return nil, err
+		}
+		var rs []cfRecord
+		if err := json.Unmarshal(res, &rs); err != nil {
+			return nil, err
+		}
+		all = append(all, rs...)
 	}
-	var rs []cfRecord
-	if err := json.Unmarshal(res, &rs); err != nil {
-		return nil, err
-	}
-	return rs, nil
+	return all, nil
 }
 
-// cfSyncA makes name's A records equal want. Records whose IP is not a hub's
-// are left alone; the result is the hub IPs the record holds afterwards.
+// cfSyncA makes name's A and AAAA records equal want. Records whose IP is not
+// a hub's are left alone; the result is the hub IPs the record holds afterwards.
 func cfSyncA(d DNSConfig, want []string, hubIPs map[string]bool) ([]string, error) {
 	zone, err := cfZone(d.Token, d.Name)
 	if err != nil {
@@ -270,7 +301,7 @@ func cfSyncA(d DNSConfig, want []string, hubIPs map[string]bool) ([]string, erro
 	for _, ip := range want {
 		if !haveSet[ip] {
 			if _, err := cfCall(d.Token, "POST", "/zones/"+zone+"/dns_records", map[string]any{
-				"type": "A", "name": d.Name, "content": ip, "ttl": ttl, "proxied": false,
+				"type": dnsRecordType(ip), "name": d.Name, "content": ip, "ttl": ttl, "proxied": false,
 			}); err != nil {
 				return nil, err
 			}
@@ -284,6 +315,14 @@ func cfSyncA(d DNSConfig, want []string, hubIPs map[string]bool) ([]string, erro
 		}
 	}
 	return want, nil
+}
+
+// dnsRecordType is A for an IPv4 address, AAAA for an IPv6 one.
+func dnsRecordType(ip string) string {
+	if ipFamily(ip) == 6 {
+		return "AAAA"
+	}
+	return "A"
 }
 
 // ---- API ----

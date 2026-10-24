@@ -331,6 +331,9 @@ func TestDNSWebhook(t *testing.T) {
 	if err != nil || len(ips) != 2 || auth != "Bearer sec" || got["name"] != "vpn.example.com" || fmt.Sprint(got["ips"]) != "[5.5.5.5 6.6.6.6]" || got["hub"] != "hub-a" || got["test"] != nil {
 		t.Fatalf("%v %v %q %v", ips, err, auth, got)
 	}
+	if _, err := dnsWebhook(c, []string{"5.5.5.5", "2001:db8::5"}, false); err != nil || fmt.Sprint(got["ips"]) != "[5.5.5.5]" || fmt.Sprint(got["ips6"]) != "[2001:db8::5]" {
+		t.Fatalf("IPv6 hub: %v %v", err, got)
+	}
 	c.DNS.Name = "fail.example.com"
 	if _, err := dnsWebhook(c, nil, true); err == nil || !strings.Contains(err.Error(), "HTTP 500") || got["test"] != true {
 		t.Fatalf("%v %v", err, got)

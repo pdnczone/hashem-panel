@@ -14,10 +14,16 @@ Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 - `hashem carrier set 6to4|4in6 [--if IF] [--local6 IP --remote6 IP]`; `hashem edit-peer --carrier 6to4|4in6 [--remote6 IP]` for one foreign server.
 - **Limits and traffic counters cover IPv6.** A foreign server can be limited by its IPv6 address, and a GRE tunnel on 4in6 counts the server's IPv6 towards the same speed and volume (ip6tables, and tc with `protocol ipv6`). The dashboard's per-tunnel counters count links over IPv6 too.
 - Rescue mode accepts an IPv6 peer; then every port goes through frp, since kernel DNAT cannot hand IPv4 users to an IPv6 origin.
+- **WSS over IPv6.** The WSS settings take the other server's address (IPv4, IPv6 or a host name), and the WSS port is opened for IPv6 too.
+- **The path test (Benchmark) checks the IPv6 paths:** 6to4 (protocol 41 between the IPv4 addresses), TCP over IPv6, and 4in6 (GRE between the IPv6 addresses), so you can pick a wrap before building a tunnel. `gre-panel pathtest serve -ip6 ADDR` sets this server's IPv6 (`-` skips these rows).
+- **Cluster DNS failover writes AAAA records** for the working hubs that have a public IPv6 and no pools (each hub sends its IPv6 in the heartbeat). The webhook gets them as `ips6`; `ips` stays IPv4 only, so existing receivers keep working.
+- The carrier advisor suggests 6to4 when the active carrier keeps failing, and 4in6 on a server with IPv6. The doctor warns when the server has IPv6 but UFW is set to `IPV6=no`.
+- The menus of `hashem.sh` offer 6to4 and 4in6 (carrier menu and Edit peer), instead of the old FOU entries.
+- Fixed: the carrier menu's **Next candidate** and **Automatic** only printed the status (`cli_carrier` was defined twice). There is one definition now, with every subcommand.
 - Fixed: changing one foreign server's GRE wrap switched every GRE interface on the server, and its WSS branch used the wrong port.
 - Fixed: on a server with both IPv4 and IPv6, the "what is my IP" lookups in `hashem.sh` could get the IPv6 address and reject it. They now ask over IPv4.
-- **Tested in CI** with the real kernel: Backhaul on all 8 transport setups and FRP, users over IPv6 and IPv4 at once, and the two servers over IPv6 only, all byte-exact over TCP and UDP. The carrier lab drives `hashem.sh`'s own carrier code from direct GRE to 6to4 with protocol 47 dropped, then to 4in6 with no IPv4 between the servers, then back to direct, with Backhaul running over the tunnel each time. The Bagher lab reaches its second foreign server over IPv6 only, the Xray lab runs Reality and XHTTP in both modes over IPv6, and the limits lab runs again against an IPv6 server.
-- Guide: [docs/IPV6.md](docs/IPV6.md) ([فارسی](docs/IPV6.fa.md)). Not yet over IPv6: the Spoof tunnel (it spoofs IPv4 by design), the cluster's DNS records and load balancer, and the Benchmark's path test.
+- **Tested in CI** with the real kernel: Backhaul on all 8 transport setups and FRP, users over IPv6 and IPv4 at once, and the two servers over IPv6 only, all byte-exact over TCP and UDP. The carrier lab drives `hashem.sh`'s own carrier code from direct GRE to 6to4 with protocol 47 dropped, then to 4in6 with no IPv4 between the servers, then back to direct, with Backhaul running over the tunnel each time. The Bagher lab reaches its second foreign server over IPv6 only, the Xray lab runs Reality and XHTTP in both modes over IPv6, the limits lab runs again against an IPv6 server, and the path test lab finds 6to4, TCP over IPv6 and 4in6 open, then blocked.
+- Guide: [docs/IPV6.md](docs/IPV6.md) ([فارسی](docs/IPV6.fa.md)). Not over IPv6: the Spoof tunnel (it spoofs IPv4 by design) and the cluster's load balancer (IPv4 NAT).
 
 ### New: Xray tunnel (Hashem Pro, first part)
 

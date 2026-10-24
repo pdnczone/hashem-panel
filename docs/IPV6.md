@@ -19,6 +19,7 @@ Nothing to set up. Backhaul, FRP, Bagher and Xray listen on every address of bot
 | Backhaul without GRE | yes | Setup → Backhaul → Without GRE → **Connect the two servers over: IPv6**. The bundle (`bh1_…`) carries the Iran server's IPv6. |
 | Bagher (SSH) | yes | Type the foreign server's IPv6 as its address. |
 | Xray | yes | Type the other server's IPv6 as its address (or as this server's public IP in reverse mode). |
+| WSS wrap | yes | Tunnel tab → GRE wrap → WSS settings → **Address of the other server**: its IPv6. |
 | GRE + FRP, GRE + Backhaul | through the GRE wrap | GRE itself needs IPv4 addresses on both servers; use the 4in6 wrap to carry it over IPv6. |
 | Spoof | no | It spoofs IPv4 source addresses by design. |
 
@@ -64,8 +65,19 @@ The tunnel stays at MTU 1380. That fits 6to4 (64 bytes of headers over a 1500 pa
 
 A foreign server can be limited by its IPv6 address. When a GRE tunnel runs on 4in6, the foreign server's IPv6 counts towards the same speed and volume as its IPv4. The volume is counted with `ip6tables` and the speed is policed with `tc ... protocol ipv6`. The dashboard's per-tunnel counters count links over IPv6 too.
 
-## Not over IPv6 yet
+## Before you build: the path test
 
-- The cluster's DNS records (A only) and its load balancer (IPv4 only).
-- The Benchmark tab's path test (it does not test protocol 41 or IPv6 yet).
+Benchmark tab → **Path test** also tries the IPv6 paths between the two servers: **6to4** (protocol 41), **TCP over IPv6** and **4in6**. A row that works tells you that wrap will get through. Without a public IPv6 on the Iran server, the last two are not tested.
+
+## Cluster
+
+DNS failover writes `AAAA` records for the working hubs that have a public IPv6 and no pools. A hub with pools gets no `AAAA`: the load balancer is IPv4 NAT, so users over IPv6 would not reach its pooled ports. See [CLUSTER.md](CLUSTER.md#9-dns-failover).
+
+## Doctor
+
+When the server has a public IPv6 but UFW is set to `IPV6=no`, the doctor says so: users and servers cannot reach the tunnel ports over IPv6 until it is `IPV6=yes`.
+
+## Not over IPv6
+
+- The cluster's load balancer (IPv4 NAT).
 - The Spoof tunnel (IPv4 by design).

@@ -60,6 +60,7 @@ type meshBeat struct {
 	ID      string                   `json:"id"`
 	Name    string                   `json:"name"`
 	IP      string                   `json:"ip"`
+	IP6     string                   `json:"ip6,omitempty"` // the hub's public IPv6 (DNS failover's AAAA)
 	Port    int                      `json:"port"`
 	Healthy bool                     `json:"healthy"`
 	Pools   map[string]meshPoolState `json:"pools"`
@@ -194,7 +195,7 @@ func meshSelfBeat(c ClusterConfig) meshBeat {
 	if ip == "" {
 		ip = detectPublicIPCached()
 	}
-	b := meshBeat{ID: c.NodeID, Name: c.Name, IP: ip, Port: cfg.Port, Pools: map[string]meshPoolState{}, Version: panelVersion}
+	b := meshBeat{ID: c.NodeID, Name: c.Name, IP: ip, IP6: meshIP6(), Port: cfg.Port, Pools: map[string]meshPoolState{}, Version: panelVersion}
 	clusterRT.mu.Lock()
 	anyOK := false
 	for _, p := range c.Pools {
@@ -557,6 +558,9 @@ func meshView(c ClusterConfig) []hubView {
 	}
 	return out
 }
+
+// meshIP6 is this hub's public IPv6 for its beat (swapped in tests).
+var meshIP6 = detectPublicIP6Cached
 
 func isIPv4(s string) bool {
 	ip := net.ParseIP(strings.TrimSpace(s))

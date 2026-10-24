@@ -1863,7 +1863,7 @@
                 <option value="webhook">Webhook (any DNS provider or script)</option>
               </select></div>
             <div class="fg hidden" id="clDnsURLRow"><label for="clDnsURL">Webhook URL</label><input class="hashem-input u-mono" id="clDnsURL" autocomplete="off" placeholder="https://example.com/hashem-dns"></div>
-            <div class="ent-help hidden" id="clDnsHookHelp">The hub that leads POSTs JSON {"name", "ips", "ttl", "hub", "at"} whenever the working hubs change, and every 30 seconds. Your script sets the record to exactly "ips". Any 2xx answer counts as done.</div>
+            <div class="ent-help hidden" id="clDnsHookHelp">The hub that leads POSTs JSON {"name", "ips", "ips6", "ttl", "hub", "at"} whenever the working hubs change, and every 30 seconds. Your script sets the record to exactly "ips" (A) and "ips6" (AAAA). Any 2xx answer counts as done.</div>
             <div class="fg"><label for="clDnsToken" id="clDnsTokenLabel">Cloudflare API token (Zone, DNS, Edit)</label><input class="hashem-input u-mono" id="clDnsToken" type="password" autocomplete="off" placeholder="Saved; paste a new one to replace it"></div>
             <label class="u-check-row u-mb-8"><input type="checkbox" id="clDnsEnabled"> Keep the record pointed at the working hubs</label>
             <div class="ent-help cl-pre" id="clDnsState"></div>

@@ -356,6 +356,25 @@ func detectPublicIPCached() string {
 	return pubIPVal
 }
 
+var (
+	pubIP6Mu   sync.Mutex
+	pubIP6Val  string
+	pubIP6Time time.Time
+)
+
+// detectPublicIP6Cached is detectPublicIP6 at most every 10 minutes (every
+// minute while there is none), for callers on a timer like the cluster beat.
+func detectPublicIP6Cached() string {
+	pubIP6Mu.Lock()
+	defer pubIP6Mu.Unlock()
+	if time.Since(pubIP6Time) < 10*time.Minute && (pubIP6Val != "" || time.Since(pubIP6Time) < time.Minute) {
+		return pubIP6Val
+	}
+	pubIP6Time = time.Now()
+	pubIP6Val = detectPublicIP6()
+	return pubIP6Val
+}
+
 func startFleetSampler() {
 	fleetOnce.Do(func() {
 		go func() {

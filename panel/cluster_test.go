@@ -896,14 +896,16 @@ func TestCloudflareSync(t *testing.T) {
 		case r.Method == "GET" && r.URL.Path == "/zones/z1/dns_records":
 			out := []map[string]any{}
 			for _, x := range recs {
-				out = append(out, map[string]any{"id": x.ID, "content": x.Content, "proxied": false})
+				if (r.URL.Query().Get("type") == "AAAA") == strings.Contains(x.Content, ":") {
+					out = append(out, map[string]any{"id": x.ID, "content": x.Content, "proxied": false})
+				}
 			}
 			b, _ := json.Marshal(map[string]any{"success": true, "result": out})
 			_, _ = w.Write(b)
 		case r.Method == "POST":
 			var in map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&in)
-			if in["proxied"] != false || in["type"] != "A" {
+			if in["proxied"] != false || in["type"] != dnsRecordType(in["content"].(string)) {
 				t.Errorf("create %v", in)
 			}
 			recs = append(recs, rec{fmt.Sprintf("r%d", len(recs)+1), in["content"].(string)})
@@ -937,6 +939,19 @@ func TestCloudflareSync(t *testing.T) {
 	}
 	if strings.Join(got, ",") != "5.5.5.5,9.9.9.9,7.7.7.7" {
 		t.Fatalf("records %v (9.9.9.9 is not ours and must stay)", got)
+	}
+	// IPv6 hubs get AAAA records, beside the A ones
+	hubs["2001:db8::5"], hubs["2001:db8::6"] = true, true
+	recs = append(recs, rec{"r9", "2001:db8::6"}) // hub 2001:db8::6 died
+	if _, err := cfSyncA(d, []string{"5.5.5.5", "7.7.7.7", "2001:db8::5"}, hubs); err != nil {
+		t.Fatal(err)
+	}
+	got = nil
+	for _, x := range recs {
+		got = append(got, x.Content)
+	}
+	if strings.Join(got, ",") != "5.5.5.5,9.9.9.9,7.7.7.7,2001:db8::5" {
+		t.Fatalf("records with IPv6 %v", got)
 	}
 	d.Token = "bad"
 	if _, err := cfSyncA(d, []string{"5.5.5.5"}, hubs); err == nil || !strings.Contains(err.Error(), "Invalid API Token") || strings.Contains(err.Error(), "bad") {
@@ -975,6 +990,33 @@ func TestDNSLeaderIsLowestReachableID(t *testing.T) {
 	meshMu.Unlock()
 	if _, leader = dnsHealthyIPs(c); !leader {
 		t.Fatal("hub-a is unreachable: hub-b leads")
+	}
+}
+
+// A healthy hub's IPv6 from its beat joins the record set (AAAA); an
+// unhealthy hub's does not.
+func TestDNSHealthyIPsIPv6(t *testing.T) {
+	newClusterFixture(t, true)
+	old := meshIP6
+	meshIP6 = func() string { return "" }
+	t.Cleanup(func() { meshIP6 = old })
+	c := defaultClusterConfig()
+	c.NodeID, c.PublicIP = "hub-b", "5.5.5.5"
+	c.DNS = DNSConfig{Enabled: true, Name: "vpn.example.com"}
+	c.Hubs = []HubPeer{{ID: "hub-a", PublicIP: "6.6.6.6"}, {ID: "hub-c", PublicIP: "7.7.7.7"}}
+	meshMu.Lock()
+	meshState["hub-a"] = &hubRT{Up: true, Beat: meshBeat{ID: "hub-a", Healthy: true, IP6: "2001:db8::a"}}
+	meshState["hub-c"] = &hubRT{Up: true, Beat: meshBeat{ID: "hub-c", Healthy: false, IP6: "2001:db8::c"}}
+	meshMu.Unlock()
+	if ips, _ := dnsHealthyIPs(c); strings.Join(ips, ",") != "2001:db8::a,6.6.6.6" {
+		t.Fatalf("records %v", ips)
+	}
+	// a hub with pools keeps IPv6 users away: no AAAA for it
+	meshMu.Lock()
+	meshState["hub-a"].Beat.Pools = map[string]meshPoolState{"tcp/443": {State: poolOK}}
+	meshMu.Unlock()
+	if ips, _ := dnsHealthyIPs(c); strings.Join(ips, ",") != "6.6.6.6" {
+		t.Fatalf("records with a pool %v", ips)
 	}
 }
 

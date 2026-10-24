@@ -350,7 +350,7 @@ Every hub with DNS failover on reports the record name in its heartbeat. Among t
 
 ### 9.1 Cloudflare
 
-- The record is `A` records, one per working hub.
+- The record is `A` records, one per working hub, and `AAAA` records for the working hubs that have a public IPv6 and no pools (each hub reports its own in the heartbeat). A hub with pools gets no `AAAA`: the load balancer is IPv4 NAT, so users over IPv6 would not reach its pooled ports.
 - Only records whose IP belongs to a hub of the cluster are added or removed. Other records under the same name are never touched.
 - The last record is never removed: if every hub looks down, the record stays as it was.
 - A proxied (orange cloud) record is refused.
@@ -360,11 +360,12 @@ Every hub with DNS failover on reports the record name in its heartbeat. Among t
 For any DNS provider. The leading hub POSTs JSON to your URL:
 
 ```json
-{"name": "vpn.example.com", "ips": ["5.5.5.5", "6.6.6.6"], "ttl": 60, "hub": "hub-1a2b3c4d", "at": "2026-10-19T14:00:00Z"}
+{"name": "vpn.example.com", "ips": ["5.5.5.5", "6.6.6.6"], "ips6": ["2001:db8::5"], "ttl": 60, "hub": "hub-1a2b3c4d", "at": "2026-10-19T14:00:00Z"}
 ```
 
+- `ips` are the IPv4 addresses (`A`), `ips6` the IPv6 ones (`AAAA`, empty when no hub has IPv6).
 - Headers: `Content-Type: application/json` and, when you set a secret, `Authorization: Bearer <secret>`.
-- Your endpoint sets the record to exactly `ips`. Any `2xx` answer counts as done; anything else is shown as an error and retried.
+- Your endpoint sets the record to exactly `ips` (and `ips6`). Any `2xx` answer counts as done; anything else is shown as an error and retried.
 - **Test** sends the same body with `"test": true`.
 
 A minimal receiver, to adapt to your provider's API:

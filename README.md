@@ -113,7 +113,7 @@ If you need one relay on one server pair and are happy editing TOML, plain frp o
 - 🕸️ **Cluster** [PRO] — pools of foreign servers behind one Iran port (failover, balance, sticky, latency, least connections), service check through the tunnel, standby servers, connection limits, several Iran hubs, hub-to-hub forwarding and DNS failover, on an interactive map. See [Cluster](#cluster).
 - 🧪 **Path test** [PRO] — which transports get through between two servers, before any tunnel exists.
 - 🛰️ **Four GRE carriers** — Direct GRE (IP protocol 47), WSS (TLS WebSocket, port `8443` by default), 6to4 (GRE on a private IPv6 inside IP protocol 41) and 4in6 (GRE over the servers' IPv6). A switch changes both servers and is undone if the tunnel does not answer within 45 s.
-- 🌐 **IPv6** — users reach the ports over IPv6, and Backhaul without GRE, Bagher and Xray connect the two servers over IPv6. See [docs/IPV6.md](docs/IPV6.md).
+- 🌐 **IPv6** — users reach the ports over IPv6; Backhaul without GRE, Bagher, Xray and WSS connect the two servers over IPv6; the path test checks 6to4, TCP over IPv6 and 4in6; cluster DNS failover writes AAAA records. See [docs/IPV6.md](docs/IPV6.md).
 - 🔌 **FRP transports** — `tcp`, `kcp`, `quic`, `websocket`, `wss`, with payload encryption, compression and PROXY Protocol v2. See the [FRP Transports Guide](docs/FRP_TUNNELS_GUIDE.md).
 - 📦 **Setup bundles** — one string carries keys, IPs, transport and ports: `hsh1_…` (FRP), `bh1_…` (Backhaul), `gh1_…` (GRE+Backhaul). Paste it on the foreign server and the form fills itself.
 - 🔀 **Port management** — single ports (`443`), lists (`80,443`), ranges (`1000-1010`) and mappings (`8080=80`).
