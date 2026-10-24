@@ -113,7 +113,7 @@ jobs:
         run: |
           # Pro feature: a throwaway lab key, trusted only by this lab build
           (cd panel && LAB_LICENSE_DIR=/tmp/lablic go test -count=1 -run TestWriteLabLicense .             && CGO_ENABLED=0 go build -ldflags "-X main.defaultMasterPublicKeyB64=$(cat /tmp/lablic/pub)" -o /tmp/gre-panel-lab .)
-          sudo env "PATH=$PATH" PANEL_BIN=/tmp/gre-panel-lab PT_LICENSE=/tmp/lablic/license.key FRP_DIR=/tmp/frp-rel bash tests/test_pathtest_lab.sh
+          sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" PANEL_BIN=/tmp/gre-panel-lab PT_LICENSE=/tmp/lablic/license.key FRP_DIR=/tmp/frp-rel bash tests/test_pathtest_lab.sh
       - name: Cluster lab (kernel rules, hub forwarding, a pool of real frps/frpc and Backhaul end to end)
         run: |
           (cd panel && go test -c -o /tmp/clusterlab.test .)

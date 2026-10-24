@@ -72,7 +72,8 @@ while True:
 ' & pids+=($!)
 
 fail=0
-check() { if [[ "$2" != "$3" ]]; then echo "FAIL: $1 (want [$2] got [$3])"; fail=1; else echo "ok:   $1"; fi; }
+fails=()
+check() { if [[ "$2" != "$3" ]]; then echo "FAIL: $1 (want [$2] got [$3])"; fail=1; fails+=("$1 (want [$2] got [$3])"); else echo "ok:   $1"; fi; }
 
 # run_test PORT -> Iran's JSON results in $TMP/hub.json, the foreign side's in $TMP/spoke.json
 run_test() {
@@ -208,4 +209,11 @@ check "no hpt0 left (foreign)" "" "$($S ip -o link show hpt0 2>/dev/null)"
 check "no core process left" "" "$(pgrep -f "$TMP/cores/" || true)"
 check "no temp dir left" "" "$(ls -d "$TMP"/hashem-pathtest-* 2>/dev/null)"
 
+if [[ -n ${GITHUB_ACTIONS:-} ]]; then
+    for r in "${fails[@]:0:9}"; do echo "::error title=Path test lab::$r"; done
+    if (( fail )) && [[ -s $TMP/hub.out ]]; then
+        out=$(grep -v '^JSON ' "$TMP/hub.out" | tail -n 40 | sed -e 's/%/%25/g' | sed -e ':a;N;$!ba;s/\n/%0A/g')
+        echo "::warning title=Path test lab, last Iran output::$out"
+    fi
+fi
 (( fail )) && exit 1; echo "PASS test_pathtest_lab"
