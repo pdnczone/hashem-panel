@@ -1,0 +1,141 @@
+name: ci
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1"   # weekly: catches upstream/kernel drift in the lab tests
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          check-latest: true
+          cache-dependency-path: panel/go.sum
+      - name: gofmt (whole tree)
+        run: |
+          bad=$(gofmt -l panel/)
+          if [ -n "$bad" ]; then echo "gofmt needed:"; echo "$bad"; exit 1; fi
+      - name: go vet
+        run: cd panel && go vet ./...
+      - name: go build
+        run: cd panel && go build ./...
+      - name: go test (race)
+        run: |
+          cd panel
+          set -o pipefail
+          if ! go test -race -count=1 ./... 2>&1 | tee /tmp/gotest.log; then
+            # the failure itself as an annotation: job logs need a login to read
+            msg=$(grep -E -A 28 'WARNING: DATA RACE|^--- FAIL|^panic:' /tmp/gotest.log | grep -v CMD-ERROR | head -c 7000 \
+              | sed -e 's/%/%25/g' | sed -e ':a;N;$!ba;s/\n/%0A/g' -e 's/\r/%0D/g')
+            echo "::error title=go test::$msg"
+            exit 1
+          fi
+      - name: Xray tunnel configs load in the pinned Xray-core v26.3.27 (every preset, direct and reverse, both ends)
+        run: |
+          mkdir -p /tmp/xray-dl && cd /tmp/xray-dl
+          curl -fsSL -o xray.zip https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip
+          echo "23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae  xray.zip" | sha256sum -c -
+          unzip -oq xray.zip xray && ./xray version | head -1
+          cd "$GITHUB_WORKSPACE/panel" && XRAY_BIN=/tmp/xray-dl/xray go test -count=1 -v -run '^TestXrayConfigsLoad$' .
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n
+        run: |
+          for f in hashem.sh install.sh; do bash -n "$f"; done
+      - name: generated docs are current
+        run: |
+          python3 tools/gen_docs.py
+          git diff --exit-code docs/API.md docs/ERROR_CODES.md
+      - name: hermetic shell tests
+        run: |
+          # the netns lab tests run in the separate `lab` job below.
+          fail=0
+          for t in tests/test_*.sh; do
+            case "$t" in *test_backhaul_e2e.sh|*test_backhaul_udp_lab.sh|*test_gre_backhaul_lab.sh|*test_revpath_lab.sh|*test_bagher_lab.sh|*test_traffic_lab.sh|*test_tunnel_combos_lab.sh|*test_pathtest_lab.sh|*test_cluster_lab.sh|*test_xray_lab.sh|*test_limits_lab.sh|*test_ipv6_lab.sh) continue;; esac
+            echo "== $t"
+            bash "$t" || fail=1
+          done
+          exit $fail
+
+  lab:
+    # Real Backhaul v0.7.2 hub/spoke, GRE reverse-path and Bagher labs in private
+    # network namespaces (never touches the runner's interfaces or firewall).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned Backhaul v0.7.2 (sha256 verified)
+        run: |
+          mkdir -p /tmp/backhaul-rel && cd /tmp/backhaul-rel
+          curl -fsSL -o bh.tgz https://github.com/Musixal/Backhaul/releases/download/v0.7.2/backhaul_linux_amd64.tar.gz
+          echo "57bf95c2eabeddb1152d2e94ac42f4310883ce0fb909ee2a57bd53503b2dabbc  bh.tgz" | sha256sum -c -
+          tar xzf bh.tgz
+          ./backhaul -v
+      - name: Backhaul e2e (handshake, data, wrong token, kill -9 recovery)
+        run: sudo env "PATH=$PATH" bash tests/test_backhaul_e2e.sh
+      - name: GRE + Backhaul lab (dial over GRE, MTU 1380, token/transport faults, public fallback)
+        run: sudo env "PATH=$PATH" bash tests/test_gre_backhaul_lab.sh
+      - name: Reverse-path lab (GRE + rp_filter/firewall faults)
+        run: sudo env "PATH=$PATH" bash tests/test_revpath_lab.sh
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: Fetch pinned FRP v0.71.0 (sha256 verified)
+        run: |
+          mkdir -p /tmp/frp-dl && cd /tmp/frp-dl
+          curl -fsSL -o frp.tgz https://github.com/fatedier/frp/releases/download/v0.71.0/frp_0.71.0_linux_amd64.tar.gz
+          echo "84f27e39f11169f7adcef8e8b70c9329de17747b1f14dad9fb95eef5682ea716  frp.tgz" | sha256sum -c -
+          tar xzf frp.tgz
+          mkdir -p /tmp/frp-rel && cp frp_0.71.0_linux_amd64/frps frp_0.71.0_linux_amd64/frpc /tmp/frp-rel/
+          command -v sshd || sudo apt-get install -y -qq openssh-server
+      - name: Tunnel combinations lab (Backhaul x 7 transports with/without GRE, GRE <-> public route for Backhaul and FRP)
+        run: sudo env "PATH=$PATH" bash tests/test_tunnel_combos_lab.sh
+      - name: IPv6 lab (users over IPv6 and the link over IPv6, Backhaul x 8 and FRP, byte-exact TCP and UDP)
+        run: sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" bash tests/test_ipv6_lab.sh
+      - name: Path test lab (Benchmark tab, all transports between two servers, blocked ones detected, safe next to a live tunnel)
+        run: |
+          # Pro feature: a throwaway lab key, trusted only by this lab build
+          (cd panel && LAB_LICENSE_DIR=/tmp/lablic go test -count=1 -run TestWriteLabLicense .             && CGO_ENABLED=0 go build -ldflags "-X main.defaultMasterPublicKeyB64=$(cat /tmp/lablic/pub)" -o /tmp/gre-panel-lab .)
+          sudo env "PATH=$PATH" PANEL_BIN=/tmp/gre-panel-lab PT_LICENSE=/tmp/lablic/license.key FRP_DIR=/tmp/frp-rel bash tests/test_pathtest_lab.sh
+      - name: Cluster lab (kernel rules, hub forwarding, a pool of real frps/frpc and Backhaul end to end)
+        run: |
+          (cd panel && go test -c -o /tmp/clusterlab.test .)
+          sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" CLUSTER_LAB_TEST_BIN=/tmp/clusterlab.test FRP_DIR=/tmp/frp-rel BACKHAUL_BIN=/tmp/backhaul-rel/backhaul bash tests/test_cluster_lab.sh
+      - name: Bagher lab (panel SSH carrier + frp, two foreign servers, TCP and UDP, ping vs ssh -N, key lock-down, crash and outage recovery)
+        run: |
+          (cd panel && go test -c -o /tmp/bagherlab.test .)
+          sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" BAGHER_LAB_TEST_BIN=/tmp/bagherlab.test bash tests/test_bagher_lab.sh
+      - name: Traffic lab (totals, per-link counters, live speed and usage ledger against exact bytes over GRE, Backhaul without GRE and Bagher)
+        run: |
+          (cd panel && go test -c -o /tmp/trafficlab.test .)
+          sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" TRAFFIC_LAB_TEST_BIN=/tmp/trafficlab.test bash tests/test_traffic_lab.sh
+      - name: Limits lab (per-server speed policer both ways, volume counted against exact bytes, cut, reset and remove with the real iptables and tc)
+        run: |
+          (cd panel && go test -c -o /tmp/limitslab.test .)
+          sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" LIMITS_LAB_TEST_BIN=/tmp/limitslab.test bash tests/test_limits_lab.sh
+      - name: Backhaul UDP lab (tcpmux plus the UDP companion, UDP on the same port, TCP unharmed, kill -9 recovery, dashboard traffic counters)
+        run: |
+          (cd panel && go test -c -o /tmp/udplab.test .)
+          sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" CARRIER_LAB_TEST_BIN=/tmp/udplab.test bash tests/test_backhaul_udp_lab.sh
+      - name: Xray tunnel lab (real Xray-core v26.3.27, Reality/XHTTP/gRPC/mKCP direct and reverse, TCP+UDP integrity, next to a fake 3x-ui, camouflage, no open proxy)
+        run: |
+          mkdir -p /tmp/xray-dl && cd /tmp/xray-dl
+          curl -fsSL -o xray.zip https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip
+          echo "23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae  xray.zip" | sha256sum -c -
+          unzip -oq xray.zip xray
+          cd "$GITHUB_WORKSPACE" && (cd panel && go test -c -o /tmp/xraylab.test .)
+          sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" XRAY_BIN=/tmp/xray-dl/xray XRAY_LAB_TEST_BIN=/tmp/xraylab.test bash tests/test_xray_lab.sh

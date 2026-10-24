@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/pdnczone/hashem-panel/security/advisories/new
+    about: Report vulnerabilities privately. Do not open a public issue.
+  - name: Telegram channel
+    url: https://t.me/pdnczone
+    about: Announcements and community.

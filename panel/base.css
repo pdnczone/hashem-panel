@@ -1,0 +1,196 @@
+/* Shared utilities: the section label, the mono figure, the icon size. */
+  /* Typography scale defaults — normalized rem-based scale */
+  h1 { font-size: var(--fs-h1); line-height: var(--lh-h1); font-weight: var(--fw-h1); color: var(--tx); letter-spacing: -0.025em; }
+  h2 { font-size: var(--fs-h2); line-height: var(--lh-h2); font-weight: var(--fw-h2); color: var(--tx); letter-spacing: -0.02em; }
+  h3 { font-size: var(--fs-h3); line-height: var(--lh-h3); font-weight: var(--fw-h3); color: var(--tx); letter-spacing: -0.015em; }
+  h4 { font-size: var(--fs-h4); line-height: var(--lh-h4); font-weight: var(--fw-h4); color: var(--tx); letter-spacing: -0.01em; }
+  p { font-size: var(--fs-body); line-height: var(--lh-body); color: var(--tx2); }
+  small { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--dim); }
+
+  .wrapg{max-width:1300px;margin:0 auto;padding:var(--sp-5) clamp(var(--sp-4),3vw,var(--sp-6)) 72px}
+  #grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(336px,1fr));gap:var(--sp-4)}
+  .mono{font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+
+  /* Status badge — one component for Online/Offline/Up/Down pills */
+  .badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;
+    font-size:var(--fs-small);font-weight:600;line-height:1.6;border:1px solid transparent;white-space:nowrap}
+  .badge .dot{width:6px;height:6px;border-radius:50%;background:currentColor;margin:0;flex:none}
+  .badge.ok{background:var(--ok-soft);color:var(--ok);border-color:var(--ok-badge-b)}
+  .badge.ok .dot{box-shadow:0 0 6px color-mix(in srgb,var(--ok) 70%,transparent)}
+  .badge.err{background:var(--er-soft);color:var(--er);border-color:var(--er-badge-b)}
+  .badge.warn{background:var(--wr-soft);color:var(--wr);border-color:var(--wr-badge-b)}
+  .badge.info{background:var(--info-soft);color:var(--info);border-color:var(--info-badge-b)}
+  .badge.dim{background:var(--sunk);color:var(--mu);border-color:var(--ln)}
+
+  /* Card section title */
+  .card-title{font-size:var(--fs-h4);font-weight:600;color:var(--tx);margin:0;letter-spacing:-.01em}
+
+  .k{display:block;width:100%}
+  .iA{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.85;stroke-linecap:round;stroke-linejoin:round}
+  .sparkpath{stroke-dasharray:700;stroke-dashoffset:700;animation:draw 1.6s var(--spring) forwards}
+  @keyframes draw{to{stroke-dashoffset:0}}
+
+/* Generic minimal buttons */
+.btn, button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: 8px;
+  border: 1px solid var(--ln);
+  background: var(--s2);
+  color: var(--tx);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  line-height: 1;
+}
+
+.btn:hover, button:hover:not(:disabled) {
+  background: var(--sunk);
+  border-color: var(--ln2);
+}
+
+.btn:active, button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn:disabled, button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn.primary {
+  background: var(--ac-fill);
+  border-color: var(--ac-fill);
+  color: var(--ac-on, #fff);
+}
+
+.btn.primary:hover {
+  background: var(--ac-btn-dark);
+  border-color: var(--ac-btn-dark);
+}
+
+.btn.danger {
+  color: var(--er);
+  border-color: var(--er-btn-b40);
+  background: color-mix(in srgb, var(--er) 10%, transparent);
+}
+
+.btn.danger:hover {
+  background: color-mix(in srgb, var(--er) 20%, transparent);
+}
+
+/* One focus ring, everywhere, and only for keyboards.
+ *
+ * Half the screens set outline:0 on their inputs — the previews did, because a
+ * mock is never tabbed through. A visible ring has to come back somewhere, and
+ * one rule here covers every control instead of thirty. */
+:focus-visible {
+  outline: 2px solid var(--tx2);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline-offset: 1px;
+}
+
+/* A tap should not wait 300ms to find out it was not a double-tap. */
+button, a, input, select, textarea, [role="button"], [role="menuitem"] {
+  touch-action: manipulation;
+}
+
+/* Someone who has asked their system to stop moving things means it here too.
+   This is the blanket guard; a screen that needs to say more says it itself. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Utility classes for layout, spacing and typography */
+.u-foot-sub { letter-spacing: .14em; font-size: 12px; opacity: .75; }
+.u-ml-auto { margin-inline-start: auto; }
+.u-flex-1 { flex: 1; }
+.u-mt-2 { margin-top: 2px; }
+.u-mt-3 { margin-top: 3px; }
+.u-mt-4 { margin-top: 4px; }
+.u-mt-6 { margin-top: 6px; }
+.u-mt-8 { margin-top: 8px; }
+.u-mt-12 { margin-top: 12px; }
+.u-mt-14 { margin-top: 14px; }
+.u-mt-16 { margin-top: 16px; }
+.u-m-0 { margin: 0; }
+.u-my-8 { margin-top: 8px; margin-bottom: 8px; }
+.u-mb-8 { margin-bottom: 8px; }
+.u-grid-gap-10 { display: grid; gap: 10px; }
+.u-grid-gap-8 { display: grid; gap: 8px; }
+.u-grid-gap-6 { display: grid; gap: 6px; }
+.u-grid-gap-0 { display: grid; gap: 0; }
+.u-flex-wrap { flex-wrap: wrap; }
+.u-flex-gap-8 { display: flex; gap: 8px; flex-wrap: wrap; }
+.u-flex-center-gap8 { display: flex; gap: 8px; align-items: center; }
+.u-flex-center-gap10 { display: flex; gap: 10px; align-items: center; }
+.u-flex-center-wrap10 { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.u-flex-center-wrap8 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.u-flex-center-wrap12 { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.u-flex-col-gap14 { display: flex; flex-direction: column; gap: 14px; }
+.u-cursor-pointer { cursor: pointer; }
+.u-accent-ac { accent-color: var(--ac-fill); }
+.u-hint-accent { border-inline-start: 3px solid var(--ac); padding-inline-start: 10px; }
+.u-checkbox-ac { margin-top: 3px; }
+.u-color-tx { color: var(--tx); }
+.u-color-tx2 { color: var(--tx2); }
+.u-fs-12 { font-size: 12px; }
+.u-fs-13 { font-size: 13px; }
+.u-fs-14 { font-size: 14px; }
+.u-fs-18 { font-size: 18px; }
+.u-fw-600 { font-weight: 600; }
+.u-btn-xs { padding: 4px 10px; font-size: 12px; }
+.u-btn-input-h { padding: 0 12px; height: 38px; }
+.u-max-w-140 { max-width: 140px; }
+.u-max-w-180 { max-width: 180px; }
+.u-max-w-260 { max-width: 260px; }
+.u-min-w-180 { min-width: 180px; }
+.u-items-start { align-items: flex-start; }
+.u-color-ok { color: var(--ok); }
+.u-flex-none { flex: none; }
+
+
+/* ---- Utility classes extracted from repeated inline styles (logical props for RTL) ---- */
+.u-text-center { text-align: center; }
+.u-w-full { width: 100%; }
+.u-col-full { grid-column: 1 / -1; }
+.u-col-span-2 { grid-column: span 2; }
+.u-ws-normal { white-space: normal; }
+.u-ml-5 { margin-inline-start: 5px; cursor: pointer; }
+.u-hint-12 { font-size: 12px; color: var(--mu); }
+.u-fs-16-tx { font-size: 16px; color: var(--tx); }
+.u-flex-wrap-gap8 { flex-wrap: wrap; gap: 8px; }
+.u-grid-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.u-check-row { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; }
+.u-label-up { font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--mu); }
+.u-label-up-block { font-size: 12px; text-transform: uppercase; color: var(--mu); display: block; margin-bottom: 4px; }
+.hashem-btn.u-btn-30 { height: 30px; padding: 0 12px; font-size: 12px; }
+.hashem-btn.u-btn-28 { height: 28px; padding: 0 10px; font-size: 12px; }
+.wd-stat-label.u-stat-label { font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--mu); letter-spacing: .05em; }
+.wd-stat-val.u-stat-val-ok { font-size: 17px; font-weight: 700; color: var(--ok); margin: 8px 0 4px 0; }
+.u-card-tint { border: 1px solid var(--ln); background: color-mix(in srgb, var(--bg) 80%, var(--s1)); }
+.u-peer-card-wide { grid-column: 1 / -1; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.u-peer-acts-bar { display: flex; gap: 6px; flex-wrap: wrap; border-top: 1px solid var(--ln); padding-top: 12px; }
+.badge.u-pill-sky, .bench-proto-pill.u-pill-sky { background: color-mix(in srgb, var(--info) 15%, transparent); color: var(--info); border: 1px solid color-mix(in srgb, var(--info) 30%, transparent); }
+.badge.u-pill-violet, .bench-proto-pill.u-pill-violet { background: color-mix(in srgb, var(--sc) 15%, transparent); color: var(--sc); border: 1px solid color-mix(in srgb, var(--sc) 30%, transparent); }
+
+/* ---- Touch targets: >=44x44 CSS px for every interactive control on coarse pointers ---- */
+@media (pointer: coarse) {
+  button, [role="button"], [role="tab"], .nav-item, .hashem-btn, .det-copy, .ent-x, .drawer-x, .menu-btn, summary, select,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { min-height: 44px; min-width: 44px; }
+  .u-check-row, label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { min-height: 44px; }
+  input[type="checkbox"], input[type="radio"] { min-width: 24px; min-height: 24px; }
+}

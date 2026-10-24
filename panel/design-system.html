@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hashem Panel — Enterprise Design System (Phase 1 Preview)</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="enterprise.css">
+<style>
+  body { padding: 28px 20px 80px; }
+  .ds-wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 20px; }
+  .ds-sec { background: var(--s1); border: 1px solid var(--ln); border-radius: 16px; padding: 20px; display: grid; gap: 14px; }
+  .ds-sec > h2 { font-size: var(--fs-h2); color: var(--tx); margin: 0; }
+  .ds-sec > p { color: var(--mu); font-size: var(--fs-body); margin: 0; }
+  .ds-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .ds-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  @media (max-width: 900px) { .ds-kpis { grid-template-columns: 1fr 1fr; } }
+  .ds-note { font-size: var(--fs-small); color: var(--dim); }
+  canvas.demo { width: 100%; height: 180px; display: block; }
+</style>
+</head>
+<body data-t="dark">
+<div class="ds-wrap">
+  <div>
+    <h1 style="color:var(--tx)">Enterprise Network Dashboard — Design System</h1>
+    <p class="ds-note">Phase 1 · Option C · additive <span class="ent-code">.ent-*</span> components · existing styles untouched</p>
+  </div>
+
+  <div class="ds-sec">
+    <h2>0 · Rules (2026-10 review against Apple's HIG)</h2>
+    <p>These hold for every screen; <span class="ent-code">panel/ui_a11y_test.go</span> and <span class="ent-code">panel/i18n_fa_test.go</span> enforce the ones a test can check.</p>
+    <ul>
+      <li><b>Color:</b> only tokens from <span class="ent-code">tokens.css</span>; one color, one meaning. Accent = primary action and current selection. Status colors = status only. Tints are <span class="ent-code">color-mix(var(--token) N%, transparent)</span>; white text sits on <span class="ent-code">--ac-fill</span> or a <span class="ent-code">--*-fill</span>. Text is at least 4.5:1 in both themes.</li>
+      <li><b>Type:</b> nothing below 12px; weights 400–700; numbers use tabular figures; Persian uses Vazirmatn one step larger.</li>
+      <li><b>Hierarchy:</b> one primary button per card; button labels in Title Case, descriptions in sentence case; one action keeps one name from button to dialog to confirmation.</li>
+      <li><b>Depth and motion:</b> two shadow levels (<span class="ent-code">--lift-sm</span>, <span class="ent-code">--lift</span>), no glows, no hover lifts; motion is brief and off under reduced motion.</li>
+      <li><b>Icons:</b> the SVG sprite in <span class="ent-code">index.html</span> (<span class="ent-code">#i-*</span>); no emoji.</li>
+      <li><b>Layout:</b> spacing on the 4/8 grid; utilities (<span class="ent-code">u-*</span>) instead of inline style; no horizontal scroll at 375px; card headers wrap.</li>
+      <li><b>States:</b> before setup nothing is red; empty states say what to do next; a result that never answered is not a recommendation.</li>
+      <li><b>Language:</b> UI source is English; Persian lives in <span class="ent-code">i18n-fa.js</span>; in RTL each text run takes its own direction and values sit in <span class="ent-code">&lt;bdi&gt;</span>.</li>
+      <li><b>Signature:</b> the topbar link strip (this server ⇄ the other side · engine · latency, one live dot) is the one distinctive element; everything around it stays quiet.</li>
+    </ul>
+  </div>
+
+  <div class="ds-sec">
+    <h2>1 · Color system</h2>
+    <p>Single accent hue (<span class="ent-code">--ac</span>, blue 217) + status quartet. Surfaces <span class="ent-code">--s1/--s2/--s3</span>, borders <span class="ent-code">--ln/--ln2</span>, text <span class="ent-code">--tx/--tx2/--mu/--dim</span> — dark default, light override, all body text ≥ 4.5:1.</p>
+    <div class="ds-row">
+      <span class="badge ok"><span class="dot"></span>Online</span>
+      <span class="badge err"><span class="dot"></span>Offline</span>
+      <span class="badge warn"><span class="dot"></span>Degraded</span>
+      <span class="badge info"><span class="dot"></span>Updating</span>
+      <span class="badge dim"><span class="dot"></span>Unknown</span>
+      <span class="ent-st on"><i></i>GRE up</span>
+      <span class="ent-st off"><i></i>GRE down</span>
+      <span class="ent-st warn"><i></i>High jitter</span>
+      <span class="ent-st err"><i></i>FRP auth failed</span>
+    </div>
+  </div>
+
+  <div class="ds-sec">
+    <h2>2 · Typography</h2>
+    <p>System stack + Vazirmatn, tabular numerals for every metric. Scale: H1 24 → caption 11 (Apple HIG minimum).</p>
+    <div>
+      <h1>Heading 1 — Tunnel Overview</h1>
+      <h2>Heading 2 — Peer detail</h2>
+      <h3>Heading 3 — Section title</h3>
+      <h4>Heading 4 — Card title</h4>
+      <p>Body 13px — packet loss increased from 0.4% → 6.8% during the last 15 minutes.</p>
+      <small>Caption 11px — checked 2026-09-26T17:11:03Z · 5s sample cadence</small>
+      <div class="kpi-val mono">92 / 100</div>
+      <div class="ent-label">Dense label <span class="ent-req">required</span></div>
+      <div class="ent-help">Help text under fields. <span class="ent-err-text">Error text is red.</span></div>
+      <div class="ent-code">E-FRP-02 · frps-2 · 10.11.0.1 · bindPort 7001</div>
+    </div>
+  </div>
+
+  <div class="ds-sec">
+    <h2>3 · KPI cards (dense)</h2>
+    <p>Same <span class="ent-code">.tunnel-card.kpi</span> markup, <span class="ent-code">.ent-dense</span> tightens rows and value size.</p>
+    <div class="ds-kpis ent-dense">
+      <div class="tunnel-card kpi"><div class="kpi-top"><span class="kpi-label">Total Traffic</span></div><div class="kpi-val mono">1.24 TB</div><div class="kpi-sub">↑ 820 GB · ↓ 420 GB</div></div>
+      <div class="tunnel-card kpi"><div class="kpi-top"><span class="kpi-label">Tunnel Status</span></div><div class="kpi-val"><span class="ent-st on"><i></i>2 / 3 up</span></div><div class="kpi-sub">any-leg-up rollup</div></div>
+      <div class="tunnel-card kpi"><div class="kpi-top"><span class="kpi-label">Links (GRE / FRP)</span></div><div class="kpi-val mono">3 / 3</div><div class="kpi-sub">GRE 3 · FRP 3</div></div>
+      <div class="tunnel-card kpi"><div class="kpi-top"><span class="kpi-label">Latency</span></div><div class="kpi-val mono">18 ms</div><div class="kpi-sub"><span class="pos">Excellent</span> · jitter 3 ms</div></div>
+    </div>
+  </div>
+
+  <div class="ds-sec">
+    <h2>4 · Sidebar / header / buttons</h2>
+    <p>Sidebar 232px, sections Overview → Tunnel → System, active rail = 3px accent bar. Header: title + role line + Refresh.</p>
+    <div class="ds-row">
+      <button class="hashem-btn hashem-btn-primary">Primary — Apply setup</button>
+      <button class="hashem-btn hashem-btn-secondary">Secondary — Restart GRE</button>
+      <button class="hashem-btn hashem-btn-danger">Danger — Remove tunnel</button>
+      <button class="hashem-btn hashem-btn-ghost">Ghost — Logout</button>
+    </div>
+    <div class="ds-row">
+      <input class="hashem-input" placeholder="Search peers…" style="max-width:260px">
+      <select class="hashem-select" style="max-width:200px"><option>All levels</option><option>Errors</option></select>
+    </div>
+  </div>
+
+  <div class="ds-sec">
+    <h2>5 · Tunnel table (peers, errors, future analytics)</h2>
+    <p>Sticky header, row hover, right-aligned numerics, mono for IPs/ports/codes. This is the pattern Phase 2 applies to peer cards + error history.</p>
+    <div class="ent-tbl-wrap" tabindex="0">
+      <table class="ent-tbl">
+        <thead><tr><th>Tunnel</th><th class="mono">Foreign IP</th><th class="mono">GRE</th><th class="num">Latency</th><th class="num">Loss</th><th>Status</th><th class="mono">Code</th></tr></thead>
+        <tbody>
+          <tr><td>germany-1</td><td class="mono">203.0.113.10</td><td class="mono">10.11.0.1</td><td class="num">18 ms</td><td class="num">0.2%</td><td><span class="ent-st on"><i></i>Up</span></td><td class="mono">—</td></tr>
+          <tr><td>france-1</td><td class="mono">198.51.100.7</td><td class="mono">10.12.0.1</td><td class="num">42 ms</td><td class="num">2.1%</td><td><span class="ent-st warn"><i></i>Degraded</span></td><td class="mono">E-GRE-02</td></tr>
+          <tr><td>netherlands-1</td><td class="mono">192.0.2.44</td><td class="mono">10.13.0.1</td><td class="num">—</td><td class="num">—</td><td><span class="ent-st err"><i></i>Auth failed</span></td><td class="mono">E-FRP-02</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="ds-sec">
+    <h2>6 · Chart standard</h2>
+    <p>Dark card, hairline grid, white download (glow) + faint upload, tooltip pattern, down-state = red banner + red card edge. Canvas stays dependency-free.</p>
+    <div class="ent-chart-wrap">
+      <canvas class="demo" id="demoChart"></canvas>
+    </div>
+    <div class="chart-legend"><span><i class="sw" style="background:#f4f4f5"></i>Download</span><span><i class="sw" style="background:rgba(244,244,245,.35)"></i>Upload</span></div>
+  </div>
+
+  <div class="ds-sec">
+    <h2>7 · Tunnel visualization</h2>
+    <p>Topology strip primitive for the future analyzer: node → animated link → node. Up = green flow, down = grey.</p>
+    <div class="ent-topo">
+      <div class="ent-topo-node"><b>Users</b><span>public ports</span></div>
+      <div class="ent-topo-link up"><svg viewBox="0 0 64 22" preserveAspectRatio="none"><line x1="0" y1="11" x2="56" y2="11" stroke="currentColor" stroke-width="1.5"/><path d="M50 6 L58 11 L50 16" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></div>
+      <div class="ent-topo-node"><b>Iran</b><span>203.0.113.1 · :443</span></div>
+      <div class="ent-topo-link up"><svg viewBox="0 0 64 22" preserveAspectRatio="none"><line x1="0" y1="11" x2="56" y2="11" stroke="currentColor" stroke-width="1.5"/><path d="M50 6 L58 11 L50 16" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></div>
+      <div class="ent-topo-node"><b>germany-1</b><span>GRE 18 ms · 0.2%</span></div>
+    </div>
+  </div>
+
+  <div class="ds-sec">
+    <h2>8 · Modal / notification / terminal (placeholder)</h2>
+    <p>Modal + typed toasts ship now; terminal gets the <span class="ent-code">.ent-code</span> surface + status row in Phase 3.</p>
+    <div class="ds-row">
+      <button class="hashem-btn hashem-btn-secondary" onclick="document.getElementById('demoModal').hidden=false">Open modal</button>
+      <button class="hashem-btn hashem-btn-secondary" onclick="demoToast('ok','Tunnel added','germany-1 · token shown in logs')">Toast: ok</button>
+      <button class="hashem-btn hashem-btn-secondary" onclick="demoToast('err','E-FRP-02 · auth failed','Re-copy the token from the Iran peer card')">Toast: error</button>
+    </div>
+    <div class="ent-tbl-wrap"><table class="ent-tbl"><tbody>
+      <tr><td class="mono">root@iran:~# grepanel status</td><td><span class="ent-st on"><i></i>connected</span></td></tr>
+    </tbody></table></div>
+  </div>
+
+  <div class="ds-sec">
+    <h2>9 · States</h2>
+    <p>Empty, loading (skeleton + spinner), error — every data surface must render one of these, never a blank card.</p>
+    <div class="ent-grid-2">
+      <div class="ent-empty"><span class="ent-empty-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg></span><b>No tunnels yet</b>Use Quick setup to connect your first foreign server.</div>
+      <div style="display:grid;gap:8px;align-content:start">
+        <div class="ent-skel" style="height:22px"></div>
+        <div class="ent-skel" style="height:14px;width:70%"></div>
+        <div class="ds-row"><span class="ent-spinner"></span><span class="ds-note">Loading traffic history…</span></div>
+        <div class="warnbox">E-FRP-03 · port 443 is already served by peer germany-1 — pick a different port.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="ent-modal-ov" id="demoModal" hidden>
+  <div class="ent-modal" role="dialog" aria-modal="true" aria-label="Demo modal">
+    <div class="ent-modal-h"><b>Remove tunnel?</b><button class="ent-x" onclick="document.getElementById('demoModal').hidden=true" aria-label="Close">×</button></div>
+    <div class="ent-modal-b"><p style="color:var(--tx2);margin:0">GRE + FRP for <span class="ent-code">germany-1</span> will be deleted; the panel stays. This is the future confirm pattern for destructive actions.</p></div>
+    <div class="ent-modal-f"><button class="hashem-btn hashem-btn-ghost" onclick="document.getElementById('demoModal').hidden=true">Cancel</button><button class="hashem-btn hashem-btn-danger" onclick="document.getElementById('demoModal').hidden=true">Remove</button></div>
+  </div>
+</div>
+<div id="entToasts"></div>
+
+<script>
+function demoToast(kind, title, sub) {
+  const box = document.getElementById('entToasts');
+  const el = document.createElement('div');
+  el.className = 'ent-toast ' + kind;
+  el.innerHTML = '<i></i><div><b></b><small></small></div>';
+  el.querySelector('b').textContent = title;
+  el.querySelector('small').textContent = sub;
+  box.appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+(function () {
+  const c = document.getElementById('demoChart'), ctx = c.getContext('2d');
+  const W = c.width = c.offsetWidth * 2, H = c.height = 360;
+  ctx.fillStyle = '#101014'; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = 'rgba(255,255,255,.06)'; ctx.lineWidth = 1;
+  for (let y = 0; y < H; y += 45) { ctx.beginPath(); ctx.moveTo(0, y + .5); ctx.lineTo(W, y + .5); ctx.stroke(); }
+  const line = (pts, style, glow) => {
+    ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+    ctx.strokeStyle = style; ctx.lineWidth = glow ? 4 : 2.5;
+    if (glow) { ctx.shadowColor = 'rgba(255,255,255,.55)'; ctx.shadowBlur = 14; }
+    ctx.stroke(); ctx.shadowBlur = 0;
+  };
+  const dl = [], ul = [];
+  for (let x = 0; x <= W; x += 14) {
+    dl.push([x, H * .42 + Math.sin(x / 60) * 44 + Math.sin(x / 17) * 16]);
+    ul.push([x, H * .62 + Math.cos(x / 55) * 30 + Math.sin(x / 23) * 10]);
+  }
+  line(ul, 'rgba(244,244,245,.35)', false);
+  line(dl, '#f4f4f5', true);
+})();
+try {
+  var t = localStorage.getItem('gre_theme') || 'dark';
+  document.body.dataset.t = t;
+} catch (e) {}
+</script>
+</body>
+</html>

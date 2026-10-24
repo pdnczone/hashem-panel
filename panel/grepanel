@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# grepanel — control the Hashem web panel after install.
+# Usage: grepanel <status|logs|restart|url|password|uninstall|optimize|restore|tune-status>
+set -euo pipefail
+
+PANEL_BIN="/usr/local/bin/gre-panel"
+CFG="/etc/gre-panel/panel.json"
+
+cmd="${1:-status}"
+case "$cmd" in
+  status)
+    systemctl is-active gre-panel 2>/dev/null || echo "panel service: not running"
+    echo "--- tunnels ---"
+    if [[ -f /etc/gre-panel/peers.json ]] && command -v python3 >/dev/null 2>&1; then
+      PEERS_F=/etc/gre-panel/peers.json python3 -c '
+import json,os,subprocess
+for p in sorted(json.load(open(os.environ["PEERS_F"])).get("peers",[]), key=lambda x: x["id"]):
+    frp = subprocess.run(["systemctl","is-active",p.get("frps_svc","")],capture_output=True,text=True).stdout.strip()
+    print(f"#{p["id"]} {p["name"]} ({p.get("remote_pub","?")}): {p.get("gre_if","")} + {p.get("frps_svc","")} -> {frp}")'
+    else
+      systemctl is-active gre-tunnel.service 2>/dev/null || echo "gre: not running"
+      systemctl is-active frps 2>/dev/null >/dev/null && echo "frps: active" || true
+      systemctl is-active frpc 2>/dev/null >/dev/null && echo "frpc: active" || true
+      ip tunnel show 2>/dev/null | grep -E "gre-tunnel" || echo "no gre-tunnel interface"
+    fi
+    ;;
+  logs)
+    journalctl -u gre-panel -n 50 --no-pager
+    ;;
+  restart)
+    systemctl restart gre-panel
+    systemctl is-active gre-panel
+    ;;
+  url)
+    if [[ ! -f "$CFG" ]]; then echo "panel not installed (no $CFG)"; exit 1; fi
+    port=$(grep -oE '"port":\s*[0-9]+' "$CFG" | grep -oE '[0-9]+')
+    base=$(grep -oE '"base_path":\s*"[^"]*"' "$CFG" | cut -d'"' -f4)
+    ip=$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}')
+    echo "http://${ip:-<this-server-ip>}:${port:-7777}/${base}/"
+    ;;
+  password)
+    shift || true
+    if [[ -x "$PANEL_BIN" ]]; then
+      exec "$PANEL_BIN" password "$@"
+    else
+      echo "gre-panel binary not found at $PANEL_BIN"
+      exit 1
+    fi
+    ;;
+  uninstall)
+    read -p "Remove gre-panel service + binary? (y/N): " c
+    [[ "$c" =~ ^[Yy]$ ]] || { echo "aborted"; exit 0; }
+    systemctl stop gre-panel 2>/dev/null || true
+    systemctl disable gre-panel 2>/dev/null || true
+    rm -f /etc/systemd/system/gre-panel.service "$PANEL_BIN"
+    systemctl daemon-reload
+    echo "gre-panel removed (config kept in /etc/gre-panel)"
+    ;;
+  optimize|restore|tune-status|peer-list)
+    # delegate to the installed hashem.sh (single source of truth for tuning)
+    for p in /usr/local/bin/hashem.sh /usr/local/bin/hashem /usr/local/bin/gre.sh /root/hashem.sh ./hashem.sh; do
+      if [[ -f "$p" ]]; then SCRIPT="$p"; break; fi
+    done
+    if [[ -z "${SCRIPT:-}" ]]; then echo "hashem.sh not found (expected /usr/local/bin/hashem.sh)"; exit 1; fi
+    exec bash "$SCRIPT" "$cmd"
+    ;;
+  *)
+    echo "Usage: grepanel <status|logs|restart|url|password|uninstall|optimize|restore|tune-status|peer-list>"
+    exit 1
+    ;;
+esac

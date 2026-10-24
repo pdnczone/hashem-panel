@@ -1,0 +1,57 @@
+name: Bug report
+description: Something does not work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Do not paste tokens, setup bundles (`hsh1_…`, `bh1_…`, `gh1_…` contain the token) or server IPs you want private.**
+        Security problems: do not file them here, see SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Hashem version
+      description: Output of `hashem` → System info, or `GET /api/version`
+      placeholder: v1.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine
+      options: [GRE+FRP, GRE+Backhaul, Backhaul standalone, Not sure]
+    validations:
+      required: true
+  - type: dropdown
+    id: carrier
+    attributes:
+      label: GRE carrier
+      options: [Direct GRE, WSS, Not applicable (no GRE), Not sure]
+    validations:
+      required: true
+  - type: input
+    id: code
+    attributes:
+      label: Error code shown by the panel
+      placeholder: E-FRP-10
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Last lines of `hashem logs` or `journalctl -u gre-panel`. Remove secrets first.
+      render: shell
+  - type: input
+    id: os
+    attributes:
+      label: OS and architecture
+      placeholder: Ubuntu 24.04 amd64

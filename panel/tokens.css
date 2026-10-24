@@ -1,0 +1,462 @@
+/* Hashem Tunnel — Design Tokens
+ * Minimal, Premium, Technical, Friendly
+ *
+ * Color roles (one color, one meaning):
+ *   surface  --bg, --s1, --s2, --s3, --sunk      layers, back to front
+ *   content  --tx, --tx2, --mu, --dim, --faint   text, strongest to quietest (all >= 4.5:1)
+ *   accent   --ac (text, rings), --ac-fill        primary action and current selection only
+ *   signal   --ok, --wr, --er, --info             status only; --*-fill carries white text
+ *   second   --sc                                 secondary series in charts and badges
+ * No hex values outside this file: tint with color-mix(in srgb, var(--token) N%, transparent).
+ */
+
+/* Baseline resets */
+button,input,select,textarea{font:inherit;color:inherit}
+svg{fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+[hidden]{display:none!important}
+/* Sprite icons (#i-* in index.html) size to the surrounding text. */
+.i{width:1.15em;height:1.15em;vertical-align:-.2em;flex:none;display:inline-block}
+input[type="checkbox"],input[type="radio"]{width:18px;height:18px;flex:none;accent-color:var(--ac-fill)}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%;-moz-text-size-adjust:100%;text-size-adjust:100%}
+
+/* Glass material — subtle, professional */
+/* Baseline typography scale & spacing rhythm */
+:root {
+  /* Typography scale — rem-based, Apple HIG consistent hierarchy */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", "Vazirmatn", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --fs-h1: 1.5rem;          /* 24px */
+  --lh-h1: 1.25;
+  --fw-h1: 700;
+
+  --fs-h2: 1.1875rem;       /* 19px */
+  --lh-h2: 1.3;
+  --fw-h2: 650;
+
+  --fs-h3: 1rem;            /* 16px */
+  --lh-h3: 1.35;
+  --fw-h3: 600;
+
+  --fs-h4: 0.875rem;        /* 14px */
+  --lh-h4: 1.4;
+  --fw-h4: 600;
+
+  --fs-body: 0.8125rem;     /* 13px */
+  --lh-body: 1.5;
+  --fw-body: 450;
+
+  --fs-small: 0.75rem;      /* 12px */
+  --lh-small: 1.45;
+  --fw-small: 500;
+
+  --fs-caption: 0.75rem;    /* 12px (project-wide minimum) */
+  --lh-caption: 1.4;
+  --fw-caption: 500;
+
+  /* Spacing scale — 4/8/12/16/24/32 rhythm */
+  --sp-1: 0.25rem;   /* 4px */
+  --sp-2: 0.5rem;    /* 8px */
+  --sp-3: 0.75rem;   /* 12px */
+  --sp-4: 1rem;      /* 16px */
+  --sp-5: 1.25rem;   /* 20px */
+  --sp-6: 1.5rem;    /* 24px */
+  --sp-8: 2rem;      /* 32px */
+  --sp-12: 3rem;     /* 48px */
+
+  /* Controls — one geometry for every button and field in the panel */
+  --ctl-h: 36px;
+  --ctl-r: 10px;
+  --ctl-px: 14px;
+  --ctl-fs: var(--fs-body);
+  --ctl-fw: 600;
+  --field: var(--s2);
+
+  /* Motion: brief, and only where it explains a change */
+  --dur-fast: .15s;
+  --dur: .25s;
+
+  /* Radius scale */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+
+  /* Soft status tints (badges, boxes) */
+  --ok-soft: color-mix(in srgb, var(--ok) 12%, transparent);
+  --wr-soft: color-mix(in srgb, var(--wr) 12%, transparent);
+  --er-soft: color-mix(in srgb, var(--er) 12%, transparent);
+  --info-soft: color-mix(in srgb, var(--info) 12%, transparent);
+
+  /* Status colors */
+  --ok: #22c55e;
+  --wr: #eab308;
+  --er: #f87171; /* red-400: 4.5:1+ as text on its own tint over dark cards */
+  --info: #38bdf8;
+  /* Solid status fills carrying white text, same in both themes (white on each >= 4.9:1). */
+  --info-fill: #0369a1;
+  --ok-fill: #047857;
+  --er-fill: #b91c1c;
+  --wr-fill: #a16207;
+  --sc-fill: #7c3aed;
+  /* Premium tier: champagne gold, not the warning yellow (11:1 on the dark sidebar). */
+  --gold: #e6c67e;
+  --gold-2: #c9a24f;
+  --gold-soft: color-mix(in srgb, var(--gold) 10%, transparent);
+  --gold-line: color-mix(in srgb, var(--gold) 34%, transparent);
+  --spring: cubic-bezier(.32, .72, 0, 1);
+  /* Accent — single identity color, derived tints. Dark & light share the hue. */
+  --accent-h: 217;
+  --accent-s: 91%;
+  --accent-l: 60%;
+  --ac: hsl(var(--accent-h) var(--accent-s) var(--accent-l));
+  --ac-on: #ffffff;
+  /* Fill behind --ac-on text; the default blue needs a darker fill for 4.5:1 (see enterprise.css). */
+  --ac-fill: var(--ac);
+  --ac-soft: color-mix(in srgb, var(--ac) 12%, transparent);
+  --ac-b30: color-mix(in srgb, var(--ac) 30%, transparent);
+  --ac-b22: color-mix(in srgb, var(--ac) 22%, transparent);
+  --ac-out70: color-mix(in srgb, var(--ac) 70%, transparent);
+  --wr-b40: color-mix(in srgb, var(--wr) 40%, transparent);
+  --ok-b40: color-mix(in srgb, var(--ok) 40%, transparent);
+  --ok-b50: color-mix(in srgb, var(--ok) 50%, transparent);
+  --er-b45: color-mix(in srgb, var(--er) 45%, transparent);
+  --ac-b35-ln2: color-mix(in srgb, var(--ac) 35%, var(--ln2));
+  --er-b25: color-mix(in srgb, var(--er) 25%, transparent);
+  --ok-badge-b: color-mix(in srgb, var(--ok) 30%, transparent);
+  --er-badge-b: color-mix(in srgb, var(--er) 30%, transparent);
+  --wr-badge-b: color-mix(in srgb, var(--wr) 35%, transparent);
+  --info-badge-b: color-mix(in srgb, var(--info) 30%, transparent);
+  --ac-btn-dark: color-mix(in srgb, var(--ac) 90%, black);
+  --er-btn-b40: color-mix(in srgb, var(--er) 40%, transparent);
+}
+
+/* Numbers line up in columns: metrics, IPs, ports, rates. */
+.kpi-val, .det-v, .mono, td, .badge, code, kbd { font-variant-numeric: tabular-nums; }
+
+/* Phones read at arm's length: larger body text. */
+@media (max-width: 640px) { :root { --fs-body: 0.9375rem; } }
+
+/* Glass material — subtle, professional */
+body{
+  --glass:color-mix(in srgb,var(--s1) 85%,transparent);
+  --glass-solid:color-mix(in srgb,var(--s1) 94%,transparent);
+  --glass-blur:blur(16px) saturate(140%);
+  --glass-edge:color-mix(in srgb,var(--tx) 10%,transparent);
+  --glass-lift:0 2px 8px rgba(0,0,0,.06),0 10px 30px rgba(0,0,0,.18);
+  --sc1:var(--ac);
+  --sc2:color-mix(in srgb,var(--ac) 38%,var(--mu));
+}
+@media (prefers-reduced-transparency:reduce){
+  body{--glass:var(--s1);--glass-solid:var(--s1);--glass-blur:none;
+       --glass-edge:var(--ln)}
+}
+@media (prefers-contrast:more){
+  body{--glass:var(--s1);--glass-solid:var(--s1);--glass-blur:none;
+       --glass-edge:var(--tx)}
+}
+
+/* Hashem Body Ground */
+body {
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--tx2);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+  transition: background .2s ease, color .2s ease;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--ac, #3b82f6) 28%, transparent);
+  color: inherit;
+}
+
+/* Hashem Dark Theme — Default matte premium feel (#09090B) */
+body[data-t="dark"], body {
+  color-scheme: dark;
+  --bg: #09090b;
+  --sidebar-bg: #09090b;
+  --topbar-bg: rgba(9, 9, 11, 0.82);
+  --s1: #121214;       /* Card surface */
+  --s2: #18181b;       /* Elevated card surface */
+  --s3: #222226;       /* Active/hover surface */
+  --sunk: rgba(255, 255, 255, 0.03);
+  
+  /* Crisp borders */
+  --ln: rgba(255, 255, 255, 0.07);
+  --ln2: rgba(255, 255, 255, 0.12);
+  --ln3: #27272a;
+  
+  /* High-contrast Typography (all >= 4.5:1 on all surfaces) */
+  --tx: #f4f4f5;   /* Pure white/bright - titles & metrics (14.4:1 - 18.1:1) */
+  --tx2: #e4e4e7;  /* High contrast text / body (12.5:1 - 15.7:1) */
+  --mu: #a1a1aa;   /* Muted gray - labels (6.2:1 - 7.8:1) */
+  --dim: #8e8e98;  /* Secondary notes & captions (4.9:1 - 6.1:1) */
+  --faint: #888893;/* Subtle timestamps & inactive text (4.52:1 - 5.7:1) */
+  
+  --lift: 0 4px 20px rgba(0, 0, 0, 0.5);
+  --lift-sm: 0 1px 3px rgba(0, 0, 0, 0.25);
+
+  --ac-hover: color-mix(in srgb, var(--ac-fill) 90%, #ffffff);
+  --ac-subtle: rgba(255, 255, 255, 0.06);
+  --neon-blue: #60a5fa;
+  --sc: #a855f7;
+  --field: var(--s2);
+}
+
+/* Hashem Light Theme — High-contrast semantic override */
+:root[data-t="light"], body[data-t="light"] {
+  color-scheme: light;
+  --bg: #f2f2f2;
+  --sidebar-bg: #ffffff;
+  --topbar-bg: rgba(255, 255, 255, 0.85);
+  --s1: #ffffff;
+  --s2: #fafafa;
+  --s3: #f4f4f4;
+  --sunk: rgba(0, 0, 0, 0.03);
+
+  --ln: rgba(0, 0, 0, 0.08);
+  --ln2: rgba(0, 0, 0, 0.14);
+  --ln3: #e4e4e7;
+
+  /* High-contrast Typography (all >= 4.5:1 on all light surfaces) */
+  --tx: #18181b;   /* Deep charcoal titles & metrics (15.8:1 - 17.7:1) */
+  --tx2: #27272a;  /* High contrast body (13.3:1 - 14.9:1) */
+  --mu: #52525b;   /* Muted gray - labels (6.9:1 - 7.7:1) */
+  --dim: #5f6368;  /* Secondary notes & captions (5.4:1 - 6.1:1) */
+  --faint: #686b72;/* Subtle timestamps & inactive text (4.77:1 - 5.3:1) */
+
+  --lift: 0 4px 20px rgba(0, 0, 0, 0.08);
+  --lift-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+
+  --ac-hover: color-mix(in srgb, var(--ac-fill) 88%, #000000);
+  --ac-subtle: rgba(0, 0, 0, 0.05);
+  --neon-blue: #2563eb;
+  --sc: #9333ea;
+  --field: var(--s1);
+
+  /* Status colors are also text: >= 4.7:1 on their own 12% tint over #f2f2f2. */
+  --ok: #166534;
+  --wr: #854d0e;
+  --er: #b91c1c;
+  --info: #075985;
+  --gold: #7a5a14; /* 6.4:1 on white */
+  --gold-2: #9c7426;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--ln2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ln3); }
+
+/* Global Button & Control Tokens */
+.hashem-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: var(--ctl-h);
+  padding: 0 var(--ctl-px);
+  border-radius: var(--ctl-r);
+  font-size: var(--ctl-fs);
+  font-weight: var(--ctl-fw);
+  transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease, color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+  cursor: pointer;
+  white-space: nowrap; /* a label that wraps reads as two buttons */
+  border: 1px solid transparent;
+  text-decoration: none;
+}
+.hashem-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--ac);
+}
+
+.hashem-btn-primary {
+  background:var(--ac-fill);
+  color:var(--ac-on);
+  border-color:transparent;
+  box-shadow:var(--lift-sm), inset 0 1px 0 rgba(255,255,255,.12);
+}
+.hashem-btn-primary:hover {
+  background:var(--ac-hover);
+  box-shadow:var(--lift-sm), inset 0 1px 0 rgba(255,255,255,.12);
+}
+
+.hashem-btn-secondary {
+  background:var(--s2);
+  color:var(--tx2);
+  border:1px solid var(--ln2);
+  box-shadow:var(--lift-sm);
+}
+.hashem-btn-secondary:hover {
+  background:var(--s3);
+  color:var(--tx);
+  border-color:var(--ac-b35-ln2);
+}
+
+.hashem-btn-danger {
+  background: color-mix(in srgb, var(--er) 10%, transparent);
+  color: var(--er);
+  border: 1px solid var(--er-b25);
+}
+.hashem-btn-danger:hover {
+  background: color-mix(in srgb, var(--er) 20%, transparent);
+}
+
+.hashem-btn-ghost {
+  background: transparent;
+  color: var(--mu);
+}
+.hashem-btn-ghost:hover {
+  color: var(--tx);
+  background: var(--sunk);
+}
+
+/* Form Controls */
+.hashem-input, .hashem-select {
+  height:var(--ctl-h);
+  width:100%;
+  padding:0 var(--ctl-px);
+  background:var(--field);
+  border:1px solid var(--ln);
+  border-radius:var(--ctl-r);
+  font-size:var(--ctl-fs);
+  color:var(--tx2);
+  outline:none;
+  transition:border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease, background var(--dur-fast) ease;
+}
+.hashem-input::placeholder {
+  color:var(--dim);
+}
+.hashem-input:hover { border-color:var(--ln2); }
+.hashem-input:focus, .hashem-select:focus {
+  border-color:var(--ac);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--ac) 18%, transparent);
+}
+
+/* Quick Create & Action Buttons in Sidebar */
+.sidebar-action {
+  padding: var(--sp-3) var(--sp-4) var(--sp-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.quick-create-btn {
+  flex: 1;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--tx);
+  color: var(--bg);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-4);
+  border: none;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: var(--lift-sm);
+}
+
+.quick-create-btn:hover {
+  background: color-mix(in srgb, var(--tx) 88%, var(--ac));
+  box-shadow: var(--lift);
+}
+
+.quick-create-btn svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2.2;
+}
+
+.quick-action-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--sunk);
+  border: 1px solid var(--ln);
+  color: var(--mu);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.quick-action-btn:hover {
+  background: var(--s3);
+  color: var(--tx);
+  border-color: var(--ln2);
+}
+
+.quick-action-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Trend Pill Badges */
+.stat-pill-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  padding: 3px var(--sp-2);
+  border-radius: 9999px;
+  background: var(--sunk);
+  border: 1px solid var(--ln2);
+  color: var(--tx2);
+  letter-spacing: 0.01em;
+}
+
+.stat-pill-badge.trend-up {
+  color: var(--tx);
+}
+
+.stat-pill-badge.trend-down {
+  color: var(--dim);
+}
+
+.stat-pill-badge svg {
+  width: 11px;
+  height: 11px;
+  stroke-width: 2.2;
+}
+
+/* Enterprise Network Dashboard — density + data surfaces (Phase 1, additive only) */
+:root {
+  --ent-w-sidebar: 232px;
+  --ent-w-page: 1180px;
+  --ent-gap: 12px;
+  --ent-gap-lg: 16px;
+  --ent-row-h: 40px;
+  --ent-kpi-val: 22px;
+  --ent-tbl-head-fs: 12px;
+  --ent-tbl-fs: 12.5px;
+  --ent-code-fs: 12px;
+  --ent-chart-grid: rgba(255,255,255,.06);
+  --ent-chart-axis: var(--mu);
+  --ent-modal-bg: rgba(0,0,0,.55);
+  --ent-toast-w: min(92vw, 420px);
+  --ent-focus: color-mix(in srgb, var(--ac) 70%, transparent);
+}
+/* One focus ring for every control, whichever family it belongs to: the
+   keyboard path has to look the same on the dashboard and in a dialog. */
+.hashem-btn:focus-visible,
+.hashem-input:focus-visible,
+.hashem-select:focus-visible,
+.dlg .btn2:focus-visible,
+.dlg .btn6:focus-visible,
+.dlg .nb:focus-visible,
+.dlg .mini:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--ac);
+}
