@@ -79,6 +79,7 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/pathtest` | session + CSRF | `handlePathTestPost` |
 | `POST` | `/api/peer/apply-carrier` | peer secret (or session) | `handlePeerApplyCarrier` |
 | `POST` | `/api/peer/apply-engine` | peer secret (or session) | `handlePeerApplyEngine` |
+| `POST` | `/api/peer/carrier-info` | peer secret (or session) | `handlePeerCarrierInfo` |
 | `GET` | `/api/peer/config` | session | `handlePeerConfigGet` |
 | `POST` | `/api/peer/config` | session + CSRF | `handlePeerConfigPost` |
 | `POST` | `/api/peer/handshake` | peer secret (or session) | `handlePeerHandshake` |
@@ -153,4 +154,4 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/xray` | session + CSRF | `handleXrayPost` |
 | `GET` | `/metrics` | none | `handleMetrics` |
 
-Total: 129 routes.
+Total: 130 routes.
