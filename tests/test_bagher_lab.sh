@@ -45,14 +45,31 @@ TMP=$(mktemp -d /tmp/bagher-lab.XXXXXX)
 chmod 755 "$TMP"
 pids=()
 set +m
+# the job log needs auth; annotations are public. Sent on every exit, an early
+# one included, with the last lines the script printed to stderr.
+report() {
+    [[ -n ${GITHUB_ACTIONS:-} ]] || return 0
+    local rc=$1 bad=0 msg
+    (( rc || ${fail:-1} )) && bad=1
+    { cat "$TMP/result.txt" 2>/dev/null
+      if (( bad )); then
+          echo "--- exit $rc"; echo "--- stderr"; tail -n 8 "$TMP/stderr.log" 2>/dev/null
+          echo "--- carrier1.log"; tail -n 10 "$TMP/carrier1.log" 2>/dev/null; echo "--- carrier2.log"; tail -n 6 "$TMP/carrier2.log" 2>/dev/null
+          echo "--- legacy.log"; tail -n 5 "$TMP/legacy.log" 2>/dev/null; echo "--- frpc.log"; tail -n 10 "$TMP/frpc.log" 2>/dev/null
+      fi; } > "$TMP/report.txt"
+    msg=$(tail -c 6000 "$TMP/report.txt" | sed -e 's/%/%25/g' | sed -e ':a;N;$!ba;s/\n/%0A/g' -e 's/\r/%0D/g')
+    echo "::$( ((bad)) && echo error || echo notice) title=Bagher lab::$msg"
+}
 cleanup() {
-    local p
+    local rc=$? p
+    report "$rc"
     for p in "${pids[@]:-}"; do [[ -n $p ]] && { pkill -9 -P "$p"; kill -9 "$p"; wait "$p"; } 2>/dev/null; done
     for ns in $IR $FO $FO2 $US; do ip netns pids "$ns" 2>/dev/null | xargs -r kill -9 2>/dev/null; ip netns del "$ns" 2>/dev/null; done
     [[ -n ${BAGHER_LAB_LOGDIR:-} ]] && { mkdir -p "$BAGHER_LAB_LOGDIR"; cp "$TMP"/*.log "$TMP"/*.toml "$TMP"/*.json "$TMP"/authorized_keys* "$BAGHER_LAB_LOGDIR"/ 2>/dev/null; }
     rm -rf "$TMP"
 }
 trap cleanup EXIT
+exec 2> >(tee -a "$TMP/stderr.log" >&2)
 for ns in $IR $FO $FO2 $US; do ip netns del "$ns" 2>/dev/null; done
 ip netns add $IR 2>/dev/null || { echo "SKIP test_bagher_lab (no netns permission)"; exit 0; }
 ip netns add $FO && ip netns add $FO2 && ip netns add $US || { echo "SKIP test_bagher_lab (netns)"; exit 0; }
@@ -315,10 +332,4 @@ t0=$(date +%s)
 if wait_for 240 tunnel_up; then ok "recovers after a 60s Iran<->Foreign outage ($(( $(date +%s) - t0 ))s after the link returned)"
 else bad "no recovery within 240s after a 60s outage"; echo "--- carrier1.log"; tail -n 15 "$TMP/carrier1.log"; echo "--- sshd1.log"; tail -n 15 "$TMP/sshd1.log"; fi
 
-# the job log needs auth; annotations are public
-if [[ -n ${GITHUB_ACTIONS:-} ]]; then
-    { cat "$TMP/result.txt"; (( fail )) && { echo "--- carrier1.log"; tail -n 10 "$TMP/carrier1.log"; echo "--- legacy.log"; tail -n 5 "$TMP/legacy.log"; echo "--- frpc.log"; tail -n 10 "$TMP/frpc.log"; }; } > "$TMP/report.txt"
-    msg=$(tail -c 6000 "$TMP/report.txt" | sed -e 's/%/%25/g' | sed -e ':a;N;$!ba;s/\n/%0A/g' -e 's/\r/%0D/g')
-    echo "::$([[ $fail -eq 0 ]] && echo notice || echo error) title=Bagher lab::$msg"
-fi
 [[ $fail -eq 0 ]] && echo "PASS test_bagher_lab" || { echo "--- carrier1.log"; tail -n 10 "$TMP/carrier1.log"; echo "--- frpc.log"; tail -n 10 "$TMP/frpc.log"; exit 1; }
