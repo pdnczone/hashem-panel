@@ -5070,12 +5070,14 @@ print(json.dumps(nums))
 import json, os, sys
 f = os.environ["PEERS_F"]
 iid, name, lip, rip, fport, tok, lgre, pgre, pjson, gif, svc, eng, trans, nogre, raw_p = sys.argv[1:]
+# raw_ports is a list: a string here failed the panel's peers.json decode
+raw_list = [x for x in raw_p.replace(",", " ").split() if x]
 d = json.load(open(f))
 d.setdefault("peers", []).append({
   "id": int(iid), "name": name, "local_pub": lip, "remote_pub": rip,
   "frp_port": int(fport), "token": tok, "local_gre": lgre, "peer_gre": pgre,
   "ports": json.loads(pjson), "gre_if": gif, "frps_svc": svc, "legacy": False,
-  "engine": eng, "transport": trans, "no_gre": nogre == "1", "raw_ports": raw_p
+  "engine": eng, "transport": trans, "no_gre": nogre == "1", "raw_ports": raw_list
 })
 json.dump(d, open(f, "w"), indent=2)
 PYEOF
