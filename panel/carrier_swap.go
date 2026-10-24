@@ -1322,13 +1322,22 @@ func swapBundle(t swapTunnel, to carrierChoice) string {
 // GET /api/tunnel/swap?id=N[&probe=1]
 func handleSwapGet(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.URL.Query().Get("id"))
-	t, err := resolveSwapTunnel(id)
+	probe := r.URL.Query().Get("probe") == "1"
+	resp := swapView(id, probe)
+	if fs, _ := resp["foreign_side"].(bool); fs {
+		resp = foreignSwapView(id, probe)
+	}
+	writeJSON(w, resp)
+}
+
+// swapView is what the swap dialog needs about tunnel id on this server.
+func swapView(id int, probe bool) map[string]any {
 	resp := map[string]any{"id": id}
+	t, err := resolveSwapTunnel(id)
 	if err != nil {
 		resp["error"] = err.Error()
 		resp["foreign_side"] = errors.Is(err, errSwapForeign)
-		writeJSON(w, resp)
-		return
+		return resp
 	}
 	resp["tunnel"] = t
 	resp["current"] = t.Current.ID()
@@ -1337,14 +1346,14 @@ func handleSwapGet(w http.ResponseWriter, r *http.Request) {
 	if j := swapJobView(t.ID); j != nil {
 		resp["job"] = j
 	}
-	if r.URL.Query().Get("probe") == "1" {
+	if probe {
 		_, perr := swapCall(t, "POST", "/api/peer/ping", map[string]string{"action": "ping"}, 6*time.Second)
 		resp["follow"] = perr == nil
 		if perr != nil {
 			resp["follow_error"] = perr.Error()
 		}
 	}
-	writeJSON(w, resp)
+	return resp
 }
 
 // POST /api/tunnel/swap {"id": N, "carrier": "backhaul:wssmux", "manual": false}
@@ -1364,10 +1373,19 @@ func handleSwapPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t, err := resolveSwapTunnel(req.ID)
+	if errors.Is(err, errSwapForeign) {
+		relaySwapToIran(w, r, to)
+		return
+	}
 	if err != nil {
 		writeAPIError(w, r, "E-ACTION-01", err.Error())
 		return
 	}
+	startSwapOn(w, r, t, to, req.Manual)
+}
+
+// startSwapOn checks that tunnel t can move to carrier to and starts the swap.
+func startSwapOn(w http.ResponseWriter, r *http.Request, t swapTunnel, to carrierChoice, manual bool) {
 	if to == t.Current {
 		writeAPIError(w, r, "E-ACTION-01", "the tunnel already runs on "+carrierLabel(to))
 		return
@@ -1387,10 +1405,205 @@ func handleSwapPost(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, "E-ENGINE-01", bin+" is not installed on this server (install it with `hashem` first); nothing was changed")
 		return
 	}
-	j, err := startSwap(t, to, req.Manual)
+	j, err := startSwap(t, to, manual)
 	if err != nil {
 		writeAPIError(w, r, "E-ACTION-01", err.Error())
 		return
 	}
 	writeJSON(w, map[string]any{"status": "started", "job": j})
+}
+
+// ---- swapping from the foreign server ----
+//
+// The foreign panel cannot run a swap itself: the Iran side holds the ports,
+// the tokens and the other tunnels. It asks the Iran server instead, which
+// runs the swap as if it was started there (the foreign server is told
+// first, both switch, both go back when the tunnel does not reconnect). The
+// Iran server knows the caller by its secret: the Peer Link secret is the
+// main tunnel, a peer's own token that peer's tunnel.
+
+var errOldIranPanel = errors.New("the Iran server runs an older panel without this request: update it, or do this from the Iran server")
+
+// peerCallJSON sends one request to the Iran server over the Peer Link and
+// stops at the first JSON answer, whatever its status, so a request that
+// starts something is never sent twice. Status 404 with no data: no address
+// knew the route (an older panel). A var so tests never reach a real panel.
+var peerCallJSON = peerCallJSONReal
+
+func peerCallJSONReal(method, path string, payload any, timeout time.Duration) (int, []byte, error) {
+	c := loadPeerConfig()
+	if c.PeerSecret == "" {
+		return 0, nil, errNoPeerLink
+	}
+	var body []byte
+	if payload != nil {
+		var err error
+		if body, err = json.Marshal(payload); err != nil {
+			return 0, nil, err
+		}
+	}
+	tr := &http.Transport{TLSClientConfig: peerTLSConfig(&c)}
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Timeout: timeout, Transport: tr,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	var lastErr error
+	notFound := false
+	dead := map[string]bool{}
+	for _, target := range peerTargetURLs(c, path) {
+		host := target
+		if i := strings.Index(host, "://"); i >= 0 {
+			host = host[i+3:]
+		}
+		if i := strings.Index(host, "/"); i >= 0 {
+			host = host[:i]
+		}
+		if dead[host] {
+			continue
+		}
+		req, err := http.NewRequest(method, target, bytes.NewReader(body))
+		if err != nil {
+			return 0, nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Peer-Secret", c.PeerSecret)
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			dead[host] = true
+			continue
+		}
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		_ = resp.Body.Close()
+		if json.Valid(data) {
+			markPeerSeen()
+			return resp.StatusCode, data, nil
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			notFound = true
+		}
+	}
+	if notFound {
+		return http.StatusNotFound, nil, nil
+	}
+	if lastErr == nil {
+		lastErr = errNoPeerLink
+	}
+	return 0, nil, lastErr
+}
+
+// peerAnswerErr is the error an Iran panel answered with.
+func peerAnswerErr(data []byte) error {
+	var v struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(data, &v) == nil && v.Error != "" {
+		return errors.New(v.Error)
+	}
+	return fmt.Errorf("the Iran server answered: %s", truncateForError(data))
+}
+
+// foreignSwapView is the swap dialog on a foreign server: the Iran server's
+// view of this tunnel, minus what this server lacks.
+func foreignSwapView(id int, probe bool) map[string]any {
+	path := "/api/peer/swap-request"
+	if probe {
+		path += "?probe=1"
+	}
+	fail := func(err error) map[string]any {
+		return map[string]any{"id": id, "foreign_side": true, "error": err.Error()}
+	}
+	status, data, err := peerCallJSON("GET", path, nil, 12*time.Second)
+	switch {
+	case err != nil:
+		return fail(fmt.Errorf("the Iran server's panel cannot be reached from here (%v): swap the carrier from the Iran server", err))
+	case status == http.StatusNotFound && data == nil:
+		return fail(errOldIranPanel)
+	case status != http.StatusOK:
+		return fail(peerAnswerErr(data))
+	}
+	var v map[string]any
+	if json.Unmarshal(data, &v) != nil {
+		return fail(errors.New("the Iran server's answer could not be read"))
+	}
+	if e, _ := v["error"].(string); e != "" {
+		return fail(errors.New(e))
+	}
+	v["id"] = id
+	v["via_iran"] = true
+	// Both servers run the new engine: frps there, frpc here.
+	if bins, ok := v["bins"].(map[string]any); ok {
+		here := map[string]string{"frps": "frpc", "backhaul": "backhaul"}
+		for k, b := range bins {
+			bins[k] = b == true && engineBinaryPresent(here[k])
+		}
+	}
+	if cur, _ := v["current"].(string); strings.HasPrefix(cur, "frp:") && !hasPro(proBackhaul) {
+		v["backhaul_pro"] = false
+	}
+	return v
+}
+
+// relaySwapToIran asks the Iran server to swap this tunnel's carrier.
+func relaySwapToIran(w http.ResponseWriter, r *http.Request, to carrierChoice) {
+	if backhaulLocked(to.Engine) && proRequired(w, r, proBackhaul, "Backhaul") {
+		return
+	}
+	bin := "frpc"
+	if to.Engine != "frp" {
+		bin = "backhaul"
+	}
+	if !engineBinaryPresent(bin) {
+		writeAPIError(w, r, "E-ENGINE-01", bin+" is not installed on this server (install it with `hashem` first); nothing was changed")
+		return
+	}
+	status, data, err := peerCallJSON("POST", "/api/peer/swap-request", map[string]string{"carrier": to.ID()}, 20*time.Second)
+	switch {
+	case err != nil:
+		writeAPIError(w, r, "E-ACTION-01", "the Iran server's panel cannot be reached from here ("+err.Error()+"): swap the carrier from the Iran server")
+		return
+	case status == http.StatusNotFound && data == nil:
+		writeAPIError(w, r, "E-ACTION-01", errOldIranPanel.Error())
+		return
+	case status != http.StatusOK:
+		writeAPIError(w, r, "E-ACTION-01", peerAnswerErr(data).Error())
+		return
+	}
+	LogSecurityAudit("carrier_swap_requested", "admin", ClientIP(r), "to="+to.ID())
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(data)
+}
+
+// swapCallerTunnel is the tunnel whose foreign server sent r: a peer's token
+// names that peer, the Peer Link secret the main tunnel.
+func swapCallerTunnel(r *http.Request) int {
+	id, _ := r.Context().Value(tunnelCtxKey{}).(int)
+	return id
+}
+
+// GET /api/peer/swap-request[?probe=1] (Iran side)
+func handlePeerSwapRequestGet(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, swapView(swapCallerTunnel(r), r.URL.Query().Get("probe") == "1"))
+}
+
+// POST /api/peer/swap-request {"carrier": "backhaul:wssmux"} (Iran side)
+func handlePeerSwapRequest(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Carrier string `json:"carrier"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&req); err != nil {
+		writeAPIError(w, r, "E-ACTION-01", "invalid json")
+		return
+	}
+	to, err := parseCarrierChoice(req.Carrier)
+	if err != nil {
+		writeAPIError(w, r, "E-ACTION-01", err.Error())
+		return
+	}
+	t, err := resolveSwapTunnel(swapCallerTunnel(r))
+	if err != nil {
+		writeAPIError(w, r, "E-ACTION-01", err.Error())
+		return
+	}
+	log.Printf("[PeerSync] the foreign server of tunnel %d asks for a carrier swap to %s", t.ID, to.ID())
+	startSwapOn(w, r, t, to, false)
 }

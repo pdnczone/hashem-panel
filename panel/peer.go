@@ -270,13 +270,19 @@ func mountPeerRoutes(mux *http.ServeMux, base string) {
 		{"GET", "/api/peer/status", handlePeerStatus},
 		{"POST", "/api/peer/swap-carrier", handlePeerSwapCarrier},
 		{"GET", "/api/peer/swap-status", handlePeerSwapStatus},
+		{"GET", "/api/peer/swap-request", handlePeerSwapRequestGet},
+		{"POST", "/api/peer/swap-request", handlePeerSwapRequest},
+		{"GET", "/api/peer/wrap-request", handlePeerWrapStatus},
+		{"POST", "/api/peer/wrap-request", handlePeerWrapRequest},
 	}
 	for _, rt := range routes {
 		mux.HandleFunc(rt.method+" "+base+rt.path, requirePeerAuth(rt.h))
 		guard := requirePeerSecretHidden
-		if rt.path == "/api/peer/handshake" || rt.path == "/api/peer/ping" {
+		switch rt.path {
+		case "/api/peer/handshake", "/api/peer/ping", "/api/peer/swap-request", "/api/peer/wrap-request":
 			// A peer's foreign server knows its own tunnel token, not the
-			// Peer Link secret: it may still say where its panel answers.
+			// Peer Link secret: it may still say where its panel answers,
+			// and ask for a swap of its own tunnel.
 			guard = requireTunnelSecretHidden
 		}
 		mux.HandleFunc(rt.method+" "+peerRoutePrefix+rt.path, guard(rt.h))

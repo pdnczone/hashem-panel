@@ -26,6 +26,7 @@
 
 ## Table of contents
 
+- [What's new in v2.7.0](#whats-new-in-v270)
 - [What's new in v2.6.0](#whats-new-in-v260)
 - [What's new in v2.5.0](#whats-new-in-v250)
 - [What is Hashem?](#what-is-hashem)
@@ -51,6 +52,18 @@
 - [License](#license)
 
 ---
+
+## What's new in v2.7.0
+
+- 🌐 **IPv6 in every tunnel.** Users reach the Iran ports over IPv6 and IPv4 at once (Backhaul, FRP, Bagher, Xray), and Backhaul without GRE, Bagher, Xray and WSS can connect the two servers over IPv6. Limits, traffic counters, rescue, the path test and cluster DNS (AAAA) cover IPv6 too. [Guide](docs/IPV6.md).
+- 🧅 **Two new GRE wraps: 6to4 and 4in6.** 6to4 runs GRE on a private IPv6 between the IPv4 addresses (protocol 41), for networks that drop 47 but pass 41; 4in6 runs GRE over the servers' real IPv6. FRP and Backhaul over GRE keep working unchanged, both servers switch together, and a wrap that stays silent for 45 s is undone on both.
+- 🛰️ **Xray tunnel [PRO].** Reality, XHTTP, gRPC or mKCP, direct or reverse, through Cloudflare if you like, with a three-step wizard, a live picture of the link and an SNI tester. Its own Xray-core: it never touches 3x-ui, Marzban or Hiddify. [Guide](docs/XRAY_TUNNEL.md).
+- 🚦 **Speed and volume limits per foreign server [PRO]**, with a monthly reset, a cut when the volume is used up and alerts at 90%.
+- ⚡ **Bagher: lower ping and several foreign servers** on one Iran server, each with its own SSH carrier, ports and bundle.
+- 📊 **Traffic you can trust:** no more jumps in the total, live speeds that were up to 5× too high, and Bagher and Backhaul without GRE counted per link.
+- 🔀 **Change the carrier from the foreign server too:** the Iran server runs the change on both servers.
+
+Full list: [CHANGELOG](CHANGELOG.md).
 
 ## What's new in v2.6.0
 

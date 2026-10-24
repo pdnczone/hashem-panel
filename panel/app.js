@@ -1619,7 +1619,7 @@ function renderTunnel(st) {
       </div>
       <div class="peer-acts u-peer-acts-bar">
         ${usesGre ? `<button class="hashem-btn hashem-btn-secondary u-btn-30" data-peer-act="ping-0" onclick="peerAct('ping', 0)">${esc(tr('', 'Ping'))}</button>` : ''}
-        ${isIran && st.carrier_id ? `<button class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openSwap(0)">${esc(tr('', 'Swap carrier'))}</button>` : ''}
+        ${st.carrier_id ? `<button class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openSwap(0)">${esc(tr('', 'Swap carrier'))}</button>` : ''}
         <button class="hashem-btn hashem-btn-secondary u-btn-30" onclick="editMainPortsClick()">${esc(tr('', 'Edit Tunnel'))}</button>
         ${isIran ? `<button class="hashem-btn hashem-btn-secondary u-btn-30" onclick="copyMainIranBundle()">${esc(tr('', 'Copy Bundle'))}</button>` : ''}
         ${usesGre ? `<button class="hashem-btn hashem-btn-secondary u-btn-30" data-peer-act="restart-gre-0" onclick="peerAct('restart-gre', 0)">${esc(tr('', 'Restart GRE'))}</button>` : ''}
@@ -5111,7 +5111,7 @@ function renderCarriers() {
   const hint = $('carriersHint');
   if (hint) hint.textContent = iran
     ? tr('', 'How each tunnel travels. When a network starts blocking or slowing one, swap it: both servers switch, and if the new carrier does not connect they go back on their own.')
-    : tr('', 'How this tunnel travels. Carriers are swapped from the Iran server; this server follows on its own.');
+    : tr('', 'How this tunnel travels. Swap it here or on the Iran server: the Iran server switches both, and if the new carrier does not connect they go back on their own.');
   box.innerHTML = rows.map(r => {
     const [eng, t] = r.carrier.split(':');
     const fam = SW_FAMS.find(f => f.eng === eng) || {};
@@ -5123,7 +5123,7 @@ function renderCarriers() {
       <span class="cr-dot" aria-hidden="true"></span>
       <div class="cr-id"><b>${esc(r.name)}</b><small>${esc(r.ip)}</small></div>
       <div class="cr-car"><span class="cr-eng" data-no-i18n>${esc(fam.name || eng)}</span><b data-no-i18n>${esc(o[1] || (t || '').toUpperCase())}</b><span class="cr-tags" data-no-i18n>${tags}</span></div>
-      ${iran ? `<button class="hashem-btn ${busy ? 'hashem-btn-ghost' : 'hashem-btn-secondary'} u-btn-30" onclick="openSwap(${r.id})">${busy ? '<span class="ent-spinner"></span> ' + esc(tr('', 'Swapping…')) : esc(tr('', 'Swap'))}</button>` : ''}
+      <button class="hashem-btn ${busy ? 'hashem-btn-ghost' : 'hashem-btn-secondary'} u-btn-30" onclick="openSwap(${r.id})">${busy ? '<span class="ent-spinner"></span> ' + esc(tr('', 'Swapping…')) : esc(tr('', 'Swap'))}</button>
     </div>`;
   }).join('');
 }
@@ -5148,7 +5148,7 @@ async function openSwap(id) {
   }
   if (!_sw || _sw.id !== id) return;
   if (r.error) {
-    $('swapBody').innerHTML = `<div class="sw-result warn">${esc(tr('', r.foreign_side ? 'Swap the carrier from the Iran server: it switches this server too.' : r.error))}</div>`;
+    $('swapBody').innerHTML = `<div class="sw-result warn">${esc(r.error)}</div>`;
     return;
   }
   _sw.info = r;
@@ -5179,9 +5179,11 @@ function closeSwap() {
 
 // The two servers with the carrier between them: now -> next.
 function swRoute(t, from, to, state) {
+  // On the foreign server the Iran server's view comes back: t.remote_pub is this server.
+  const viaIran = !!(_sw && _sw.info && _sw.info.via_iran), L = window._lastLocal || {};
   const next = to ? `<span class="sw-pill next" data-no-i18n>${esc(carrierText(to))}</span>` : `<span class="sw-pill next empty">${esc(tr('', 'Pick a carrier below'))}</span>`;
   return `<div class="sw-route ${state || ''}">
-    <div class="sw-end"><span class="tv-ico">${ICO_SRV}</span><b>${esc(tr('', 'Iran server'))}</b><small>${esc((window._lastLocal || {}).local_pub || '')}</small></div>
+    <div class="sw-end"><span class="tv-ico">${ICO_SRV}</span><b>${esc(tr('', 'Iran server'))}</b><small>${esc(viaIran ? L.remote_pub || '' : L.local_pub || '')}</small></div>
     <div class="sw-mid">
       <div class="sw-pills">
         <span class="sw-pill cur" data-no-i18n>${esc(carrierText(from))}</span>
@@ -5190,7 +5192,7 @@ function swRoute(t, from, to, state) {
       </div>
       <div class="sw-wire" aria-hidden="true"><i></i></div>
     </div>
-    <div class="sw-end"><span class="tv-ico far">${ICO_GLOBE}</span><b>${esc(t.main ? tr('', 'Foreign server') : t.name)}</b><small>${esc(t.remote_pub || '')}</small></div>
+    <div class="sw-end"><span class="tv-ico far">${ICO_GLOBE}</span><b>${esc(viaIran ? tr('', 'This server') : t.main ? tr('', 'Foreign server') : t.name)}</b><small>${esc(t.remote_pub || '')}</small></div>
   </div>`;
 }
 
@@ -5199,7 +5201,7 @@ function renderSwapPick() {
   const fams = SW_FAMS.map(f => {
     let why = '';
     if (f.gre && !t.gre_ok) why = tr('', 'Needs GRE; this tunnel has none');
-    else if (!(f.eng === 'frp' ? info.bins.frps : info.bins.backhaul)) why = tr('', 'Not installed on this server');
+    else if (!(f.eng === 'frp' ? info.bins.frps : info.bins.backhaul)) why = tr('', info.via_iran ? 'Not installed on this server or on the Iran server' : 'Not installed on this server');
     const locked = f.pro && !info.backhaul_pro;
     const opts = f.opts.map(o => {
       const id = f.eng + ':' + o[0];
@@ -5217,7 +5219,11 @@ function renderSwapPick() {
     </section>`;
   }).join('');
   let follow;
-  if (_sw.follow === null) follow = `<div class="sw-follow wait"><span class="ent-spinner"></span> ${esc(tr('', 'Checking that the foreign server can follow…'))}</div>`;
+  if (info.via_iran) {
+    follow = _sw.follow === null ? `<div class="sw-follow wait"><span class="ent-spinner"></span> ${esc(tr('', 'Checking that the Iran server can switch this server…'))}</div>`
+      : _sw.follow ? `<div class="sw-follow ok"><span class="sw-fdot"></span> ${esc(tr('', 'The Iran server runs the swap and switches both servers. If the new carrier does not connect within 45 s, both go back.'))}</div>`
+      : `<div class="sw-follow warn"><span class="sw-fdot"></span><div>${esc(tr('', "The Iran server cannot reach this server's panel, so it cannot switch it. Swap the carrier on the Iran server."))}<small data-no-i18n>${esc(_sw.followErr)}</small></div></div>`;
+  } else if (_sw.follow === null) follow = `<div class="sw-follow wait"><span class="ent-spinner"></span> ${esc(tr('', 'Checking that the foreign server can follow…'))}</div>`;
   else if (_sw.follow) follow = `<div class="sw-follow ok"><span class="sw-fdot"></span> ${esc(tr('', 'The foreign server follows on its own. If the new carrier does not connect within 45 s, both servers go back.'))}</div>`;
   else follow = `<div class="sw-follow warn"><span class="sw-fdot"></span><div>${esc(tr('', 'The foreign server\'s panel cannot be reached from here, so it cannot follow on its own.'))}
       <small data-no-i18n>${esc(_sw.followErr)}</small>
@@ -5267,15 +5273,20 @@ const SW_STEPS = {
   verify: 'Wait for the tunnel to connect',
   revert: 'Put both servers back',
 };
+// Steps as the foreign server sees a swap the Iran server runs.
+const SW_STEPS_FAR = {
+  foreign: 'Switch this server',
+  local: 'Switch the Iran server',
+};
 function renderSwapProgress() {
-  const j = _sw.job, t = _sw.info.tunnel;
+  const j = _sw.job, t = _sw.info.tunnel, steps0 = _sw.info.via_iran ? Object.assign({}, SW_STEPS, SW_STEPS_FAR) : SW_STEPS;
   const secs = j.took_ms ? (j.took_ms / 1000).toFixed(1) : '';
   const wire = j.state === 'running' ? 'run' : j.state === 'ok' ? 'ok' : j.state === 'manual' ? 'warn' : 'bad';
   const icon = s => s === 'ok' ? '<svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg>'
     : s === 'fail' ? '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>'
     : s === 'run' ? '<span class="ent-spinner"></span>' : s === 'skip' ? '<svg viewBox="0 0 16 16"><path d="M4 8h8"/></svg>' : '';
   const steps = (j.steps || []).map(s => `<li class="sw-step ${esc(s.state)}"><span class="sw-step-ic">${icon(s.state)}</span>
-      <div><b>${esc(tr('', SW_STEPS[s.key] || s.key))}</b>${s.detail ? `<small data-no-i18n>${esc(s.detail)}</small>` : ''}</div></li>`).join('');
+      <div><b>${esc(tr('', steps0[s.key] || s.key))}</b>${s.detail ? `<small data-no-i18n>${esc(s.detail)}</small>` : ''}</div></li>`).join('');
   let res = '';
   if (j.state === 'ok') res = `<div class="sw-result ok">${esc(docTpl('The tunnel is connected on {0}. Took {1} s.', [carrierText(j.to), secs]))}</div>`;
   else if (j.state === 'reverted') res = `<div class="sw-result warn">${esc(docTpl('{0} did not connect, so both servers went back to {1}. The tunnel works as before.', [carrierText(j.to), carrierText(j.from)]))}<small data-no-i18n>${esc(j.error || '')}</small></div>`;

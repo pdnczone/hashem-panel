@@ -3,7 +3,15 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
-## Unreleased
+## v2.7.0 — 2026-10-24
+
+IPv6 in every tunnel, with two new GRE wraps (**6to4** when protocol 47 is blocked but 41 is not, **4in6** over the servers' real IPv6); a new **Xray** tunnel (Reality, XHTTP, gRPC, mKCP, CDN, direct or reverse); **speed and volume limits** per foreign server; Bagher with lower ping and several foreign servers; traffic counters you can trust; and the carrier can be changed from the foreign server too. Update both servers of a tunnel: 6to4/4in6 and a swap from the foreign side need this version on each.
+
+**Upgrade notes**
+- Nothing to migrate: tunnels, pools and settings from v2.6.0 keep working as they are. A running Bagher tunnel moves to the panel's own SSH carrier by itself after `hashem update` on the Iran server (the foreign server needs no update).
+- The Xray tunnel and the limits are Hashem Pro; every existing Pro key opens them. Limits already set keep working without a license and can always be removed.
+- 6to4 needs protocol 41 between the servers, 4in6 a public IPv6 on both. Test first: Benchmark → Path test now has these rows.
+- Totals that the old traffic bugs inflated stay as they are; from this version on, only real bytes are added.
 
 ### New: IPv6 in every tunnel, and the 6to4 / 4in6 carriers
 
@@ -19,6 +27,7 @@ Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 - **Cluster DNS failover writes AAAA records** for the working hubs that have a public IPv6 and no pools (each hub sends its IPv6 in the heartbeat). The webhook gets them as `ips6`; `ips` stays IPv4 only, so existing receivers keep working.
 - The carrier advisor suggests 6to4 when the active carrier keeps failing, and 4in6 on a server with IPv6. The doctor warns when the server has IPv6 but UFW is set to `IPV6=no`.
 - The menus of `hashem.sh` offer 6to4 and 4in6 (carrier menu and Edit peer), instead of the old FOU entries.
+- **Change the carrier from the foreign server too.** The **Swap carrier** button and the Carriers card now work on the foreign server, and so does the GRE wrap card (Direct, WSS, 6to4, 4in6). The foreign server asks the Iran server over the Peer Link (or its own tunnel token), and the Iran server runs the change exactly as if it was started there: the foreign server is told first, both switch, and both go back if the tunnel does not answer within 45 seconds. The dialog shows the Iran server's view and the steps live. An older Iran panel, or one this server cannot reach, is named instead of a silent one-sided switch (the GRE wrap then switches this server alone, as before, and says so). `GET/POST /api/peer/swap-request` and `/api/peer/wrap-request` on the Iran side.
 - Fixed: the carrier menu's **Next candidate** and **Automatic** only printed the status (`cli_carrier` was defined twice). There is one definition now, with every subcommand.
 - Fixed: changing one foreign server's GRE wrap switched every GRE interface on the server, and its WSS branch used the wrong port.
 - Fixed: on a server with both IPv4 and IPv6, the "what is my IP" lookups in `hashem.sh` could get the IPv6 address and reject it. They now ask over IPv4.

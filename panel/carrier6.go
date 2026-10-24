@@ -2,12 +2,15 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -155,6 +158,15 @@ func switchCarrier(target string, o carrier6Opts) (string, error) {
 	if strings.HasPrefix(target, "frp:") {
 		return applyBenchmarkCarrier(target)
 	}
+	// A foreign server asks the Iran server, which switches both.
+	why := ""
+	if pc := loadPeerConfig(); pc.Role == "worker" && pc.PeerSecret != "" {
+		detail, asked, err := switchCarrierViaIran(target, o)
+		if asked {
+			return detail, err
+		}
+		why = err.Error()
+	}
 	linked := peerLinked()
 	if target == carrier4in6 {
 		if o.Local6 == "" {
@@ -178,6 +190,9 @@ func switchCarrier(target string, o carrier6Opts) (string, error) {
 		return "", fmt.Errorf("this server could not switch to %s: %v %s", target, err, strings.TrimSpace(out))
 	}
 	if !linked {
+		if why != "" {
+			return "Applied carrier " + target + " on this server only (" + why + "): apply the same carrier on the Iran server", nil
+		}
 		return "Applied carrier " + target + " on this server only (no Peer Link): apply the same carrier on the other server", nil
 	}
 	back := func() {
@@ -197,4 +212,128 @@ func switchCarrier(target string, o carrier6Opts) (string, error) {
 	}
 	LogSecurityAudit("carrier_switched", "admin", "127.0.0.1", "target="+target)
 	return "Both servers now use " + target, nil
+}
+
+// ---- switching the wrap from the foreign server ----
+
+// wrapRequest is a GRE wrap switch one server asks the other for; the IPv6
+// ends are seen from the receiver.
+type wrapRequest struct {
+	Target string `json:"target"`
+	carrier6Opts
+}
+
+// wrapJob is the GRE wrap switch the foreign server asked this Iran server for.
+type wrapJob struct {
+	State  string `json:"state"` // running | ok | failed
+	Target string `json:"target"`
+	Detail string `json:"detail,omitempty"`
+	Error  string `json:"error,omitempty"`
+	Seq    int    `json:"seq"`
+}
+
+var (
+	wrapJobMu  sync.Mutex
+	wrapJobNow wrapJob
+	// vars for tests
+	wrapSwitchFn  = switchCarrier
+	wrapPollEvery = 2 * time.Second
+)
+
+// switchCarrierViaIran asks the Iran server to switch the GRE wrap of the
+// main tunnel on both servers and waits for the end. asked=false: the Iran
+// panel could not be asked (err says why) and nothing changed.
+func switchCarrierViaIran(target string, o carrier6Opts) (detail string, asked bool, err error) {
+	req := wrapRequest{Target: target, carrier6Opts: o.swapped()}
+	if target == carrier4in6 && req.Remote6 == "" {
+		req.Remote6 = detectPublicIP6()
+	}
+	status, data, err := peerCallJSON("POST", "/api/peer/wrap-request", req, 15*time.Second)
+	switch {
+	case err != nil:
+		return "", false, fmt.Errorf("the Iran server's panel could not be reached: %v", err)
+	case status == http.StatusNotFound && data == nil:
+		return "", false, errOldIranPanel
+	case status != http.StatusOK:
+		return "", true, peerAnswerErr(data)
+	}
+	var acc struct {
+		Seq int `json:"seq"`
+	}
+	_ = json.Unmarshal(data, &acc)
+	log.Printf("[PeerSync] the Iran server switches the GRE wrap to %s", target)
+	// The Iran server waits up to carrierVerifyWait for the tunnel, then as
+	// long again to put both back.
+	for end := time.Now().Add(2*carrierVerifyWait + 90*time.Second); time.Now().Before(end); {
+		time.Sleep(wrapPollEvery)
+		_, d, err := peerCallJSON("GET", "/api/peer/wrap-request", nil, 5*time.Second)
+		var j wrapJob
+		if err != nil || json.Unmarshal(d, &j) != nil || j.Seq != acc.Seq {
+			continue // the link may drop for a moment while the wrap changes
+		}
+		switch j.State {
+		case "ok":
+			return j.Detail, true, nil
+		case "failed":
+			return "", true, errors.New(j.Error)
+		}
+	}
+	return "", true, errors.New("the Iran server did not report the end of the switch in time: check the GRE wrap on both servers")
+}
+
+// POST /api/peer/wrap-request (Iran side): the foreign server of the main
+// tunnel asks for a GRE wrap switch. It runs as if it was started on this
+// panel; the foreign server polls GET for the end.
+func handlePeerWrapRequest(w http.ResponseWriter, r *http.Request) {
+	var req wrapRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&req); err != nil {
+		writeAPIError(w, r, "E-ACTION-01", "invalid json")
+		return
+	}
+	t := strings.TrimSpace(req.Target)
+	if err := carrierApplicable(t); err != nil || strings.HasPrefix(t, "frp:") {
+		writeAPIError(w, r, "E-ACTION-01", fmt.Sprintf("not a GRE wrap: %q", t))
+		return
+	}
+	if swapCallerTunnel(r) > 0 {
+		writeAPIError(w, r, "E-ACTION-01", "the GRE wrap of this tunnel is changed on the Iran server (Edit peer)")
+		return
+	}
+	if loadPeerConfig().Role != "master" {
+		writeAPIError(w, r, "E-ACTION-01", "this server is not the Iran side of the Peer Link")
+		return
+	}
+	wrapJobMu.Lock()
+	if wrapJobNow.State == "running" {
+		wrapJobMu.Unlock()
+		writeAPIError(w, r, "E-ACTION-01", "a GRE wrap switch is already running")
+		return
+	}
+	wrapJobNow = wrapJob{State: "running", Target: t, Seq: wrapJobNow.Seq + 1}
+	seq := wrapJobNow.Seq
+	wrapJobMu.Unlock()
+	LogSecurityAudit("carrier_switch_requested", "peer", ClientIP(r), "target="+t)
+	writeJSON(w, map[string]any{"status": "accepted", "seq": seq})
+
+	go func() {
+		detail, err := wrapSwitchFn(t, req.carrier6Opts)
+		wrapJobMu.Lock()
+		defer wrapJobMu.Unlock()
+		if wrapJobNow.Seq != seq {
+			return
+		}
+		if err != nil {
+			wrapJobNow.State, wrapJobNow.Error = "failed", err.Error()
+			return
+		}
+		wrapJobNow.State, wrapJobNow.Detail = "ok", detail
+	}()
+}
+
+// GET /api/peer/wrap-request (Iran side): the last requested switch.
+func handlePeerWrapStatus(w http.ResponseWriter, r *http.Request) {
+	wrapJobMu.Lock()
+	j := wrapJobNow
+	wrapJobMu.Unlock()
+	writeJSON(w, j)
 }

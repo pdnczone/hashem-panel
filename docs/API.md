@@ -90,7 +90,11 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/peer/sshfwd-install-key` | peer secret (or session) | `handlePeerSSHFwdInstallKey` |
 | `GET` | `/api/peer/status` | peer secret (or session) | `handlePeerStatus` |
 | `POST` | `/api/peer/swap-carrier` | peer secret (or session) | `handlePeerSwapCarrier` |
+| `GET` | `/api/peer/swap-request` | peer secret (or session) | `handlePeerSwapRequestGet` |
+| `POST` | `/api/peer/swap-request` | peer secret (or session) | `handlePeerSwapRequest` |
 | `GET` | `/api/peer/swap-status` | peer secret (or session) | `handlePeerSwapStatus` |
+| `GET` | `/api/peer/wrap-request` | peer secret (or session) | `handlePeerWrapStatus` |
+| `POST` | `/api/peer/wrap-request` | peer secret (or session) | `handlePeerWrapRequest` |
 | `GET` | `/api/peers` | session | `handlePeersGet` |
 | `PATCH` | `/api/peers` | session + CSRF | `handlePeersPatch` |
 | `POST` | `/api/peers` | session + CSRF | `handlePeersPost` |
@@ -154,4 +158,4 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/xray` | session + CSRF | `handleXrayPost` |
 | `GET` | `/metrics` | none | `handleMetrics` |
 
-Total: 130 routes.
+Total: 134 routes.
