@@ -3,10 +3,12 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
-## Unreleased
+## v2.7.1 — 2026-10-24
+
+A fix for servers with more than one foreign server. Run `hashem update` on the Iran server; nothing else to do.
 
 **Fixes**
-- A second, third or later foreign server no longer disappears from the Tunnels tab and the dashboard while its tunnel is connected. `hashem.sh` wrote a Backhaul tunnel's forwarded ports to `peers.json` as one string, the panel could not read that file, and it then showed no extra tunnel at all. The panel now reads both forms, `hashem.sh` writes a list, and Edit Peer opens for these tunnels again. Run `hashem update` on the Iran server; nothing else to do.
+- A second, third or later foreign server no longer disappears from the Tunnels tab and the dashboard while its tunnel is connected. `hashem.sh` wrote a Backhaul tunnel's forwarded ports to `peers.json` as one string, the panel could not read that file, and it then showed no extra tunnel at all. The panel now reads both forms, `hashem.sh` writes a list, and Edit Peer opens for these tunnels again.
 
 ## v2.7.0 — 2026-10-24
 
