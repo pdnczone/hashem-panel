@@ -108,7 +108,8 @@ PY
 $S python3 "$TMP/echo.py" & pids+=($!)
 
 # hashem.sh's own functions, saved once so both namespaces can source them
-ext() { awk -v n="$1" '$0 ~ "^"n"\\(\\) \\{" {p=1} p {print} p && /^}/ {exit}' "$ROOT/hashem.sh"; }
+# (a heredoc's own "}" lines, like init_carrier_json's JSON, do not end one)
+ext() { awk -v n="$1" '$0 ~ "^"n"\\(\\) \\{" {p=1} p {print} p && h && /^EOF$/ {h=0; next} p && /<< *.?EOF/ {h=1} p && !h && /^}/ {exit}' "$ROOT/hashem.sh"; }
 {
     echo "INSTALL_DIR='$(dirname "$BIN")' BACKHAUL_CONFIG_DIR='$TMP/bh' CONFIG_DIR='$TMP/frp'"
     echo "RED='' GREEN='' YELLOW='' CYAN='' NC='' TMP='$TMP' BIN='$BIN' FRPC='$FRP_DIR/frpc'"
@@ -247,6 +248,7 @@ v4_unblock
         echo "$b"
     done
 } > "$TMP/carrier.sh"
+bash -n "$TMP/carrier.sh" || { echo "FAIL: the carrier functions taken from hashem.sh do not parse"; exit 1; }
 mkdir -p "$TMP/cfg-hub" "$TMP/cfg-spoke"
 { echo "== kernel $(uname -r)"; for m in sit ip6_gre ip6_tunnel; do modprobe "$m" 2>&1 && echo "module $m: ok" || echo "module $m: missing"; done; } >>"$TMP/carrier.log"
 # each call is traced into carrier.log, shown on the CI run when a check fails
