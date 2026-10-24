@@ -133,6 +133,31 @@ func adviseCarrier(active string, candidates []string, stats map[string]carrierS
 	return []carrierAdvice{{Level: "warn", Message: msg + " No better carrier is known; check the path (see Reverse Path / Tunnel health)."}}
 }
 
+// advisorCandidates adds the IPv6 carriers to the configured ones: 6to4 right
+// after direct (it needs only the IPv4 addresses and helps when protocol 47 is
+// what is blocked), 4in6 last and only when this server has a public IPv6.
+func advisorCandidates(cands []string, hasIPv6 bool) []string {
+	out := make([]string, 0, len(cands)+2)
+	has := map[string]bool{}
+	for _, c := range cands {
+		has[c] = true
+	}
+	for _, c := range cands {
+		out = append(out, c)
+		if c == "direct" && !has[carrier6to4] {
+			out = append(out, carrier6to4)
+			has[carrier6to4] = true
+		}
+	}
+	if !has[carrier6to4] {
+		out = append(out, carrier6to4)
+	}
+	if hasIPv6 && !has[carrier4in6] {
+		out = append(out, carrier4in6)
+	}
+	return out
+}
+
 // carrierAdvisorOnSnapshot samples the main link under the active carrier.
 func carrierAdvisorOnSnapshot(s *HubSnapshot) {
 	state := ""
@@ -163,7 +188,7 @@ func handleCarrierAdvice(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(rows, func(i, j int) bool { return strings.Compare(rows[i].Carrier, rows[j].Carrier) < 0 })
 	writeJSON(w, map[string]any{
-		"active": c.ActiveCarrier, "advice": adviseCarrier(c.ActiveCarrier, c.Candidates, stats),
+		"active": c.ActiveCarrier, "advice": adviseCarrier(c.ActiveCarrier, advisorCandidates(c.Candidates, acctIPv6()), stats),
 		"stats": rows, "auto_switch": false,
 	})
 }

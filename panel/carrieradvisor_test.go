@@ -123,3 +123,21 @@ func TestSuggestEndpoint(t *testing.T) {
 		t.Error("bad kind must fail")
 	}
 }
+
+// With direct down and nothing else tried, 6to4 is suggested first: it needs
+// only the IPv4 addresses. 4in6 is offered only on a server with IPv6.
+func TestAdvisorCandidatesIPv6(t *testing.T) {
+	if got := strings.Join(advisorCandidates([]string{"direct", "wss:8443"}, false), ","); got != "direct,6to4,wss:8443" {
+		t.Fatalf("no IPv6: %s", got)
+	}
+	if got := strings.Join(advisorCandidates([]string{"direct", "wss:8443"}, true), ","); got != "direct,6to4,wss:8443,4in6" {
+		t.Fatalf("with IPv6: %s", got)
+	}
+	if got := strings.Join(advisorCandidates([]string{"wss:8443", "6to4"}, false), ","); got != "wss:8443,6to4" {
+		t.Fatalf("6to4 already there: %s", got)
+	}
+	a := adviseCarrier("direct", advisorCandidates([]string{"direct", "wss:8443"}, false), map[string]carrierStat{"direct": {Down: 30}})
+	if len(a) != 1 || a[0].Suggest != "6to4" {
+		t.Fatalf("direct down: %+v", a)
+	}
+}
