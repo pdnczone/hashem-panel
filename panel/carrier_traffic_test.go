@@ -371,3 +371,27 @@ func TestCarrierRulesIPv6(t *testing.T) {
 		t.Errorf("IPv6 table on an IPv4-only server:\n%s", r)
 	}
 }
+
+// A host that never counted IPv6 has no chains to drop: no failing calls.
+func TestCarrierDropSkipsMissingChains(t *testing.T) {
+	oldRunner := runner
+	t.Cleanup(func() { runner = oldRunner })
+	var calls []string
+	save := "*filter\n:INPUT ACCEPT [0:0]\nCOMMIT\n"
+	runner = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		if strings.HasSuffix(name, "-save") {
+			return []byte(save), nil
+		}
+		return nil, nil
+	}
+	carrierDropFam("ip6tables")
+	if len(calls) != 1 {
+		t.Fatalf("missing chains must not be dropped: %v", calls)
+	}
+	calls, save = nil, "*filter\n:HASHEM_ACCT_IN - [0:0]\n:HASHEM_ACCT_OUT - [0:0]\nCOMMIT\n"
+	carrierDropFam("ip6tables")
+	if len(calls) != 7 {
+		t.Fatalf("present chains must be dropped: %v", calls)
+	}
+}
