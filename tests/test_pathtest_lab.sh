@@ -193,7 +193,10 @@ rm -f "$TMP/live.stop" "$TMP/live.log"
 $H python3 "$TMP/live.py" "$TMP/live.log" "$TMP/live.stop" & lp=$!; pids+=($lp)
 run_test auto
 touch "$TMP/live.stop"; wait $lp 2>/dev/null
-grep -q "NOTE ports from 41000 are in use on this server, so the test uses 41040-41050" "$TMP/hub.out" && moved=yes || moved=no
+# usually 41040-41050; a later block when an outgoing connection holds a port of
+# that one for a moment (the namespace's ephemeral range covers these ports)
+nb=$(sed -n 's/^NOTE ports from 41000 are in use on this server, so the test uses \([0-9]*\)-.*/\1/p' "$TMP/hub.out" | head -n1)
+[[ -n $nb ]] && (( nb >= 41040 )) && moved=yes || moved=no
 check "live: the test moved off the tunnel's port 41000 by itself" yes "$moved"
 for id in $ALL; do check "live: $id works" ok "$(status_of "$TMP/hub.json" "$id")"; done
 check "live: tunnel never missed during the test" 0 "$(grep -c FAIL "$TMP/live.log")"
