@@ -1405,12 +1405,12 @@ func startSwapOn(w http.ResponseWriter, r *http.Request, t swapTunnel, to carrie
 		writeAPIError(w, r, "E-ENGINE-01", bin+" is not installed on this server (install it with `hashem` first); nothing was changed")
 		return
 	}
-	j, err := startSwap(t, to, manual)
-	if err != nil {
+	if _, err := startSwap(t, to, manual); err != nil {
 		writeAPIError(w, r, "E-ACTION-01", err.Error())
 		return
 	}
-	writeJSON(w, map[string]any{"status": "started", "job": j})
+	// a copy: runSwap is already changing the job
+	writeJSON(w, map[string]any{"status": "started", "job": swapJobView(t.ID)})
 }
 
 // ---- swapping from the foreign server ----
