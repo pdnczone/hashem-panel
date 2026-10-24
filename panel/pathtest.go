@@ -13,6 +13,11 @@ package main
 // and reports what really came back. Bagher's SSH path (Iran -> foreign) is
 // checked by reading the foreign server's SSH banner.
 //
+// The IPv6 rows: 6to4 is a sit tunnel (IP protocol 41) between the two IPv4
+// addresses, pinged over a private IPv6; "TCP over IPv6" is the foreign server
+// reaching the control port at the Iran server's IPv6; 4in6 is a GRE tunnel
+// (ip6gre) between the two public IPv6 addresses, pinged at its inner IPv4.
+//
 // Nothing is installed or changed for good: the processes run under `timeout`,
 // the GRE interface and firewall openings are removed when the test ends.
 //
@@ -69,6 +74,13 @@ const (
 	ptGREKey     = "18512"
 	ptGREHub     = "10.254.77.1"
 	ptGRESpoke   = "10.254.77.2"
+	ptSitIf      = "hpt6" // 6to4: sit between the IPv4 addresses
+	ptSitHub     = "fd68:7074::1"
+	ptSitSpoke   = "fd68:7074::2"
+	pt6GREIf     = "hpt4" // 4in6: ip6gre between the IPv6 addresses
+	pt6GREKey    = "18513"
+	pt6GREHub    = "10.254.78.1"
+	pt6GRESpoke  = "10.254.78.2"
 	ptSpeedBytes = 1 << 20
 )
 
@@ -94,14 +106,30 @@ type ptCheck struct {
 	speed  bool    // hub: throughput still to measure
 }
 
-// ptChecks lists every check of a session whose first port is base.
-func ptChecks(base, sshPort int) []*ptCheck {
+// ptNetChecks are the rows both servers test without a core: plain TCP and
+// UDP, GRE, and the IPv6 paths (6to4, TCP over IPv6, 4in6). Without the Iran
+// server's IPv6 the last two are not tested.
+func ptNetChecks(base int, iran6 string) []*ptCheck {
 	cs := []*ptCheck{
 		{ID: "tcp", Engine: "Network", Name: "TCP", Port: base, Proto: "tcp"},
 		{ID: "udp", Engine: "Network", Name: "UDP", Port: base, Proto: "udp"},
 		{ID: "gre", Engine: "GRE", Name: "GRE", Proto: "gre"},
-		{ID: "ssh", Engine: "Bagher", Name: "SSH", Port: sshPort, Proto: "tcp"},
+		{ID: "6to4", Engine: "GRE", Name: "6to4", Proto: "41"},
+		{ID: "tcp6", Engine: "Network", Name: "TCP over IPv6", Port: base, Proto: "tcp"},
+		{ID: "4in6", Engine: "GRE", Name: "4in6", Proto: "gre6"},
 	}
+	for _, c := range cs {
+		c.Status = "waiting"
+		if iran6 == "" && (c.ID == "tcp6" || c.ID == "4in6") {
+			c.Status, c.Note = "skip", "the Iran server has no public IPv6"
+		}
+	}
+	return cs
+}
+
+// ptChecks lists every check of a session whose first port is base.
+func ptChecks(base, sshPort int, iran6 string) []*ptCheck {
+	cs := append(ptNetChecks(base, iran6), &ptCheck{ID: "ssh", Engine: "Bagher", Name: "SSH", Port: sshPort, Proto: "tcp"})
 	for i, t := range ptFRPTransports {
 		p, proto := ptFRPPort(base, t)
 		cs = append(cs, &ptCheck{ID: "frp-" + t, Engine: "FRP", Name: t, Port: p, Proto: proto, Fwd: base + ptOffFwd + i})
@@ -115,7 +143,9 @@ func ptChecks(base, sshPort int) []*ptCheck {
 			Fwd: base + ptOffFwd + len(ptFRPTransports) + i})
 	}
 	for _, c := range cs {
-		c.Status = "waiting"
+		if c.Status == "" {
+			c.Status = "waiting"
+		}
 	}
 	return cs
 }
@@ -145,6 +175,7 @@ func ptFRPPort(base int, t string) (int, string) {
 
 type ptCode struct {
 	Host    string `json:"h"`
+	Host6   string `json:"h6,omitempty"` // the Iran server's IPv6 (TCP over IPv6, 4in6)
 	Base    int    `json:"p"`
 	Token   string `json:"t"`
 	Minutes int    `json:"m"`
@@ -171,6 +202,9 @@ func ptDecodeCode(s string) (ptCode, error) {
 	if c.Minutes < 1 || c.Minutes > 60 {
 		c.Minutes = 10
 	}
+	if c.Host6 != "" && ipFamily(c.Host6) != 6 {
+		c.Host6 = ""
+	}
 	return c, nil
 }
 
@@ -180,6 +214,8 @@ type ptSession struct {
 	code      string
 	iranIP    string
 	foreignIP string
+	iranIP6   string // hub: this server's IPv6; foreign: the hub's
+	foreign6  string // hub: the foreign server's IPv6, from its TCP over IPv6 hello
 	base      int
 	sshPort   int
 	token     string
@@ -191,6 +227,10 @@ type ptSession struct {
 	notes     []string
 	greTried  bool
 	greUp     bool
+	sitTried  bool // 6to4
+	sitUp     bool
+	g6Tried   bool // 4in6
+	g6Up      bool
 	ctx       context.Context
 	cancel    context.CancelFunc
 	dir       string
@@ -318,6 +358,19 @@ func (s *ptSession) sawForeign(ip string) {
 	}
 	if s.foreignIP == "" && net.ParseIP(ip) != nil && !net.ParseIP(ip).IsLoopback() {
 		s.foreignIP = ip
+	}
+}
+
+// sawForeign6 records the foreign server's IPv6 (hub side); the IPv4 GRE and
+// SSH checks keep using its IPv4.
+func (s *ptSession) sawForeign6(ip string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.joined.IsZero() {
+		s.joined = time.Now()
+	}
+	if s.foreign6 == "" && ipFamily(ip) == 6 {
+		s.foreign6 = ip
 	}
 }
 
@@ -542,15 +595,63 @@ func ptGREUp(remote, inner string) error {
 	return nil
 }
 
+// ptSitUp creates the 6to4 test tunnel: a sit to the other server's IPv4
+// carrying a private /64.
+func ptSitUp(remote4, local6 string) error {
+	_, _ = runCmdTimeout(5*time.Second, "ip", "link", "del", ptSitIf)
+	steps := [][]string{
+		{"ip", "link", "add", ptSitIf, "type", "sit", "remote", remote4, "ttl", "255"},
+		{"ip", "link", "set", ptSitIf, "up", "mtu", "1480"},
+		{"ip", "-6", "addr", "add", local6 + "/64", "dev", ptSitIf, "nodad"},
+	}
+	for _, a := range steps {
+		if out, err := runCmdTimeout(5*time.Second, a[0], a[1:]...); err != nil {
+			_, _ = runCmdTimeout(5*time.Second, "ip", "link", "del", ptSitIf)
+			return fmt.Errorf("%s: %s", strings.Join(a, " "), strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
+}
+
+// pt6GREUp creates the 4in6 test tunnel: a keyed ip6gre to the other server's
+// IPv6 (local may be empty: the kernel picks it) with an inner IPv4.
+func pt6GREUp(remote6, local6, inner string) error {
+	_, _ = runCmdTimeout(5*time.Second, "ip", "link", "del", pt6GREIf)
+	add := []string{"ip", "link", "add", pt6GREIf, "type", "ip6gre", "remote", remote6}
+	if local6 != "" {
+		add = append(add, "local", local6)
+	}
+	add = append(add, "key", pt6GREKey, "hoplimit", "255", "encaplimit", "none")
+	steps := [][]string{
+		add,
+		{"ip", "addr", "add", inner + "/30", "dev", pt6GREIf},
+		{"ip", "link", "set", pt6GREIf, "up", "mtu", "1400"},
+	}
+	for _, a := range steps {
+		if out, err := runCmdTimeout(5*time.Second, a[0], a[1:]...); err != nil {
+			_, _ = runCmdTimeout(5*time.Second, "ip", "link", "del", pt6GREIf)
+			return fmt.Errorf("%s: %s", strings.Join(a, " "), strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
+}
+
 // ptCleanup runs once when the session ends (stop or expiry).
 func (s *ptSession) ptCleanup() {
 	s.procs.Wait()
 	s.mu.Lock()
 	greUp, rules, dir := s.greUp || s.greTried, s.ufw, s.dir
+	sitUp, g6Up := s.sitUp || s.sitTried, s.g6Up || s.g6Tried
 	s.phase = "done"
 	s.mu.Unlock()
 	if greUp {
 		_, _ = runCmdTimeout(5*time.Second, "ip", "link", "del", ptGREIf)
+	}
+	if sitUp {
+		_, _ = runCmdTimeout(5*time.Second, "ip", "link", "del", ptSitIf)
+	}
+	if g6Up {
+		_, _ = runCmdTimeout(5*time.Second, "ip", "link", "del", pt6GREIf)
 	}
 	for _, r := range rules {
 		_, _ = runCmdTimeout(10*time.Second, "ufw", "delete", "allow", r)
@@ -690,6 +791,7 @@ func ptErrText(err error) string {
 type ptHubRequest struct {
 	ForeignIP string `json:"foreign_ip"`
 	IranIP    string `json:"iran_ip"`
+	IranIP6   string `json:"iran_ip6"` // empty: detected; "-": do not test IPv6
 	BasePort  int    `json:"base_port"`
 	SSHPort   int    `json:"ssh_port"`
 	Minutes   int    `json:"minutes"`
@@ -768,6 +870,17 @@ func ptStartHub(req ptHubRequest) (*ptSession, error) {
 	if net.ParseIP(iranIP) == nil {
 		return nil, fmt.Errorf("enter this server's public IP (it could not be detected)")
 	}
+	iranIP6 := strings.Trim(strings.TrimSpace(req.IranIP6), "[]")
+	switch iranIP6 {
+	case "":
+		iranIP6 = detectPublicIP6()
+	case "-":
+		iranIP6 = ""
+	default:
+		if ipFamily(iranIP6) != 6 {
+			return nil, fmt.Errorf("%q is not an IPv6 address", iranIP6)
+		}
+	}
 	ptStop()
 	b, err := ptPickBase(req.BasePort)
 	if err != nil {
@@ -775,9 +888,9 @@ func ptStartHub(req ptHubRequest) (*ptSession, error) {
 	}
 
 	s := ptNewSession("iran", b, req.Minutes)
-	s.iranIP, s.foreignIP, s.sshPort, s.token = iranIP, foreign, req.SSHPort, ptRandToken()
-	s.code = ptEncodeCode(ptCode{Host: iranIP, Base: b, Token: s.token, Minutes: req.Minutes})
-	s.checks = ptChecks(b, req.SSHPort)
+	s.iranIP, s.iranIP6, s.foreignIP, s.sshPort, s.token = iranIP, iranIP6, foreign, req.SSHPort, ptRandToken()
+	s.code = ptEncodeCode(ptCode{Host: iranIP, Host6: iranIP6, Base: b, Token: s.token, Minutes: req.Minutes})
+	s.checks = ptChecks(b, req.SSHPort, iranIP6)
 	if b != ptDefBase && req.BasePort == 0 {
 		s.notes = append(s.notes, fmt.Sprintf("ports from %d are in use on this server, so the test uses %d-%d", ptDefBase, b, b+ptOffBH+len(ptBHTransports)-1))
 	}
@@ -825,8 +938,18 @@ func (s *ptSession) hubMux() http.Handler {
 			return
 		}
 		host, _, _ := net.SplitHostPort(r.RemoteAddr)
-		s.sawForeign(host)
 		rtt, _ := strconv.ParseFloat(r.URL.Query().Get("rtt"), 64)
+		if r.URL.Query().Get("v") == "6" {
+			if ipFamily(host) != 6 {
+				http.Error(w, "not over IPv6", http.StatusBadRequest)
+				return
+			}
+			s.sawForeign6(host)
+			s.set("tcp6", "ok", rtt, "")
+			_, _ = w.Write([]byte("ok"))
+			return
+		}
+		s.sawForeign(host)
 		s.set("tcp", "ok", rtt, "")
 		_, _ = w.Write([]byte("ok"))
 	})
@@ -938,6 +1061,8 @@ func (s *ptSession) hubTick() {
 		}
 	}
 	foreign, greTried, greUp := s.foreignIP, s.greTried, s.greUp
+	sitTried, sitUp := s.sitTried, s.sitUp
+	foreign6, iran6, g6Tried, g6Up := s.foreign6, s.iranIP6, s.g6Tried, s.g6Up
 	ssh := s.check("ssh")
 	sshDone := ssh.Status == "ok"
 	sshPort := s.sshPort
@@ -986,6 +1111,29 @@ func (s *ptSession) hubTick() {
 				}
 			}()
 		}
+		if ipFamily(foreign) == 4 && !sitTried {
+			err := ptSitUp(foreign, ptSitHub)
+			s.mu.Lock()
+			s.sitTried, s.sitUp = true, err == nil
+			if err != nil {
+				if c := s.check("6to4"); c != nil {
+					c.Status, c.Note = "skip", "could not create a sit (6to4) interface here: "+err.Error()
+				}
+			}
+			sitUp = s.sitUp
+			s.mu.Unlock()
+		}
+		if sitUp && s.statusOf("6to4") != "ok" {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				ctx, cancel := context.WithTimeout(s.ctx, 6*time.Second)
+				defer cancel()
+				if rtt, ok := ptPing(ctx, ptSitSpoke); ok {
+					s.set("6to4", "ok", rtt, "")
+				}
+			}()
+		}
 		if !sshDone {
 			wg.Add(1)
 			go func() {
@@ -994,6 +1142,31 @@ func (s *ptSession) hubTick() {
 					s.set("ssh", "ok", rtt, "")
 				} else {
 					s.set("ssh", "fail", 0, ptErrText(err))
+				}
+			}()
+		}
+	}
+	if foreign6 != "" && iran6 != "" {
+		if !g6Tried {
+			err := pt6GREUp(foreign6, iran6, pt6GREHub)
+			s.mu.Lock()
+			s.g6Tried, s.g6Up = true, err == nil
+			if err != nil {
+				if c := s.check("4in6"); c != nil {
+					c.Status, c.Note = "skip", "could not create an ip6gre (4in6) interface here: "+err.Error()
+				}
+			}
+			g6Up = s.g6Up
+			s.mu.Unlock()
+		}
+		if g6Up && s.statusOf("4in6") != "ok" {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				ctx, cancel := context.WithTimeout(s.ctx, 6*time.Second)
+				defer cancel()
+				if rtt, ok := ptPing(ctx, pt6GRESpoke); ok {
+					s.set("4in6", "ok", rtt, "")
 				}
 			}()
 		}
@@ -1030,8 +1203,10 @@ func (s *ptSession) hubTick() {
 		for _, c := range s.checks {
 			if c.Status == "waiting" {
 				c.Status = "fail"
-				if (c.ID == "gre" || c.ID == "ssh") && s.foreignIP == "" {
+				if (c.ID == "gre" || c.ID == "ssh" || c.ID == "6to4") && s.foreignIP == "" {
 					c.Note = "foreign server IP unknown"
+				} else if c.ID == "4in6" && s.foreign6 == "" {
+					c.Note = "the foreign server did not reach this one over IPv6"
 				} else if c.Note == "" {
 					c.Note = "nothing came through"
 				}
@@ -1063,12 +1238,8 @@ func ptStartSpoke(code string) (*ptSession, error) {
 		return nil, err
 	}
 	s := ptNewSession("foreign", c.Base, c.Minutes)
-	s.iranIP, s.token = c.Host, c.Token
-	s.checks = []*ptCheck{
-		{ID: "tcp", Engine: "Network", Name: "TCP", Port: c.Base, Proto: "tcp", Status: "waiting"},
-		{ID: "udp", Engine: "Network", Name: "UDP", Port: c.Base, Proto: "udp", Status: "waiting"},
-		{ID: "gre", Engine: "GRE", Name: "GRE", Proto: "gre", Status: "waiting"},
-	}
+	s.iranIP, s.iranIP6, s.token = c.Host, c.Host6, c.Token
+	s.checks = ptNetChecks(c.Base, c.Host6)
 	dir, err := os.MkdirTemp("", "hashem-pathtest-")
 	if err != nil {
 		s.cancel()
@@ -1132,6 +1303,24 @@ func (s *ptSession) spokeRun() {
 		s.greUp = true
 		s.mu.Unlock()
 	}
+	if ipFamily(s.iranIP) != 4 {
+		s.set("6to4", "skip", 0, "the Iran server's address is not IPv4")
+	} else if err := ptSitUp(s.iranIP, ptSitSpoke); err != nil {
+		s.set("6to4", "skip", 0, "could not create a sit (6to4) interface here: "+err.Error())
+	} else {
+		s.mu.Lock()
+		s.sitTried, s.sitUp = true, true
+		s.mu.Unlock()
+	}
+	if s.iranIP6 != "" {
+		if err := pt6GREUp(s.iranIP6, "", pt6GRESpoke); err != nil {
+			s.set("4in6", "skip", 0, "could not create an ip6gre (4in6) interface here: "+err.Error())
+		} else {
+			s.mu.Lock()
+			s.g6Tried, s.g6Up = true, true
+			s.mu.Unlock()
+		}
+	}
 	cores := s.ptEnsureCores("frpc", "backhaul")
 	if s.ctx.Err() != nil {
 		return
@@ -1172,7 +1361,7 @@ func (s *ptSession) spokeRun() {
 
 func (s *ptSession) spokeTick(cl *http.Client, hub string) {
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(5)
 	go func() { // plain TCP: connect time, then tell the hub and read its results
 		defer wg.Done()
 		start := time.Now()
@@ -1244,6 +1433,60 @@ func (s *ptSession) spokeTick(cl *http.Client, hub string) {
 			s.set("gre", "ok", rtt, "")
 		} else if s.statusOf("gre") != "ok" {
 			s.set("gre", "fail", 0, "no reply over GRE yet (the Iran side creates its end when it sees this server)")
+		}
+	}()
+	go func() { // 6to4: ping the hub's end of the sit
+		defer wg.Done()
+		if st := s.statusOf("6to4"); st == "skip" || st == "ok" {
+			return
+		}
+		ctx, cancel := context.WithTimeout(s.ctx, 6*time.Second)
+		defer cancel()
+		if rtt, ok := ptPing(ctx, ptSitHub); ok {
+			s.set("6to4", "ok", rtt, "")
+		} else {
+			s.set("6to4", "fail", 0, "no reply over 6to4 yet (protocol 41 may be blocked)")
+		}
+	}()
+	go func() { // IPv6: the control port at the hub's IPv6, then 4in6
+		defer wg.Done()
+		s.mu.Lock()
+		h6 := s.iranIP6
+		s.mu.Unlock()
+		if h6 == "" {
+			return
+		}
+		if s.statusOf("tcp6") != "ok" {
+			addr := net.JoinHostPort(h6, strconv.Itoa(s.base))
+			start := time.Now()
+			c, err := net.DialTimeout("tcp6", addr, 5*time.Second)
+			if err != nil {
+				s.set("tcp6", "fail", 0, ptErrText(err))
+				return
+			}
+			rtt := float64(time.Since(start).Microseconds()) / 1000
+			c.Close()
+			resp, err := cl.Get("http://" + addr + "/hpt/hello?v=6&t=" + s.token + "&rtt=" + strconv.FormatFloat(rtt, 'f', 1, 64))
+			if err != nil {
+				s.set("tcp6", "fail", 0, "port open, no HTTP answer: "+ptErrText(err))
+				return
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				s.set("tcp6", "fail", 0, "another service answers on this port")
+				return
+			}
+			s.set("tcp6", "ok", rtt, "")
+		}
+		if st := s.statusOf("4in6"); st == "skip" || st == "ok" {
+			return
+		}
+		ctx, cancel := context.WithTimeout(s.ctx, 6*time.Second)
+		defer cancel()
+		if rtt, ok := ptPing(ctx, pt6GREHub); ok {
+			s.set("4in6", "ok", rtt, "")
+		} else {
+			s.set("4in6", "fail", 0, "no reply over 4in6 yet (the Iran side creates its end when it sees this server over IPv6)")
 		}
 	}()
 	wg.Wait()
@@ -1330,7 +1573,7 @@ func handlePathTestPost(w http.ResponseWriter, r *http.Request) {
 
 func cliPathTest(args []string) int {
 	usage := func() int {
-		fmt.Fprintln(os.Stderr, "usage: gre-panel pathtest serve [-port 41000] [-foreign IP] [-ip THIS_IP] [-ssh 22] [-minutes 10]")
+		fmt.Fprintln(os.Stderr, "usage: gre-panel pathtest serve [-port 41000] [-foreign IP] [-ip THIS_IP] [-ip6 THIS_IPV6|-] [-ssh 22] [-minutes 10]")
 		fmt.Fprintln(os.Stderr, "       gre-panel pathtest join CODE")
 		return 2
 	}
@@ -1358,6 +1601,7 @@ func cliPathTest(args []string) int {
 		fs.IntVar(&req.BasePort, "port", 0, "first port (default: first free block from 41000)")
 		fs.StringVar(&req.ForeignIP, "foreign", "", "foreign server IP (GRE and SSH checks)")
 		fs.StringVar(&req.IranIP, "ip", "", "this server's public IP")
+		fs.StringVar(&req.IranIP6, "ip6", "", `this server's public IPv6 (default: detected; "-" skips the IPv6 checks)`)
 		fs.IntVar(&req.SSHPort, "ssh", 22, "SSH port on the foreign server")
 		fs.IntVar(&req.Minutes, "minutes", 10, "how long the test servers run")
 		if fs.Parse(args[1:]) != nil {

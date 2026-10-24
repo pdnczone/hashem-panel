@@ -37,8 +37,8 @@ func TestPathTestCodeRoundTrip(t *testing.T) {
 // the public ports match what the cores are told to listen on.
 func TestPathTestLayout(t *testing.T) {
 	base := 41000
-	cs := ptChecks(base, 2222)
-	if len(cs) != 4+len(ptFRPTransports)+len(ptBHTransports) {
+	cs := ptChecks(base, 2222, "2001:db8::1")
+	if len(cs) != 7+len(ptFRPTransports)+len(ptBHTransports) {
 		t.Fatalf("got %d checks", len(cs))
 	}
 	fwd := map[int]string{}
@@ -185,7 +185,7 @@ func TestPathTestProbes(t *testing.T) {
 // and learns the foreign IP, results never carry the code or token.
 func TestPathTestHubControl(t *testing.T) {
 	s := &ptSession{role: "iran", token: "0123456789abcdef0123456789abcdef", code: "HPT1-secret",
-		checks: ptChecks(41000, 22), phase: "running", expires: time.Now().Add(time.Minute)}
+		checks: ptChecks(41000, 22, ""), phase: "running", expires: time.Now().Add(time.Minute)}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	defer s.cancel()
 	h := s.hubMux()
@@ -234,5 +234,36 @@ func TestPathTestPicksFreePorts(t *testing.T) {
 	}
 	if _, err := ptPickBase(ptDefBase); err == nil || !strings.Contains(err.Error(), "leave the first port empty") {
 		t.Fatalf("taken explicit port: %v", err)
+	}
+}
+
+// TCP over IPv6 marks its own row and learns the foreign IPv6 without taking
+// the IPv4 the GRE and SSH checks use; an IPv4 caller cannot claim it.
+func TestPathTestHelloIPv6(t *testing.T) {
+	s := &ptSession{role: "iran", token: "0123456789abcdef0123456789abcdef", iranIP6: "2001:db8::1",
+		checks: ptChecks(41000, 22, "2001:db8::1"), phase: "running", expires: time.Now().Add(time.Minute)}
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+	defer s.cancel()
+	h := s.hubMux()
+	req := httptest.NewRequest("GET", "/hpt/hello?v=6&t="+s.token, nil)
+	req.RemoteAddr = "198.51.100.9:50000"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 400 || s.statusOf("tcp6") != "waiting" {
+		t.Fatalf("IPv4 caller: %d %s", rr.Code, s.statusOf("tcp6"))
+	}
+	req = httptest.NewRequest("GET", "/hpt/hello?v=6&t="+s.token, nil)
+	req.RemoteAddr = "[2001:db8::2]:50000"
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 || s.statusOf("tcp6") != "ok" || s.foreign6 != "2001:db8::2" || s.foreignIP != "" {
+		t.Fatalf("IPv6 hello: %d %s %q %q", rr.Code, s.statusOf("tcp6"), s.foreign6, s.foreignIP)
+	}
+	if cs := ptChecks(41000, 22, ""); cs[4].ID != "tcp6" || cs[4].Status != "skip" {
+		t.Fatalf("no Iran IPv6: %+v", cs[4])
+	}
+	c, err := ptDecodeCode(ptEncodeCode(ptCode{Host: "203.0.113.7", Host6: "2001:db8::1", Base: 41000, Token: s.token, Minutes: 5}))
+	if err != nil || c.Host6 != "2001:db8::1" {
+		t.Fatalf("code round trip: %+v %v", c, err)
 	}
 }
