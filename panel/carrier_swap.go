@@ -1422,7 +1422,7 @@ func startSwapOn(w http.ResponseWriter, r *http.Request, t swapTunnel, to carrie
 // Iran server knows the caller by its secret: the Peer Link secret is the
 // main tunnel, a peer's own token that peer's tunnel.
 
-var errOldIranPanel = errors.New("the Iran server runs an older panel without this request: update it, or do this from the Iran server")
+var errOldIranPanel = errors.New("the Iran server did not take the request: it runs an older panel, or its Peer Link secret differs from this server's. Update it, or do this from the Iran server")
 
 // peerCallJSON sends one request to the Iran server over the Peer Link and
 // stops at the first JSON answer, whatever its status, so a request that
