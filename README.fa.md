@@ -6,7 +6,7 @@
 
 کاربران به IP عمومی سرور ایران وصل می‌شوند و ترافیکشان از راه GRE، FRP، Backhaul، Xray، SSH یا تونل اسپوف به سرویس‌های سرور خارج می‌رسد؛ با بررسی سلامت، جابه‌جایی خودکار و آپدیت امن.
 
-[![Latest release](https://img.shields.io/github/release/pdnczone/hashem-panel?display_name=tag)](https://github.com/pdnczone/hashem-panel/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/pdnczone/hashem-panel/total?label=downloads&color=brightgreen)](https://github.com/pdnczone/hashem-panel/releases)
 [![CI](https://github.com/pdnczone/hashem-panel/actions/workflows/ci.yml/badge.svg)](https://github.com/pdnczone/hashem-panel/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
@@ -17,15 +17,6 @@
 </div>
 
 <div dir="rtl">
-
-## تازه‌های نسخه‌ی 2.7.0
-
-- **IPv6 در همه‌ی تونل‌ها.** کاربران هم‌زمان با IPv4 و IPv6 وصل می‌شوند و دو سرور هم می‌توانند از راه IPv6 به هم وصل شوند؛ محدودیت‌ها، شمارش ترافیک، تست مسیر و DNS کلاستر هم. [راهنما](docs/IPV6.fa.md)
-- **پوشش‌های 6to4 و 4in6 برای GRE،** برای شبکه‌هایی که پروتکل ۴۷ را می‌بندند ولی ۴۱ را نه، یا فقط روی IPv6 کار می‌کنند. هر دو سرور با هم عوض می‌شوند و اگر تونل جواب ندهد برمی‌گردند.
-- **تونل Xray** (Reality، XHTTP، gRPC، mKCP؛ مستقیم، معکوس یا از پشت Cloudflare)، کنار 3x-ui یا مرزبان بدون دست زدن به آن‌ها. [راهنما](docs/XRAY_TUNNEL.fa.md)
-- **سقف سرعت و حجم** برای هر سرور خارج، **باقر سریع‌تر** با چند سرور خارج، و **شمارش دقیق ترافیک.**
-
-همه‌ی تغییرات با نکات آپدیت: [CHANGELOG](CHANGELOG.md).
 
 ## چطور کار می‌کند
 
