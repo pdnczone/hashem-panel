@@ -274,6 +274,73 @@ func TestBagherHostKeyMismatchRefused(t *testing.T) {
 	}
 }
 
+// An IPv6 foreign server shares known_hosts with the IPv4 ones: its line must
+// parse, or every link's carrier stops (seen in the Bagher lab).
+func TestBagherHostKeyIPv6(t *testing.T) {
+	dir := t.TempDir()
+	known := filepath.Join(dir, "known_hosts")
+	k1pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	k2pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	s1, _ := ssh.NewPublicKey(k1pub)
+	s2, _ := ssh.NewPublicKey(k2pub)
+	v6 := &net.TCPAddr{IP: net.ParseIP("2001:db8:22::2"), Port: 22}
+	v6p := &net.TCPAddr{IP: net.ParseIP("2001:db8:22::3"), Port: 2222}
+	v4 := &net.TCPAddr{IP: net.ParseIP("198.51.100.9"), Port: 22}
+	cb, err := bagherHostKeyCallback(known)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		host string
+		addr net.Addr
+	}{{"[2001:db8:22::2]:22", v6}, {"[2001:db8:22::3]:2222", v6p}, {"198.51.100.9:22", v4}} {
+		if err := cb(c.host, c.addr, s1); err != nil {
+			t.Fatalf("%s first use: %v", c.host, err)
+		}
+	}
+	kh, _ := os.ReadFile(known)
+	if !strings.Contains(string(kh), "\n2001:db8:22::2 ") && !strings.HasPrefix(string(kh), "2001:db8:22::2 ") ||
+		!strings.Contains(string(kh), "[2001:db8:22::3]:2222 ") {
+		t.Fatalf("known_hosts lines: %q", kh)
+	}
+	cb, err = bagherHostKeyCallback(known)
+	if err != nil {
+		t.Fatalf("known_hosts with IPv6 hosts must parse: %v", err)
+	}
+	if err := cb("[2001:db8:22::2]:22", v6, s1); err != nil {
+		t.Fatalf("known IPv6 key refused: %v", err)
+	}
+	if err := cb("[2001:db8:22::2]:22", v6, s2); err == nil {
+		t.Fatal("a changed IPv6 host key must be refused")
+	}
+	if err := cb("198.51.100.9:22", v4, s1); err != nil {
+		t.Fatalf("IPv4 link broken by the IPv6 line: %v", err)
+	}
+
+	// a file an older carrier wrote, "[v6]" with no port, is repaired
+	if err := os.WriteFile(known, []byte("[2001:db8:22::2] "+strings.TrimSpace(string(ssh.MarshalAuthorizedKey(s1)))+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if cb, err = bagherHostKeyCallback(known); err != nil {
+		t.Fatalf("old [v6] line not repaired: %v", err)
+	}
+	if err := cb("[2001:db8:22::2]:22", v6, s1); err != nil {
+		t.Fatalf("repaired line lost the key: %v", err)
+	}
+}
+
+func TestKnownHostsEntry(t *testing.T) {
+	for in, want := range map[string]string{
+		"198.51.100.9:22": "198.51.100.9", "198.51.100.9:2222": "[198.51.100.9]:2222",
+		"[2001:db8::2]:22": "2001:db8::2", "[2001:db8::2]:2222": "[2001:db8::2]:2222",
+		"example.com:22": "example.com", "[2001:db8::2]": "2001:db8::2",
+	} {
+		if got := knownHostsEntry(in); got != want {
+			t.Errorf("knownHostsEntry(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestBagherCarrierTargetFor(t *testing.T) {
 	cfg := defaultSSHFwdConfig()
 	cfg.RemoteHost, cfg.RemoteSSHPort = "198.51.100.1", 2222

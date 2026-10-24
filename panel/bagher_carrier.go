@@ -30,6 +30,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -179,6 +180,7 @@ func bagherHostKeyCallback(path string) (ssh.HostKeyCallback, error) {
 	if f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0600); err == nil {
 		_ = f.Close()
 	}
+	repairKnownHostsIPv6(path)
 	check, err := knownhosts.New(path)
 	if err != nil {
 		return nil, err
@@ -192,11 +194,61 @@ func bagherHostKeyCallback(path string) (ssh.HostKeyCallback, error) {
 				return ferr
 			}
 			defer f.Close()
-			_, ferr = fmt.Fprintln(f, knownhosts.Line([]string{knownhosts.Normalize(host)}, key))
+			_, ferr = fmt.Fprintln(f, knownHostsEntry(host)+" "+strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))))
 			return ferr
 		}
 		return err
 	}, nil
+}
+
+// knownHostsEntry is host:port as OpenSSH writes it in known_hosts: the bare
+// host on port 22 (an IPv6 one too), [host]:port otherwise. knownhosts.Line
+// writes "[v6]" for port 22, a line its own parser then rejects, and with it
+// the whole file (every link's carrier).
+func knownHostsEntry(address string) string {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		host, port = strings.Trim(address, "[]"), "22"
+	}
+	if port == "22" {
+		return host
+	}
+	return "[" + host + "]:" + port
+}
+
+// repairKnownHostsIPv6 rewrites "[v6]" host patterns (no port) that older
+// carriers wrote into the bare form, so the file parses again.
+func repairKnownHostsIPv6(path string) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	lines := strings.Split(string(b), "\n")
+	changed := false
+	for i, l := range lines {
+		f := strings.SplitN(l, " ", 2)
+		if len(f) != 2 || !strings.Contains(f[0], "[") {
+			continue
+		}
+		pats := strings.Split(f[0], ",")
+		for j, p := range pats {
+			neg := strings.HasPrefix(p, "!")
+			q := strings.TrimPrefix(p, "!")
+			if strings.HasPrefix(q, "[") && strings.HasSuffix(q, "]") {
+				if _, _, err := net.SplitHostPort(q); err != nil {
+					q = strings.Trim(q, "[]")
+					if neg {
+						q = "!" + q
+					}
+					pats[j], changed = q, true
+				}
+			}
+		}
+		lines[i] = strings.Join(pats, ",") + " " + f[1]
+	}
+	if changed {
+		_ = os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0600)
+	}
 }
 
 func bagherCarrierSession(ctx context.Context, t bagherCarrierTarget, knownHosts string) error {
