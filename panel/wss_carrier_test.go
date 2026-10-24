@@ -187,3 +187,37 @@ func TestCarrierSetWSSPortAndSNI(t *testing.T) {
 		t.Fatalf("port 70000: want 400, got %d", w.Code)
 	}
 }
+
+// The other server's WSS address can be IPv6 (WSS over IPv6) or a name; it is
+// kept bracketed with the WSS port, and junk is refused.
+func TestCarrierSetWSSRemoteIPv6(t *testing.T) {
+	oldConfigDir := configDir
+	configDir = t.TempDir()
+	defer func() { configDir = oldConfigDir }()
+	defer func() { _ = stopWSSCarrier() }()
+
+	post := func(body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		handleCarrierPost(w, httptest.NewRequest("POST", "/api/carrier", strings.NewReader(body)))
+		return w
+	}
+	for in, want := range map[string]string{
+		"2001:db8::2": "[2001:db8::2]:9443", "[2001:db8::3]": "[2001:db8::3]:9443",
+		"203.0.113.10": "203.0.113.10:9443", "tunnel.example.com": "tunnel.example.com:9443",
+	} {
+		if w := post(`{"action":"set_wss","wss_port":9443,"wss_remote":"` + in + `"}`); w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", in, w.Code, w.Body.String())
+		}
+		if got := loadWSSConfig().RemoteAddr; got != want {
+			t.Fatalf("%s: remote %q, want %q", in, got, want)
+		}
+		if h := wssRemoteHost(loadWSSConfig().RemoteAddr); h != strings.Trim(in, "[]") {
+			t.Fatalf("%s: shown as %q", in, h)
+		}
+	}
+	for _, bad := range []string{"a b", "x;rm -rf /", "-oProxy"} {
+		if w := post(`{"action":"set_wss","wss_remote":"` + bad + `"}`); w.Code != http.StatusBadRequest {
+			t.Fatalf("%q: want 400, got %d", bad, w.Code)
+		}
+	}
+}

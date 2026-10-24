@@ -1741,7 +1741,7 @@
           </div>
 
           <div class="gw-wss">
-            <div class="gw-wss-h"><b>WSS settings</b><span class="ent-help">Use the same port on both servers. The SNI is the host name shown in the TLS handshake; leave it empty to send none.</span></div>
+            <div class="gw-wss-h"><b>WSS settings</b><span class="ent-help">Use the same port on both servers. The SNI is the host name shown in the TLS handshake; leave it empty to send none. The address can be IPv4, IPv6 or a host name: give the other server's IPv6 to carry WSS over IPv6.</span></div>
             <div class="gw-wss-f">
               <div class="fg">
                 <label for="carrierWSSPortInput">WSS port</label>
@@ -1750,6 +1750,10 @@
               <div class="fg">
                 <label for="carrierWSSSNIInput">SNI (optional)</label>
                 <input type="text" class="hashem-input" id="carrierWSSSNIInput" placeholder="www.example.com" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="fg">
+                <label for="carrierWSSRemoteInput">Address of the other server</label>
+                <input type="text" class="hashem-input u-mono" id="carrierWSSRemoteInput" placeholder="203.0.113.10 or 2001:db8::2" autocomplete="off" spellcheck="false" autocapitalize="off" inputmode="text" dir="ltr">
               </div>
               <button class="hashem-btn hashem-btn-secondary" id="carrierSaveWSSBtn">Save WSS Settings</button>
             </div>

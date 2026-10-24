@@ -1210,6 +1210,9 @@ carrier_init_kernel() {
     fi
     iptables -C INPUT -p tcp --dport "$WP" -j ACCEPT >/dev/null 2>&1 || \
         iptables -I INPUT 1 -p tcp --dport "$WP" -j ACCEPT >/dev/null 2>&1 || true
+    # WSS can come in over IPv6 too
+    ip6tables -C INPUT -p tcp --dport "$WP" -j ACCEPT >/dev/null 2>&1 || \
+        ip6tables -I INPUT 1 -p tcp --dport "$WP" -j ACCEPT >/dev/null 2>&1 || true
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
         ufw allow "$WP"/tcp >/dev/null 2>&1 || true
     fi
@@ -1468,6 +1471,8 @@ carrier_apply() {
                 [[ "$TARGET" == wss:* ]] && WPORT="${TARGET#wss:}"
                 iptables -C INPUT -p tcp --dport "$WPORT" -j ACCEPT >/dev/null 2>&1 || \
                     iptables -I INPUT 1 -p tcp --dport "$WPORT" -j ACCEPT >/dev/null 2>&1 || true
+                ip6tables -C INPUT -p tcp --dport "$WPORT" -j ACCEPT >/dev/null 2>&1 || \
+                    ip6tables -I INPUT 1 -p tcp --dport "$WPORT" -j ACCEPT >/dev/null 2>&1 || true
                 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
                     ufw allow "$WPORT"/tcp >/dev/null 2>&1 || true
                 fi

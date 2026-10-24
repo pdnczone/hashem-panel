@@ -575,6 +575,10 @@ func carrierDrop() {
 }
 
 func carrierDropFam(bin string) {
+	// a host that never counted IPv6 has no chains to drop: skip the failing calls
+	if out, err := runCmdTimeoutOut(5*time.Second, bin+"-save", "-t", "filter"); err == nil && !strings.Contains(string(out), ":"+acctIn+" ") {
+		return
+	}
 	for _, h := range [][2]string{{"INPUT", acctIn}, {"OUTPUT", acctOut}} {
 		_, _ = runCmdTimeout(5*time.Second, bin, "-w", "5", "-D", h[0], "-j", h[1])
 		_, _ = runCmdTimeout(5*time.Second, bin, "-w", "5", "-F", h[1])

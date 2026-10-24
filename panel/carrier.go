@@ -41,6 +41,7 @@ type carrierStatusResponse struct {
 	StatusText    string           `json:"status_text"`
 	GREExists     bool             `json:"gre_exists"`
 	WSSSNI        string           `json:"wss_sni"`
+	WSSRemote     string           `json:"wss_remote"` // the other server's WSS host: IPv4, IPv6 or a name
 	WSS           wssCarrierStatus `json:"wss"`
 }
 
@@ -57,6 +58,15 @@ type carrierPostRequest struct {
 	Remote6   string `json:"remote6,omitempty"` // switch to 4in6: the other server's IPv6 (default: asked over the Peer Link)
 	// WSSSNI: nil leaves the SNI as it is, "" clears it.
 	WSSSNI *string `json:"wss_sni,omitempty"`
+}
+
+// wssRemoteHost is the host of a WSS remote address ("host:port", "[v6]:port"
+// or a bare host).
+func wssRemoteHost(addr string) string {
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		return h
+	}
+	return strings.Trim(addr, "[]")
 }
 
 func carrierConfigPath() string {
@@ -197,6 +207,7 @@ func handleCarrierGet(w http.ResponseWriter, r *http.Request) {
 			statusText = "Peer not replying"
 		}
 	}
+	wc := loadWSSConfig()
 	resp := carrierStatusResponse{
 		Mode:          cfg.Mode,
 		Active:        cfg.ActiveCarrier,
@@ -212,7 +223,8 @@ func handleCarrierGet(w http.ResponseWriter, r *http.Request) {
 		PingRTT:       rtt,
 		StatusText:    statusText,
 		GREExists:     greExists,
-		WSSSNI:        loadWSSConfig().SNI,
+		WSSSNI:        wc.SNI,
+		WSSRemote:     wssRemoteHost(wc.RemoteAddr),
 		WSS:           getWSSStatus(),
 	}
 	writeJSON(w, resp)
@@ -350,7 +362,12 @@ func handleCarrierPost(w http.ResponseWriter, r *http.Request) {
 			_ = saveCarrierConfig(cfg)
 		}
 		if req.WSSRemote != "" {
-			wssCfg.RemoteAddr = req.WSSRemote
+			h := wssRemoteHost(strings.TrimSpace(req.WSSRemote))
+			if !validBagherHost(h) {
+				writeAPIError(w, r, "E-ACTION-01", "invalid address of the other server: an IPv4, an IPv6 or a host name")
+				return
+			}
+			wssCfg.RemoteAddr = net.JoinHostPort(h, strconv.Itoa(wssCfg.ListenPort))
 		}
 		if req.WSSSNI != nil {
 			wssCfg.SNI = strings.TrimSpace(*req.WSSSNI)

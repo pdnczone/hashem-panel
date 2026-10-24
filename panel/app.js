@@ -4937,6 +4937,8 @@ async function loadCarrier() {
   if (s.wss_port && document.activeElement !== wpIn) wpIn.value = s.wss_port;
   const sniIn = $('carrierWSSSNIInput');
   if (document.activeElement !== sniIn) sniIn.value = s.wss_sni || '';
+  const remIn = $('carrierWSSRemoteInput');
+  if (document.activeElement !== remIn) remIn.value = s.wss_remote || '';
 
   const tunCarrier = $('tunnelCarrierTxt');
   if (tunCarrier) tunCarrier.textContent = cur.toUpperCase();
@@ -5027,15 +5029,23 @@ const carrierSaveWSSBtn = $('carrierSaveWSSBtn');
 carrierSaveWSSBtn.onclick = async () => {
   const p = Number($('carrierWSSPortInput').value);
   const sni = $('carrierWSSSNIInput').value.trim();
+  const remote = $('carrierWSSRemoteInput').value.trim().replace(/^\[|\]$/g, '');
   if (!Number.isInteger(p) || p < 1 || p > 65535) {
     toastErr(tr('', 'Invalid port'), tr('', 'Enter a port from 1 to 65535.'));
     $('carrierWSSPortInput').focus();
     return;
   }
+  if (remote && !isIP(remote) && !/^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/.test(remote)) {
+    toastErr(tr('', 'Invalid address'), tr('', 'Enter an IPv4, an IPv6 or a host name.'));
+    $('carrierWSSRemoteInput').focus();
+    return;
+  }
   carrierSaveWSSBtn.disabled = true;
   try {
-    await api('/api/carrier', { action: 'set_wss', wss_port: p, wss_sni: sni });
-    toastOk(tr('', 'WSS settings saved'), docTpl('Port {0}', [p]) + (sni ? ' · SNI ' + sni : ''));
+    const body = { action: 'set_wss', wss_port: p, wss_sni: sni };
+    if (remote) body.wss_remote = remote;
+    await api('/api/carrier', body);
+    toastOk(tr('', 'WSS settings saved'), docTpl('Port {0}', [p]) + (sni ? ' · SNI ' + sni : '') + (remote ? ' · ' + remote : ''));
   } catch (e) {
     toastErr(tr('', 'Could not save WSS settings'), e.message);
   } finally {
