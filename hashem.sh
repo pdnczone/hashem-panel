@@ -5391,13 +5391,15 @@ menu_edit_peer() {
     local NEW_NAME NEW_REMOTE CAR_OPT NEW_CARRIER="" NEW_PORTS
     read -p "Name [${CUR_NAME}]: " NEW_NAME
     read -p "Remote Public IP [${CUR_REMOTE}]: " NEW_REMOTE
-    echo -e "Carrier mode options: 1) Direct GRE  2) FOU:443  3) FOU:55555  4) WSS:8443  (Enter to keep '${CUR_CARRIER}')"
+    echo -e "Carrier options: 1) Direct GRE  2) WSS:8443  3) 6to4  4) 4in6  (Enter to keep '${CUR_CARRIER}')"
     read -p "Select carrier [1-4]: " CAR_OPT
+    local NEW_R6=""
     case "$CAR_OPT" in
         1) NEW_CARRIER="direct" ;;
-        2) NEW_CARRIER="fou:443" ;;
-        3) NEW_CARRIER="fou:55555" ;;
-        4) NEW_CARRIER="wss:8443" ;;
+        2) NEW_CARRIER="wss:8443" ;;
+        3) NEW_CARRIER="6to4" ;;
+        4) NEW_CARRIER="4in6"
+           read -p "IPv6 of the other server (Enter to keep the saved one): " NEW_R6 ;;
         *) NEW_CARRIER="" ;;
     esac
     read -p "Forwarded ports (comma-separated) [${CUR_PORTS}]: " NEW_PORTS
@@ -5406,6 +5408,7 @@ menu_edit_peer() {
     [[ -n "$NEW_NAME" ]] && ARGS+=(--name "$NEW_NAME")
     [[ -n "$NEW_REMOTE" ]] && ARGS+=(--remote-pub "$NEW_REMOTE")
     [[ -n "$NEW_CARRIER" ]] && ARGS+=(--carrier "$NEW_CARRIER")
+    [[ -n "$NEW_R6" ]] && ARGS+=(--remote6 "$NEW_R6")
     [[ -n "$NEW_PORTS" ]] && ARGS+=(--ports "$NEW_PORTS")
 
     cli_edit_peer "${ARGS[@]}"
@@ -8813,74 +8816,70 @@ cli_carrier() {
     init_carrier_json
     local SUB="${1:-status}"
     case "$SUB" in
+        set|set-active|apply)
+            shift
+            local T="${1:-}" GIF="" L6="" R6=""
+            if [[ -z "$T" ]]; then
+                echo -e "${RED}[!] Usage: hashem carrier set <direct|wss[:PORT]|6to4|4in6> [--if IF] [--local6 IP --remote6 IP]${NC}"
+                return 1
+            fi
+            shift
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --if) GIF="$2"; shift 2 ;;
+                    --local6) L6="$2"; shift 2 ;;
+                    --remote6) R6="$2"; shift 2 ;;
+                    *) echo -e "${RED}[!] Unknown flag: $1${NC}"; return 1 ;;
+                esac
+            done
+            [[ -z "$L6" ]] || is_valid_ip6 "$L6" || { echo -e "${RED}[!] Invalid --local6: $L6${NC}"; return 1; }
+            [[ -z "$R6" ]] || is_valid_ip6 "$R6" || { echo -e "${RED}[!] Invalid --remote6: $R6${NC}"; return 1; }
+            [[ -n "$L6" ]] && gre6_set "${GIF:-$TUNNEL_NAME}" LOCAL6 "$L6"
+            [[ -n "$R6" ]] && gre6_set "${GIF:-$TUNNEL_NAME}" REMOTE6 "$R6"
+            carrier_apply "$T" "$GIF" || return 1
+            echo -e "${GREEN}[OK] Carrier now: ${T}${NC}"
+            ;;
+        mode|set-mode)
+            local T="${2:-direct}"
+            [[ "$T" == "auto" ]] && T="direct" # automatic switching was removed
+            carrier_set_mode "$T" || { echo -e "${RED}[!] Invalid carrier: $T${NC}"; return 1; }
+            carrier_apply "$T" || return 1
+            echo -e "${GREEN}[OK] Carrier mode set to: ${T}${NC}"
+            ;;
+        cycle|next)
+            carrier_cycle_next
+            ;;
+        set-ports)
+            shift
+            carrier_set_fou_ports "${1:-443}" "${2:-55555}"
+            ;;
+        init|kernel-init)
+            carrier_init_kernel
+            ;;
         status)
-            local MODE ACT P1 P2
-            MODE=$(carrier_get_mode)
+            local ACT KIND PGRE PING_OUT="no peer"
             ACT=$(carrier_get_active)
-            read -r P1 P2 <<< "$(carrier_get_fou_ports)"
-            local PGRE PING_OUT="no peer"
+            KIND=$(gre_dev_kind "$TUNNEL_NAME")
             PGRE=$(watchdog_get_peer_gre 2>/dev/null)
             if [[ -n "$PGRE" ]]; then
-                if ping -c 1 -W 2 "$PGRE" >/dev/null 2>&1; then
-                    local RTT
-                    RTT=$(ping -c 1 -W 2 "$PGRE" 2>/dev/null | sed -n 's/.*time=\([0-9.]*\) *ms.*/\1/p' | head -n1)
+                local RTT
+                RTT=$(ping -c 1 -W 2 "$PGRE" 2>/dev/null | sed -n 's/.*time=\([0-9.]*\) *ms.*/\1/p' | head -n1)
+                if [[ -n "$RTT" ]]; then
                     PING_OUT="${GREEN}OK (${RTT}ms to ${PGRE})${NC}"
                 else
                     PING_OUT="${RED}FAIL (no reply from ${PGRE})${NC}"
                 fi
             fi
-
-            echo -e "\n${CYAN}==========================================================${NC}"
-            echo -e "${CYAN}         Tunnel Carrier & Multi-Protocol Failover         ${NC}"
-            echo -e "${CYAN}==========================================================${NC}"
-            echo -e "Failover Mode:    ${YELLOW}${MODE}${NC} (auto / direct / manual)"
-            echo -e "Active Carrier:   ${GREEN}${ACT}${NC}"
-            echo -e "FOU Listeners:    UDP ${P1} / UDP ${P2} (Kernel FOU / ipproto 47)"
-            echo -e "Tunnel Health:    ${PING_OUT}"
-            python3 -c '
-import json
-try:
-    with open("'"$CARRIER_FILE"'") as f:
-        d = json.load(f)
-    cands = ", ".join(d.get("candidates", []))
-    print(f"Candidates:       {cands}")
-    print(f"Total Switches:   {d.get(\"switch_count\", 0)}")
-    last = d.get("last_switch", "") or "never"
-    print(f"Last Switch:      {last}")
-except Exception:
-    pass
-' 2>/dev/null
-            echo -e "${CYAN}==========================================================${NC}\n"
-            ;;
-        mode|set-mode)
-            local TARGET="${2:-direct}"
-            [[ "$TARGET" == "auto" ]] && TARGET="direct"
-            carrier_set_mode "$TARGET"
-            echo -e "${GREEN}[OK] Carrier mode set to: ${TARGET}${NC}"
-            carrier_apply "$TARGET"
-            echo -e "${GREEN}[OK] Active carrier applied: ${TARGET}${NC}"
-            ;;
-        set|set-active|apply)
-            local TARGET="${2:-direct}"
-            carrier_apply "$TARGET"
-            echo -e "${GREEN}[OK] Switched active carrier to: ${TARGET}${NC}"
-            ;;
-        next|cycle)
-            local NEW_C
-            NEW_C=$(carrier_cycle_next)
-            echo -e "${GREEN}[OK] Cycled carrier to: ${NEW_C}${NC}"
-            ;;
-        set-ports)
-            local P1="${2:-443}" P2="${3:-55555}"
-            carrier_set_fou_ports "$P1" "$P2"
-            carrier_init_kernel
-            echo -e "${GREEN}[OK] FOU ports updated: ${P1} and ${P2}${NC}"
-            ;;
-        kernel-init)
-            carrier_init_kernel
+            echo -e "Active Carrier: ${GREEN}${ACT}${NC}"
+            echo -e "Mode:           $(carrier_get_mode)"
+            echo -e "GRE device:     ${KIND:-none} (${TUNNEL_NAME})"
+            if [[ "$ACT" == 4in6 ]]; then
+                echo -e "IPv6 ends:      $(gre6_get "$TUNNEL_NAME" LOCAL6) -> $(gre6_get "$TUNNEL_NAME" REMOTE6)"
+            fi
+            echo -e "Tunnel health:  ${PING_OUT}"
             ;;
         *)
-            echo "Usage: hashem carrier [status|mode <direct|fou:PORT>|set <direct|fou:PORT>|next|cycle|set-ports <P1> <P2>]"
+            echo "Usage: hashem carrier [status | set <direct|wss[:PORT]|6to4|4in6> [--if IF] [--local6 IP] [--remote6 IP] | mode <...> | cycle | set-ports P1 P2 | init]"
             return 1
             ;;
     esac
@@ -8889,16 +8888,26 @@ except Exception:
 menu_carrier() {
     local c
     while true; do
-        ui_menu c "Tunnel / Carrier" "$(cli_carrier status 2>&1)" \
+        # this menu changes this server only; the panel's Tunnel tab switches both
+        ui_menu c "Tunnel / Carrier" "$(cli_carrier status 2>&1; echo "Switch the other server too, or use the panel (Tunnel tab), which switches both.")" \
             "1|Direct GRE|Plain GRE (IP protocol 47). Fastest when it is not blocked." \
             "2|WSS (port 8443)|GRE inside WebSocket over TLS; looks like HTTPS." \
-            "3|Next candidate|Try the next carrier in the list now." \
-            "4|Automatic|Switch carriers by itself when one stops working."
+            "3|6to4|GRE over a private IPv6 inside IPv4 (protocol 41), when 47 is blocked." \
+            "4|4in6|GRE over both servers' public IPv6 addresses." \
+            "5|Next candidate|Try the next carrier in the list now."
         case "$c" in
-            1) ui_run "Carrier" cli_carrier set direct ;;
-            2) ui_run "Carrier" cli_carrier set wss:8443 ;;
-            3) ui_run "Carrier" cli_carrier next ;;
-            4) ui_run "Carrier" cli_carrier mode auto ;;
+            1) ui_run "Carrier" cli_carrier mode direct ;;
+            2) ui_run "Carrier" cli_carrier mode wss:8443 ;;
+            3) ui_run "Carrier" cli_carrier mode 6to4 ;;
+            4) local r6=""
+               read -r -p "IPv6 of the other server (Enter to keep the saved one): " r6
+               if [[ -n "$r6" ]] && ! is_valid_ip6 "$r6"; then
+                   echo -e "${RED}[!] Invalid IPv6: $r6${NC}"
+               else
+                   [[ -n "$r6" ]] && gre6_set "$TUNNEL_NAME" REMOTE6 "$r6"
+                   ui_run "Carrier" cli_carrier mode 4in6
+               fi ;;
+            5) ui_run "Carrier" cli_carrier cycle ;;
             0) return 0 ;;
         esac
     done
@@ -10633,47 +10642,6 @@ show_credentials_and_exit() {
     echo ""
 }
 
-cli_carrier() {
-    local SUB="${1:-status}"
-    case "$SUB" in
-        set|apply)
-            shift
-            local T="${1:-}" GIF="" L6="" R6=""
-            if [[ -z "$T" ]]; then
-                echo -e "${RED}[!] Usage: hashem carrier set <direct|wss[:PORT]|6to4|4in6> [--if IF] [--local6 IP --remote6 IP]${NC}"
-                return 1
-            fi
-            shift
-            while [[ $# -gt 0 ]]; do
-                case "$1" in
-                    --if) GIF="$2"; shift 2 ;;
-                    --local6) L6="$2"; shift 2 ;;
-                    --remote6) R6="$2"; shift 2 ;;
-                    *) echo -e "${RED}[!] Unknown flag: $1${NC}"; return 1 ;;
-                esac
-            done
-            [[ -z "$L6" ]] || is_valid_ip6 "$L6" || { echo -e "${RED}[!] Invalid --local6: $L6${NC}"; return 1; }
-            [[ -z "$R6" ]] || is_valid_ip6 "$R6" || { echo -e "${RED}[!] Invalid --remote6: $R6${NC}"; return 1; }
-            [[ -n "$L6" ]] && gre6_set "${GIF:-$TUNNEL_NAME}" LOCAL6 "$L6"
-            [[ -n "$R6" ]] && gre6_set "${GIF:-$TUNNEL_NAME}" REMOTE6 "$R6"
-            carrier_apply "$T" "$GIF"
-            ;;
-        cycle)
-            carrier_cycle_next
-            ;;
-        set-ports)
-            shift
-            carrier_set_fou_ports "${1:-443}" "${2:-55555}"
-            ;;
-        init)
-            carrier_init_kernel
-            ;;
-        status|*)
-            echo "Active Carrier: $(carrier_get_active)"
-            echo "Mode: $(carrier_get_mode)"
-            ;;
-    esac
-}
 
 # bagher_link_units: the carrier units of the foreign servers after the first
 # (hashem-bagher-2.service, ...), one per line.
