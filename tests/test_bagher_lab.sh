@@ -49,16 +49,19 @@ set +m
 # one included, with the last lines the script printed to stderr.
 report() {
     [[ -n ${GITHUB_ACTIONS:-} ]] || return 0
-    local rc=$1 bad=0 msg
+    local rc=$1 bad=0 r n_ok n_bad
     (( rc || ${fail:-1} )) && bad=1
-    { cat "$TMP/result.txt" 2>/dev/null
-      if (( bad )); then
-          echo "--- exit $rc"; echo "--- stderr"; tail -n 8 "$TMP/stderr.log" 2>/dev/null
-          echo "--- carrier1.log"; tail -n 10 "$TMP/carrier1.log" 2>/dev/null; echo "--- carrier2.log"; tail -n 6 "$TMP/carrier2.log" 2>/dev/null
-          echo "--- legacy.log"; tail -n 5 "$TMP/legacy.log" 2>/dev/null; echo "--- frpc.log"; tail -n 10 "$TMP/frpc.log" 2>/dev/null
-      fi; } > "$TMP/report.txt"
-    msg=$(tail -c 6000 "$TMP/report.txt" | sed -e 's/%/%25/g' | sed -e ':a;N;$!ba;s/\n/%0A/g' -e 's/\r/%0D/g')
-    echo "::$( ((bad)) && echo error || echo notice) title=Bagher lab::$msg"
+    # plain ASCII, one line per annotation: a raw log byte must not cost the report
+    gh() { LC_ALL=C tr -cd '\11\12\40-\176' | sed -e 's/%/%25/g' | sed -e ':a;N;$!ba;s/\n/%0A/g'; }
+    n_ok=$(grep -c '^ok:' "$TMP/result.txt" 2>/dev/null); n_bad=$(grep -c '^FAIL:' "$TMP/result.txt" 2>/dev/null)
+    echo "::notice title=Bagher lab::${n_ok:-0} checks passed, ${n_bad:-0} failed, exit $rc"
+    grep '^FAIL:' "$TMP/result.txt" 2>/dev/null | head -n 8 | while IFS= read -r r; do echo "::error title=Bagher lab::$(printf '%s' "$r" | gh)"; done
+    if (( bad )); then
+        r=$({ echo "--- stderr"; tail -n 8 "$TMP/stderr.log"
+              echo "--- carrier1.log"; tail -n 10 "$TMP/carrier1.log"; echo "--- carrier2.log"; tail -n 8 "$TMP/carrier2.log"
+              echo "--- sshd2.log"; tail -n 6 "$TMP/sshd2.log"; echo "--- frpc2.log"; tail -n 6 "$TMP/frpc2.log"; } 2>/dev/null | tail -c 5000 | gh)
+        echo "::warning title=Bagher lab logs::$r"
+    fi
 }
 cleanup() {
     local rc=$? p
