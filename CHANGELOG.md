@@ -3,6 +3,11 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## Unreleased
+
+**Fixes**
+- A second, third or later foreign server no longer disappears from the Tunnels tab and the dashboard while its tunnel is connected. `hashem.sh` wrote a Backhaul tunnel's forwarded ports to `peers.json` as one string, the panel could not read that file, and it then showed no extra tunnel at all. The panel now reads both forms, `hashem.sh` writes a list, and Edit Peer opens for these tunnels again. Run `hashem update` on the Iran server; nothing else to do.
+
 ## v2.7.0 — 2026-10-24
 
 IPv6 in every tunnel, with two new GRE wraps (**6to4** when protocol 47 is blocked but 41 is not, **4in6** over the servers' real IPv6); a new **Xray** tunnel (Reality, XHTTP, gRPC, mKCP, CDN, direct or reverse); **speed and volume limits** per foreign server; Bagher with lower ping and several foreign servers; traffic counters you can trust; and the carrier can be changed from the foreign server too. Update both servers of a tunnel: 6to4/4in6 and a swap from the foreign side need this version on each.

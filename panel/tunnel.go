@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -322,7 +324,7 @@ type peerRecord struct {
 	LocalGre       string   `json:"local_gre"`
 	PeerGre        string   `json:"peer_gre"`
 	Ports          []int    `json:"ports"`
-	RawPorts       []string `json:"raw_ports,omitempty"`
+	RawPorts       portList `json:"raw_ports,omitempty"`
 	Token          string   `json:"token,omitempty"`
 	GreIf          string   `json:"gre_if"`
 	FrpsSvc        string   `json:"frps_svc"`
@@ -335,6 +337,25 @@ type peerRecord struct {
 	FRPTransport   string   `json:"frp_transport,omitempty"`   // "tcp" | "kcp" | "quic" | "websocket" | "wss"
 	UseEncryption  bool     `json:"use_encryption,omitempty"`  // transport.useEncryption
 	UseCompression bool     `json:"use_compression,omitempty"` // transport.useCompression
+}
+
+// portList is raw_ports. Older hashem.sh wrote it for Backhaul peers as one
+// string ("443, 2083"); that failed the whole peers.json decode and hid every
+// peer tunnel from the panel. Both forms are read; it is written as a list.
+type portList []string
+
+func (l *portList) UnmarshalJSON(b []byte) error {
+	var list []string
+	if err := json.Unmarshal(b, &list); err == nil {
+		*l = list
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	*l = strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' })
+	return nil
 }
 
 type peerLive struct {
@@ -374,10 +395,19 @@ func loadPeers() []peerRecord {
 	var v struct {
 		Peers []peerRecord `json:"peers"`
 	}
-	if json.Unmarshal(data, &v) != nil {
+	if err := json.Unmarshal(data, &v); err != nil {
+		logPeersDecodeErr(err)
 		return nil
 	}
 	return v.Peers
+}
+
+var peersDecodeErr sync.Once
+
+// logPeersDecodeErr says once why peers.json was not read: every peer tunnel
+// disappears from the panel then, while its services keep running.
+func logPeersDecodeErr(err error) {
+	peersDecodeErr.Do(func() { log.Printf("peers.json: cannot read it, peer tunnels are hidden: %v", err) })
 }
 
 func findPeer(id int) *peerRecord {

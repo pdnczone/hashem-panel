@@ -1443,7 +1443,7 @@ function renderPeers(peers) {
          ? `<span class="badge u-pill-violet">GRE+Backhaul</span>`
          : `<span class="badge warn">FRP</span>`);
     const transBadge = p.transport ? `<span class="badge dim">${esc(p.transport)}</span>` : '';
-    const fwdPorts = p.raw_ports || (p.ports || []).join(', ') || '—';
+    const fwdPorts = [].concat(p.raw_ports || p.ports || []).join(', ') || '—';
     const greIfLabel = isBh ? 'N/A (Standalone)' : (p.gre_if || 'gre-t' + p.id);
     const svcTitle = (isBh || isGreBh) ? 'Backhaul & Traffic' : 'FRP & Traffic';
     return `<div class="tunnel-card peer-card u-peer-card-wide" id="peer-card-${p.id}">
@@ -1466,7 +1466,7 @@ function renderPeers(peers) {
         there: nm, thereSub: p.remote_pub || '',
         tags: [[isBh || isGreBh ? 'Backhaul' : 'FRP', 'eng'], [p.transport || '', ''], [isBh ? '' : 'GRE', 'gre']],
         gre: !isBh, lat: linkPing(p).ok ? linkPing(p).txt : null, rate: linkRate('p' + p.id, p.rx, p.tx, _statusCountersAt),
-        ports: p.raw_ports ? String(p.raw_ports).split(/[ ,]+/) : (p.ports || []),
+        ports: p.raw_ports ? String(p.raw_ports).split(/[ ,]+/).filter(Boolean) : (p.ports || []),
       })}
       <div class="det-grid">
         <div class="det-card">
@@ -8301,7 +8301,8 @@ function openEditPeer(peerId) {
     engine = p.engine || (p.frps_svc && p.frps_svc.includes('backhaul') ? (p.no_gre ? 'backhaul' : 'gre-backhaul') : 'frp');
     transport = p.transport || 'tcpmux';
     if (p.raw_ports) {
-      ports = p.raw_ports.split(',').map(s => s.trim()).filter(Boolean);
+      // a list from the panel, a string from older hashem.sh
+      ports = String(p.raw_ports).split(/[\s,]+/).filter(Boolean);
     } else {
       ports = p.ports ? [...p.ports] : [];
     }
