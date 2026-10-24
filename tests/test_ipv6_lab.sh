@@ -259,7 +259,9 @@ $H sh -c "ip link add gre-tunnel type gre local $HUB4 remote $SPOKE4 ttl 255; ip
 $S sh -c "ip link add gre-tunnel type gre local $SPOKE4 remote $HUB4 ttl 255; ip link set gre-tunnel up mtu 1380
   ip addr add 10.10.10.1/30 dev gre-tunnel; ip route replace 10.10.10.2/32 dev gre-tunnel"
 inner_ping() { local i; for i in $(seq 1 20); do $S ping -c1 -W1 10.10.10.2 >/dev/null 2>&1 && { echo OK; return; }; sleep 0.5; done; echo DOWN; }
-kind() { ip netns exec "$1" bash -c "source '$TMP/carrier.sh'; gre_dev_kind gre-tunnel"; }
+# cs NS FUNC ARGS: one of hashem.sh's carrier functions, run inside NS (read-only here)
+cs() { local ns=$1; shift; ip netns exec "$ns" env PANEL_CONFIG_DIR="$TMP/cfg-ro" bash -c "source '$TMP/carrier.sh'; $*"; }
+kind() { cs "$1" gre_dev_kind gre-tunnel; }
 over_gre() { # name: Backhaul tcpmux over the inner addresses, 256 KiB byte-exact
     server_start tcpmux "29001=19001"
     spoke "backhaul_write_client_conf '$TMP/bh/client.toml' '10.10.10.2:3080' tcpmux tok; : > '$TMP/client.log'; client_start backhaul-client"
@@ -268,8 +270,9 @@ over_gre() { # name: Backhaul tcpmux over the inner addresses, 256 KiB byte-exac
     check "$1: a user over IPv6 through it, TCP 256 KiB" OK "$(probe tcp "$HUB6" 262144)"
     spoke client_stop; server_stop
 }
-block47() { for ns in "$H" "$S"; do $ns iptables -A INPUT -p 47 -j DROP; done; }
-block41() { for ns in "$H" "$S"; do $ns iptables -A INPUT -p 41 -j DROP; done; }
+# inserted on top, above the ACCEPT the carrier adds for the other server
+block47() { for ns in "$H" "$S"; do $ns iptables -I INPUT 1 -p 47 -j DROP; done; }
+block41() { for ns in "$H" "$S"; do $ns iptables -I INPUT 1 -p 41 -j DROP; done; }
 unblock_all() { for ns in "$H" "$S"; do $ns iptables -F INPUT; $ns ip6tables -F INPUT; done; }
 
 check "carrier direct: the inner address answers" OK "$(inner_ping)"
@@ -278,7 +281,7 @@ block47
 check "carrier direct: down once protocol 47 is dropped" DOWN "$(inner_ping)"
 hubc "carrier_apply 6to4 gre-tunnel" >/dev/null; spokec "carrier_apply 6to4 gre-tunnel" >/dev/null
 check "carrier 6to4: gre-tunnel is ip6gre" "ip6gre ip6gre" "$(kind "$HUB") $(kind "$SPOKE")"
-check "carrier 6to4: the sit underlay is up" sit "$($H bash -c "source '$TMP/carrier.sh'; gre_dev_kind hs6-gre-tunnel")"
+check "carrier 6to4: the sit underlay is up" sit "$(cs "$HUB" gre_dev_kind hs6-gre-tunnel)"
 check "carrier 6to4: inner IPv4 and its route kept" "10.10.10.1 dev gre-tunnel" "$($H ip -4 route show 10.10.10.1 | awk '{print $1, $2, $3}')"
 check "carrier 6to4: the inner address answers with GRE (47) dropped" OK "$(inner_ping)"
 over_gre "carrier 6to4"
@@ -294,7 +297,7 @@ over_gre "carrier 4in6"
 unblock_all
 hubc "carrier_apply direct gre-tunnel" >/dev/null; spokec "carrier_apply direct gre-tunnel" >/dev/null
 check "carrier direct again: gre-tunnel is gre" "gre gre" "$(kind "$HUB") $(kind "$SPOKE")"
-check "carrier direct again: the IPv4 ends came back" "$SPOKE4 $HUB4" "$($H bash -c "source '$TMP/carrier.sh'; gre_dev_ends gre-tunnel")"
+check "carrier direct again: the IPv4 ends came back" "$SPOKE4 $HUB4" "$(cs "$HUB" gre_dev_ends gre-tunnel)"
 check "carrier direct again: the inner address answers" OK "$(inner_ping)"
 over_gre "carrier direct again"
 # 4in6 without the other server's IPv6: refused, and the tunnel keeps working
