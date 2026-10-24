@@ -309,7 +309,28 @@ func doctorConfigFindings(st tunnelStatus) []doctorFinding {
 		f.Fix, f.FixTpl = rec, rec
 		out = append(out, f)
 	}
+	// the server has IPv6 but UFW leaves IPv6 out: users over IPv6 are blocked
+	if acctIPv6() && ufwIPv6Off() {
+		out = append(out, newFinding("warning", "config", 5, false,
+			"This server has a public IPv6 address but UFW is set to IPV6=no: users and servers cannot reach the tunnel ports over IPv6",
+			"Set IPV6=yes in {0}, then run: ufw reload", ufwDefaultPath))
+	}
 	return out
+}
+
+var (
+	ufwDefaultPath = "/etc/default/ufw"
+	ufwConfPath    = "/etc/ufw/ufw.conf"
+)
+
+// ufwIPv6Off reports an enabled UFW whose IPv6 rules are switched off.
+func ufwIPv6Off() bool {
+	conf, err := os.ReadFile(ufwConfPath)
+	if err != nil || !regexp.MustCompile(`(?m)^\s*ENABLED\s*=\s*"?yes"?\s*$`).Match(conf) {
+		return false
+	}
+	def, err := os.ReadFile(ufwDefaultPath)
+	return err == nil && regexp.MustCompile(`(?m)^\s*IPV6\s*=\s*"?no"?\s*$`).Match(def)
 }
 
 // doctorBagherStatus is nil when Bagher is not set up on this server.

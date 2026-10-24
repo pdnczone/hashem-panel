@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -64,5 +67,40 @@ func TestScoreAndRating(t *testing.T) {
 	}
 	if rep.KernelAudit.CongestionAlg == "" {
 		t.Errorf("expected congestion algorithm to be detected")
+	}
+}
+
+func TestDoctorUFWIPv6Off(t *testing.T) {
+	dir := t.TempDir()
+	oldDef, oldConf, old6 := ufwDefaultPath, ufwConfPath, acctIPv6
+	t.Cleanup(func() { ufwDefaultPath, ufwConfPath, acctIPv6 = oldDef, oldConf, old6 })
+	ufwDefaultPath, ufwConfPath = filepath.Join(dir, "ufw"), filepath.Join(dir, "ufw.conf")
+	has := func(fs []doctorFinding) bool {
+		for _, f := range fs {
+			if strings.Contains(f.TitleTpl, "UFW is set to IPV6=no") {
+				return true
+			}
+		}
+		return false
+	}
+	acctIPv6 = func() bool { return true }
+	_ = os.WriteFile(ufwConfPath, []byte("ENABLED=yes\n"), 0600)
+	_ = os.WriteFile(ufwDefaultPath, []byte("IPV6=no\n"), 0600)
+	if !has(doctorConfigFindings(tunnelStatus{})) {
+		t.Fatal("UFW with IPV6=no on an IPv6 server must be reported")
+	}
+	_ = os.WriteFile(ufwDefaultPath, []byte("IPV6=yes\n"), 0600)
+	if has(doctorConfigFindings(tunnelStatus{})) {
+		t.Fatal("IPV6=yes is fine")
+	}
+	_ = os.WriteFile(ufwDefaultPath, []byte("IPV6=no\n"), 0600)
+	_ = os.WriteFile(ufwConfPath, []byte("ENABLED=no\n"), 0600)
+	if has(doctorConfigFindings(tunnelStatus{})) {
+		t.Fatal("a disabled UFW blocks nothing")
+	}
+	_ = os.WriteFile(ufwConfPath, []byte("ENABLED=yes\n"), 0600)
+	acctIPv6 = func() bool { return false }
+	if has(doctorConfigFindings(tunnelStatus{})) {
+		t.Fatal("a server without IPv6 has nothing to warn about")
 	}
 }

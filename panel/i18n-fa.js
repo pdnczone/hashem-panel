@@ -2012,6 +2012,8 @@ window.FA_TEXT = {
 "servers": "سرور",
 "Tunnel up": "تونل وصل است",
 "Tunnel down": "تونل قطع است",
+"This server has a public IPv6 address but UFW is set to IPV6=no: users and servers cannot reach the tunnel ports over IPv6": "این سرور IPv6 عمومی دارد ولی UFW روی IPV6=no است: کاربران و سرورها از راه IPv6 به پورت‌های تونل نمی‌رسند",
+"Set IPV6=yes in {0}, then run: ufw reload": "در {0} مقدار IPV6=yes بگذارید و بعد اجرا کنید: ufw reload",
 "Stale {0} config found ({1}) but the {2} binary is not installed — role is reported as unknown": "فایل تنظیمات قدیمی {0} پیدا شد ({1}) ولی برنامه‌ی {2} نصب نیست، برای همین نقش سرور «نامشخص» گزارش می‌شود",
 "Remove the stale config or reinstall the engine (Setup tab)": "فایل تنظیمات قدیمی را پاک کنید یا موتور را دوباره نصب کنید (تب راه‌اندازی)",
 "frpc login fails with 'connect to server error: EOF'": "ورود frpc با خطای «connect to server error: EOF» شکست می‌خورد",
