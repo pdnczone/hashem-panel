@@ -289,7 +289,8 @@ over_gre "carrier 6to4"
 block41; v4_block; $S iptables -A INPUT -s "$HUB4" -j DROP
 check "carrier 6to4: down once protocol 41 is dropped" DOWN "$(inner_ping)"
 hubc "gre6_set gre-tunnel REMOTE6 $SPOKE6; gre6_set gre-tunnel LOCAL6 $HUB6; carrier_apply 4in6 gre-tunnel" >/dev/null
-spokec "gre6_set gre-tunnel REMOTE6 $HUB6; gre6_set gre-tunnel LOCAL6 $SPOKE6; carrier_apply 4in6 gre-tunnel" >/dev/null
+# the foreign side gives only the other server's IPv6: its own comes from the route
+spokec "gre6_set gre-tunnel REMOTE6 $HUB6; carrier_apply 4in6 gre-tunnel" >/dev/null
 check "carrier 4in6: gre-tunnel is ip6gre, no sit left" "ip6gre ip6gre -" "$(kind "$HUB") $(kind "$SPOKE") $($H ip link show hs6-gre-tunnel >/dev/null 2>&1 && echo sit || echo -)"
 check "carrier 4in6: the inner address answers with no IPv4 between the servers" OK "$(inner_ping)"
 over_gre "carrier 4in6"

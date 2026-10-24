@@ -614,14 +614,17 @@ func ptSitUp(remote4, local6 string) error {
 }
 
 // pt6GREUp creates the 4in6 test tunnel: a keyed ip6gre to the other server's
-// IPv6 (local may be empty: the kernel picks it) with an inner IPv4.
+// IPv6 with an inner IPv4. Without local6 the route's source is used: an
+// ip6gre with no local address gets no transmit capability from the kernel.
 func pt6GREUp(remote6, local6, inner string) error {
-	_, _ = runCmdTimeout(5*time.Second, "ip", "link", "del", pt6GREIf)
-	add := []string{"ip", "link", "add", pt6GREIf, "type", "ip6gre", "remote", remote6}
-	if local6 != "" {
-		add = append(add, "local", local6)
+	if local6 == "" {
+		if local6 = routeSourceTo6(remote6); local6 == "" {
+			return fmt.Errorf("no IPv6 route to %s", remote6)
+		}
 	}
-	add = append(add, "key", pt6GREKey, "hoplimit", "255", "encaplimit", "none")
+	_, _ = runCmdTimeout(5*time.Second, "ip", "link", "del", pt6GREIf)
+	add := []string{"ip", "link", "add", pt6GREIf, "type", "ip6gre", "remote", remote6, "local", local6,
+		"key", pt6GREKey, "hoplimit", "255", "encaplimit", "none"}
 	steps := [][]string{
 		add,
 		{"ip", "addr", "add", inner + "/30", "dev", pt6GREIf},

@@ -435,8 +435,11 @@ func detectPublicIP6() string {
 	return externalPublicIP6Cached()
 }
 
-func routeSourceIP6() string {
-	out, err := runCmdTimeout(5*time.Second, "ip", "-6", "route", "get", "2001:4860:4860::8888")
+func routeSourceIP6() string { return routeSourceTo6("2001:4860:4860::8888") }
+
+// routeSourceTo6 is the source address this server uses towards IPv6 dst.
+func routeSourceTo6(dst string) string {
+	out, err := runCmdTimeout(5*time.Second, "ip", "-6", "route", "get", dst)
 	if err != nil {
 		return ""
 	}

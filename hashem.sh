@@ -1342,7 +1342,11 @@ gre6_rebuild() {
         6to4) [[ -n "$r4" ]] || { echo "6to4: the IPv4 address of the other server is unknown" >&2; return 1; }
               read -r ul ur <<<"$(gre6_ula "$inner")"
               [[ -n "$ur" ]] || { echo "6to4: no inner IPv4 on $dev" >&2; return 1; } ;;
-        4in6) [[ -n "$r6" ]] || { echo "4in6: the IPv6 address of the other server is unknown" >&2; return 1; } ;;
+        4in6) [[ -n "$r6" ]] || { echo "4in6: the IPv6 address of the other server is unknown" >&2; return 1; }
+              # an ip6gre without a local address cannot send (the kernel
+              # gives it no xmit capability): take the route's source
+              [[ -n "$l6" ]] || l6=$(ip -6 route get "$r6" 2>/dev/null | sed -n 's/.* src \([0-9a-fA-F:]*\).*/\1/p' | head -n1)
+              [[ -n "$l6" ]] || { echo "4in6: this server has no IPv6 route to $r6" >&2; return 1; } ;;
         *)    [[ -n "$r4" ]] || { echo "$target: the IPv4 address of the other server is unknown" >&2; return 1; } ;;
     esac
     [[ "$target" == 6to4 || "$target" == 4in6 ]] && { [[ -d /proc/sys/net/ipv6 ]] || { echo "$target: IPv6 is disabled in this kernel" >&2; return 1; }; }
