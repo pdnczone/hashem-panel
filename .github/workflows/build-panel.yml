@@ -103,6 +103,19 @@ jobs:
             panel/dist/grepanel
             panel/checksums.txt
 
+      # The release description is this version's section of CHANGELOG.md:
+      # the action does not read the annotated tag message, so releases had none.
+      - name: Release notes from CHANGELOG
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          awk -v v="## ${VER} " 'index($0, v) == 1 {on = 1; next} on && /^## / {exit} on' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::warning::CHANGELOG.md has no section for ${VER}"
+            echo "Hashem panel ${VER}." > release-notes.md
+          fi
+          printf '\n---\nEvery version: [CHANGELOG.md](https://github.com/%s/blob/%s/CHANGELOG.md)\n' "$GITHUB_REPOSITORY" "$VER" >> release-notes.md
+          head -n 15 release-notes.md
+
       - name: Create release (Tag)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -110,7 +123,7 @@ jobs:
           name: "Hashem panel ${{ env.VER }}"
           prerelease: false
           make_latest: "true"
-          # By not specifying 'body', the action will use the annotated tag message as the release notes automatically.
+          body_path: release-notes.md
           files: |
             panel/${{ env.BIN_NAME }}-linux-amd64
             panel/${{ env.BIN_NAME }}-linux-arm64

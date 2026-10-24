@@ -6,7 +6,7 @@
 
 Users connect to the Iran server's public IP; their traffic reaches services on your foreign servers through GRE, FRP, Backhaul, Xray, SSH or a spoofed pipe, with health checks, failover and safe updates built in.
 
-[![Latest release](https://img.shields.io/github/release/pdnczone/hashem-panel?display_name=tag)](https://github.com/pdnczone/hashem-panel/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/pdnczone/hashem-panel/total?label=downloads&color=brightgreen)](https://github.com/pdnczone/hashem-panel/releases)
 [![CI](https://github.com/pdnczone/hashem-panel/actions/workflows/ci.yml/badge.svg)](https://github.com/pdnczone/hashem-panel/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/linux-amd64%20%7C%20arm64-blue)](#requirements)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
@@ -16,15 +16,6 @@ English · [فارسی](README.fa.md) · [Website](https://pdnczone.ir) · [Tele
 <img src="docs/img/dashboard.png" alt="Hashem dashboard: one Iran server, four foreign servers, live traffic" width="900">
 
 </div>
-
-## What's new in v2.7.0
-
-- **IPv6 in every tunnel.** Users connect over IPv4 and IPv6 at once, and the two servers can link over IPv6. Limits, counters, the path test and cluster DNS (AAAA) included. [Guide](docs/IPV6.md)
-- **6to4 and 4in6 GRE wraps,** for networks that drop protocol 47 but pass 41, or that only work over IPv6. Both servers switch together and go back if the tunnel stays silent.
-- **Xray tunnel** (Reality, XHTTP, gRPC, mKCP; direct, reverse or through Cloudflare), next to 3x-ui or Marzban without touching them. [Guide](docs/XRAY_TUNNEL.md)
-- **Speed and volume limits** per foreign server, **faster Bagher** with several foreign servers, and **accurate traffic counters.**
-
-Every change, with upgrade notes: [CHANGELOG](CHANGELOG.md).
 
 ## How it works
 
