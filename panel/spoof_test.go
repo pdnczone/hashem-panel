@@ -380,3 +380,22 @@ func TestSpoofTesterStartStop(t *testing.T) {
 		t.Fatalf("failed run = %+v", v)
 	}
 }
+
+// The Iran server makes the peer keypair itself, so "up" never stops on a
+// missing peer key; making it twice keeps the same key.
+func TestSpoofEnsurePeerKeypairKeepsKey(t *testing.T) {
+	var s spoofState
+	if err := s.ensurePeerKeypair(); err != nil {
+		t.Fatal(err)
+	}
+	if s.WGPeerPub == "" || s.WGPeerPriv == "" {
+		t.Fatal("the peer keypair was not made")
+	}
+	pub := s.WGPeerPub
+	if err := s.ensurePeerKeypair(); err != nil {
+		t.Fatal(err)
+	}
+	if s.WGPeerPub != pub {
+		t.Fatal("a second call must keep the same peer key")
+	}
+}

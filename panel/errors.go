@@ -74,6 +74,7 @@ var errCatalog = map[string]errInfo{
 	"E-CARRIER-01":  {500, "carrier switch failed", "See the detail; both servers must be able to apply the same carrier (check the Peer Link)."},
 	"E-PATHTEST-01": {400, "path test could not start", "See the detail: usually a port in use (pick another first port) or a damaged code (copy it again from the Iran server)."},
 	"E-ENGINE-01":   {500, "engine switch failed", "See the detail: nothing changed or the previous engine was restored. Check journalctl for the unit it names."},
+	"E-ENGINE-02":   {400, "engine settings are incomplete", "Fill in what the detail names first: on the foreign server paste the bundle from the Iran server (Spoof tab → Bundle); nothing was changed."},
 	// installer
 	"E-INSTALL-01": {500, "hashem.sh installer not found", "Reinstall the panel or set HASHEM_SCRIPT=/path/to/hashem.sh (legacy GRE_SCRIPT still works)."},
 	"E-INSTALL-02": {500, "installer (hashem.sh) failed", "Open the steps output — failing detail is appended. \"Unknown command\" = panel hashem.sh is an old version: run Update to latest."},
