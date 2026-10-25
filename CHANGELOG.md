@@ -3,6 +3,14 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## v2.7.2 — 2026-10-25
+
+A fix for the Spoof Tunnel. Run `hashem update` on the Iran server; update the foreign server too for the clearer messages.
+
+**Fixes**
+- **Up** on the Iran server no longer stops with `E-ENGINE-01` "the peer WireGuard key is missing" when the bundle has not been shown yet. The Iran server owns both WireGuard keypairs and now makes any that are missing when it brings the tunnel up; showing the bundle later gives the same keys.
+- Spoof settings that are still incomplete (no bundle imported on the foreign server, no spoof IP, no peer IP) now return the new `E-ENGINE-02` (400) with a hint that fits, instead of `E-ENGINE-01` (500) with a journalctl hint. The missing peer key message now tells the foreign server to import the bundle from the Iran server.
+
 ## v2.7.1 — 2026-10-24
 
 A fix for servers with more than one foreign server. Run `hashem update` on the Iran server; nothing else to do.
