@@ -206,6 +206,7 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 | Code | HTTP | Meaning | What to do |
 | --- | --- | --- | --- |
 | `E-ENGINE-01` | 500 | engine switch failed | See the detail: nothing changed or the previous engine was restored. Check journalctl for the unit it names. |
+| `E-ENGINE-02` | 400 | engine settings are incomplete | Fill in what the detail names first: on the foreign server paste the bundle from the Iran server (Spoof tab → Bundle); nothing was changed. |
 
 ## E-SENTINEL-xx — Sentinel addon
 
@@ -290,4 +291,4 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 | `E-ACCESS-02` | 401 | current password is incorrect | Verify your current password before changing access settings. |
 | `E-ACCESS-03` | 409 | port conflict detected | The requested port is reserved or used by a tunnel/proxy. Pick a free port. |
 
-Total: 154 codes.
+Total: 155 codes.

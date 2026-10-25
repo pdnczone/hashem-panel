@@ -444,6 +444,21 @@ type spoofBundle struct {
 	CorePort      int    `json:"core_port"`
 }
 
+// ensurePeerKeypair makes the foreign server's keypair on the Iran side. It is
+// made once and kept, so showing the bundle again gives the same keys and a
+// running tunnel keeps working.
+func (s *spoofState) ensurePeerKeypair() error {
+	if pub, err := spoofPubFromPriv(s.WGPeerPriv); err == nil && pub == s.WGPeerPub {
+		return nil
+	}
+	priv, pub, err := spoofGenKeypair()
+	if err != nil {
+		return err
+	}
+	s.WGPeerPriv, s.WGPeerPub = priv, pub
+	return nil
+}
+
 // makeSpoofBundle is called on the Iran side. It ensures both keypairs exist,
 // persists the foreign public key into our own state, and returns the bundle
 // plus the (possibly updated) state to save.
@@ -454,14 +469,8 @@ func makeSpoofBundle(s spoofState) (string, spoofState, error) {
 	if err := s.ensureSpoofKeys(); err != nil {
 		return "", s, err
 	}
-	// The foreign keypair is made once and kept, so showing the bundle again
-	// gives the same keys and a running tunnel keeps working.
-	if pub, err := spoofPubFromPriv(s.WGPeerPriv); err != nil || pub != s.WGPeerPub {
-		priv, pub, err := spoofGenKeypair()
-		if err != nil {
-			return "", s, err
-		}
-		s.WGPeerPriv, s.WGPeerPub = priv, pub
+	if err := s.ensurePeerKeypair(); err != nil {
+		return "", s, err
 	}
 	if s.LocalPublic == "" {
 		s.LocalPublic = savedPublicIP()
@@ -666,6 +675,25 @@ func handleSpoofPost(w http.ResponseWriter, r *http.Request) {
 
 	case "up", "apply":
 		applySpoofForm(&s, req)
+		// The Iran server owns both keypairs, so it makes any that are missing
+		// instead of refusing to start; the foreign server only gets the peer
+		// key from the bundle, so it cannot.
+		if s.Role == "local" {
+			err := s.ensureSpoofKeys()
+			if err == nil {
+				err = s.ensurePeerKeypair()
+			}
+			if err != nil {
+				writeAPIError(w, r, "E-ENGINE-01", err.Error())
+				return
+			}
+		}
+		if err := s.ready(); err != nil {
+			s.LastError = err.Error()
+			_ = saveSpoofState(s)
+			writeAPIError(w, r, "E-ENGINE-02", err.Error())
+			return
+		}
 		out, err := applySpoof(s)
 		if err != nil {
 			s.LastError = err.Error()
