@@ -332,7 +332,7 @@ func (s spoofState) ready() error {
 		return fmt.Errorf("no spoof IP set: run the tester and pick at least one usable IP")
 	}
 	if s.WGPeerPub == "" {
-		return fmt.Errorf("the peer WireGuard key is missing: on the foreign server import the bundle; on the Iran server generate it first")
+		return fmt.Errorf("the peer WireGuard key is missing: import the bundle from the Iran server (Spoof tab → Bundle) on this foreign server first")
 	}
 	if !spoofTransportOK(s.SendTransport) || !spoofTransportOK(s.RecvTransport) {
 		return fmt.Errorf("transports must be one of %s", strings.Join(spoofTransports, ", "))
