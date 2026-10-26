@@ -309,7 +309,9 @@ func applyXrayLink(l XrayLink, others []XrayLink) ([]xrayStep, error) {
 	}
 	raw, _ := json.MarshalIndent(cfg, "", "  ")
 	path := xrayLinkConfPath(l.ID)
-	tmp := path + ".new"
+	// Xray picks the config format from the extension: "link-1.json.new" fails
+	// with "Failed to get format", so the test copy keeps .json.
+	tmp := strings.TrimSuffix(path, ".json") + ".new.json"
 	if err := writeFileAtomic(tmp, raw, 0o600); err != nil {
 		return fail("config", "E-XRAY-04", err.Error())
 	}

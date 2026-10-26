@@ -67,6 +67,10 @@ func (e *xrayEnv) use() {
 	runner = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		switch {
 		case name == bin && len(args) > 1 && args[1] == "-test":
+			// like Xray: the config format comes from the file extension
+			if c := args[len(args)-1]; !strings.HasSuffix(c, ".json") {
+				return []byte("Failed to start: main: failed to load config files: [" + c + "] > core: Failed to get format of " + c), fmt.Errorf("exit status 23")
+			}
 			if !strings.Contains(e.testOut, "OK") {
 				return []byte(e.testOut), fmt.Errorf("exit status 23")
 			}
