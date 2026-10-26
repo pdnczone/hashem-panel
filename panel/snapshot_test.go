@@ -598,3 +598,25 @@ func TestJitterIsStableAndBounded(t *testing.T) {
 		t.Fatal("different peers must get different offsets")
 	}
 }
+
+// A tick passes ss the control-port filter, so a busy host's other sockets are
+// never dumped; the base tunnel's port is in it alongside the peers'.
+func TestSnapshotSSIsFilteredToControlPorts(t *testing.T) {
+	h := newStubHost(t, 2)
+	var args []string
+	inner := runner
+	runner = func(ctx context.Context, name string, a ...string) ([]byte, error) {
+		if name == "ss" {
+			args = a
+		}
+		return inner(ctx, name, a...)
+	}
+	h.ss = sessionLine(1)
+	snapshotTick()
+	if len(args) != 4 || args[0] != "-Htin" || !strings.HasPrefix(args[3], "( ") || strings.Count(args[3], "sport = :") < 6 {
+		t.Fatalf("ss must get a port filter for both peers, got %q", args)
+	}
+	if !snapPtr.Load().Peers[0].Linked {
+		t.Fatal("the filtered output must still link the peer")
+	}
+}

@@ -130,6 +130,26 @@ func controlPorts(port int) []int {
 	return []int{port, port + 2, port - 2}
 }
 
+// ssPortFilter is the ss filter for the sessions on these control ports
+// (each with its P±2 neighbours, see controlPorts), on either end: the hub
+// matches the local port, a client the remote one. "" when there are none.
+func ssPortFilter(ports []int) string {
+	seen := map[int]bool{}
+	var terms []string
+	for _, p := range ports {
+		for _, q := range controlPorts(p) {
+			if q > 0 && q <= 65535 && !seen[q] {
+				seen[q] = true
+				terms = append(terms, "sport = :"+strconv.Itoa(q), "dport = :"+strconv.Itoa(q))
+			}
+		}
+	}
+	if len(terms) == 0 {
+		return ""
+	}
+	return "( " + strings.Join(terms, " or ") + " )"
+}
+
 // portOwners counts, per local port, how many control ports claim it. A session
 // on a port with a single owner can be attributed to that peer whatever its
 // remote address (NAT / CGNAT / roaming).

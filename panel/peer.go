@@ -829,7 +829,7 @@ func peerSyncTick() {
 
 	if c.Role == "worker" {
 		if !c.IsConnected {
-			st := localStatus()
+			st := currentLocal() // a full localStatus() scan every 10s only to read the GRE address
 			localInner := st.Gre.Inner
 			if localInner == "" {
 				localInner = defaultForeignGRE

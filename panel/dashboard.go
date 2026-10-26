@@ -676,7 +676,28 @@ func readCPU() (cpuSample, bool) {
 
 // ---- connections: established TCP/UDP via ss ----
 
+// activeConnsCache: the four /proc/net tables are the kernel's slow path on a
+// host with many sockets, and the snapshot and the history recorder both ask
+// every 5s, so one reading serves for 30s.
+var activeConnsCache struct {
+	sync.Mutex
+	root string
+	at   time.Time
+	v    any
+}
+
 func activeConns() any {
+	c := &activeConnsCache
+	c.Lock()
+	defer c.Unlock()
+	if c.root == procRoot && time.Since(c.at) < 30*time.Second {
+		return c.v
+	}
+	c.root, c.at, c.v = procRoot, time.Now(), countActiveConns()
+	return c.v
+}
+
+func countActiveConns() any {
 	n := 0
 	have := false
 	for _, f := range []string{"net/tcp", "net/tcp6", "net/udp", "net/udp6"} {
