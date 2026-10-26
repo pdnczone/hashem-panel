@@ -522,4 +522,8 @@ func TestMigrateBagherFRPCTLS(t *testing.T) {
 	if ok, _ := migrateBagherFRPCTLS(p); ok {
 		t.Fatal("a file that sets TLS itself must be left alone")
 	}
+	_ = os.WriteFile(p, []byte("serverPort = 55400\n\n[transport]\ntcpMux = false\n"), 0o600)
+	if ok, _ := migrateBagherFRPCTLS(p); ok {
+		t.Fatal("a file with a [transport] table must be left alone (the dotted key would be invalid TOML)")
+	}
 }

@@ -355,7 +355,8 @@ func migrateBagherCarrierUnit(unitPath string) (bool, error) {
 // drops the second encryption layer. A file that sets TLS itself is left alone.
 func migrateBagherFRPCTLS(path string) (bool, error) {
 	data, err := os.ReadFile(path)
-	if err != nil || strings.Contains(string(data), "transport.tls.enable") {
+	// a [transport] table would make the prepended dotted key a duplicate: leave such a file to its writer
+	if err != nil || strings.Contains(string(data), "transport.tls.enable") || strings.Contains(string(data), "[transport") {
 		return false, nil // no Bagher frpc here, or already decided
 	}
 	// first line: a top-level key must come before any [[proxies]] table
