@@ -574,6 +574,11 @@ func main() {
 	} else if n > 0 {
 		log.Printf("bagher: locked down %d Bagher key(s) in %s (no commands, no -L forwards)", n, authorizedKeysPath)
 	}
+	if ok, err := migrateBagherFRPCTLS("/etc/gre-panel/bagher/frpc.toml"); err != nil {
+		log.Printf("bagher: turning off frp TLS inside the SSH tunnel: %v", err)
+	} else if ok {
+		log.Printf("bagher: frp TLS turned off inside the SSH tunnel (it encrypted everything twice)")
+	}
 	if ok, err := migrateBagherCarrierUnit(bagherLinkUnitPath(1)); err != nil {
 		log.Printf("bagher: moving the carrier off ssh -N: %v", err)
 	} else if ok {

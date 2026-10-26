@@ -350,6 +350,22 @@ func migrateBagherCarrierUnit(unitPath string) (bool, error) {
 	return true, nil
 }
 
+// migrateBagherFRPCTLS adds bagherFRPCNoTLS to a Bagher frpc.toml written by
+// an older panel or hashem.sh and restarts a running frpc, so an update alone
+// drops the second encryption layer. A file that sets TLS itself is left alone.
+func migrateBagherFRPCTLS(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil || strings.Contains(string(data), "transport.tls.enable") {
+		return false, nil // no Bagher frpc here, or already decided
+	}
+	// first line: a top-level key must come before any [[proxies]] table
+	if err := writeTokenFile(path, append([]byte(bagherFRPCNoTLS+"\n"), data...)); err != nil {
+		return false, err
+	}
+	_, _ = runCmd("systemctl", "try-restart", "hashem-bagher-frpc.service")
+	return true, nil
+}
+
 func execStartOf(unit string) string {
 	for _, line := range strings.Split(unit, "\n") {
 		if strings.HasPrefix(line, "ExecStart=") {
