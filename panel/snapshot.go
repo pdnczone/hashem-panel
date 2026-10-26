@@ -209,11 +209,6 @@ func timedStep(name string, f func()) {
 // collectHost gathers the per-tick host view with a fixed number of commands.
 func collectHost(recs []peerRecord, prev map[string]devCounters) *hostView {
 	v := &hostView{inner: map[string]string{}, active: map[string]bool{}, flowing: map[string]bool{}}
-	timedStep("ss", func() {
-		if out, err := runCmdTimeoutOut(5*time.Second, "ss", "-Htin", "state", "established"); err == nil {
-			v.sessions = parseSS(string(out))
-		}
-	})
 	timedStep("ip_tunnel", func() {
 		if out, err := runCmdTimeout(5*time.Second, "ip", "tunnel", "show"); err == nil {
 			v.tunnelShow, v.tunnelOK = string(out), true
@@ -252,6 +247,18 @@ func collectHost(recs []peerRecord, prev map[string]devCounters) *hostView {
 			if p, ok := prev[name]; ok && p != c {
 				v.flowing[name] = true
 			}
+		}
+	})
+	timedStep("ss", func() {
+		// Only the tunnel control sessions are matched, so ask ss for those ports:
+		// unfiltered, ss -i dumps every socket on the host (about 42MB a tick at
+		// 100k connections) and the kernel fills tcp_info for each.
+		filter := ssPortFilter(controlPortsOf(recs, localStatusFrom(v).BindPort))
+		if filter == "" {
+			return // no tunnel ports: no session can match
+		}
+		if out, err := runCmdTimeoutOut(5*time.Second, "ss", "-Htin", "state", "established", filter); err == nil {
+			v.sessions = parseSS(string(out))
 		}
 	})
 	v.owners = portOwners(controlPortsOf(recs))

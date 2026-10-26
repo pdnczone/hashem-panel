@@ -240,3 +240,20 @@ func TestConnectProbe(t *testing.T) {
 		t.Fatal("no target, no probe")
 	}
 }
+
+// The collector asks ss only for control sessions: every control port with its
+// P±2 neighbours, on either end, once each; no ports means no ss call at all.
+func TestSSPortFilter(t *testing.T) {
+	got := ssPortFilter([]int{7091, 0, 7091, 443})
+	want := "( sport = :7091 or dport = :7091 or sport = :7093 or dport = :7093 or sport = :7089 or dport = :7089 or " +
+		"sport = :443 or dport = :443 or sport = :445 or dport = :445 or sport = :441 or dport = :441 )"
+	if got != want {
+		t.Fatalf("filter\n got %s\nwant %s", got, want)
+	}
+	if f := ssPortFilter([]int{0, -1}); f != "" {
+		t.Fatalf("no ports must give no filter, got %q", f)
+	}
+	if f := ssPortFilter([]int{65535}); f != "( sport = :65535 or dport = :65535 or sport = :65533 or dport = :65533 )" {
+		t.Fatalf("ports past 65535 must be dropped, got %q", f)
+	}
+}
