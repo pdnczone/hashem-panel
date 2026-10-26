@@ -367,6 +367,11 @@ WantedBy=multi-user.target
 `
 }
 
+// bagherFRPCNoTLS turns off frp's own TLS (on by default since frp 0.50): frpc
+// reaches frps through the SSH tunnel, which already encrypts, so TLS only
+// added an RSA-2048 handshake to every work connection on both servers.
+const bagherFRPCNoTLS = "transport.tls.enable = false"
+
 // buildFRPCConfig generates the frpc TOML configuration for Foreign host in Bagher mode.
 // With udp, each port also gets a udp proxy: frp carries it over the same
 // work connections, so it rides the SSH tunnel like TCP.
@@ -397,6 +402,7 @@ remotePort = %d
 serverPort = %d
 auth.token = "hashem-bagher-sec"
 transport.tcpMux = false
+%s
 transport.poolCount = %d
 transport.heartbeatInterval = 15
 transport.heartbeatTimeout = 45
@@ -407,7 +413,7 @@ webServer.addr = "127.0.0.1"
 webServer.port = %d
 webServer.user = "admin"
 webServer.password = "bagher-dash-local"
-%s`, frpBindPort, poolCount, dashPort, proxyBlocks.String())
+%s`, frpBindPort, bagherFRPCNoTLS, poolCount, dashPort, proxyBlocks.String())
 }
 
 // buildForeignSetupCommand creates a standalone shell command to be executed on Foreign host.

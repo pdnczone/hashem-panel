@@ -10830,6 +10830,7 @@ serverAddr = "127.0.0.1"
 serverPort = ${FRP_PORT}
 auth.token = "hashem-bagher-sec"
 transport.tcpMux = false
+transport.tls.enable = false
 transport.poolCount = ${POOL_COUNT}
 $(echo -e "$PROXY_CFG")
 EOF_FRPC
@@ -11000,6 +11001,7 @@ serverAddr = "127.0.0.1"
 serverPort = ${FRP_PORT}
 auth.token = "hashem-bagher-sec"
 transport.tcpMux = false
+transport.tls.enable = false
 transport.poolCount = ${POOL_COUNT}
 loginFailExit = false
 

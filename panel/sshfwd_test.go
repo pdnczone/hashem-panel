@@ -479,3 +479,47 @@ func TestUpgradeBagherKeyLocks(t *testing.T) {
 		t.Fatalf("second run upgraded %d keys, want 0", n)
 	}
 }
+
+// frpc reaches frps through the SSH tunnel: frp's own TLS (default on since
+// 0.50) would encrypt everything twice and cost a handshake per work conn.
+func TestBagherFRPCConfigTurnsOffFRPTLS(t *testing.T) {
+	c := buildFRPCConfig(55400, 5, []int{443}, false)
+	if !strings.Contains(c, "\ntransport.tls.enable = false\n") || strings.Index(c, "tls.enable") > strings.Index(c, "[[proxies]]") {
+		t.Fatalf("frpc config must turn off frp TLS as a top-level key:\n%s", c)
+	}
+}
+
+func TestMigrateBagherFRPCTLS(t *testing.T) {
+	var ran []string
+	old := runCmd
+	runCmd = func(name string, args ...string) (string, error) {
+		ran = append(ran, name+" "+strings.Join(args, " "))
+		return "", nil
+	}
+	defer func() { runCmd = old }()
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "frpc.toml")
+	if ok, err := migrateBagherFRPCTLS(p); ok || err != nil {
+		t.Fatalf("no file must be a no-op, got %v %v", ok, err)
+	}
+	legacy := "serverAddr = \"127.0.0.1\"\nserverPort = 55400\ntransport.tcpMux = false\n\n[[proxies]]\nname = \"p443\"\n"
+	_ = os.WriteFile(p, []byte(legacy), 0o600)
+	if ok, err := migrateBagherFRPCTLS(p); !ok || err != nil {
+		t.Fatalf("an old frpc.toml must be migrated, got %v %v", ok, err)
+	}
+	got, _ := os.ReadFile(p)
+	if string(got) != "transport.tls.enable = false\n"+legacy {
+		t.Fatalf("the key must come first, before any table:\n%s", got)
+	}
+	if len(ran) != 1 || ran[0] != "systemctl try-restart hashem-bagher-frpc.service" {
+		t.Fatalf("a running frpc must be restarted once, ran %q", ran)
+	}
+	if ok, _ := migrateBagherFRPCTLS(p); ok {
+		t.Fatal("a second start must not touch the file again")
+	}
+	_ = os.WriteFile(p, []byte("transport.tls.enable = true\n"+legacy), 0o600)
+	if ok, _ := migrateBagherFRPCTLS(p); ok {
+		t.Fatal("a file that sets TLS itself must be left alone")
+	}
+}
