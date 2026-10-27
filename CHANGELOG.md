@@ -3,6 +3,20 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## v2.8.0 — 2026-10-27
+
+Less CPU under heavy use, on every tunnel type and most of all on Bagher, and a fix for saving Xray links. Run `hashem update` on both servers of a tunnel; Bagher's gain needs the foreign server updated.
+
+**Performance**
+- **Bagher no longer encrypts every byte twice.** frpc reaches frps inside the SSH tunnel, but frp turns TLS on by default, so each user connection also paid a TLS handshake with an RSA-2048 key on both servers. Under heavy use that alone could fill a core. frpc now runs with `transport.tls.enable = false`. New configs get it from the panel and `hashem.sh`; after the update the panel adds it to an existing Bagher `frpc.toml` once and restarts frpc, so Bagher connections drop for a moment. A `frpc.toml` that already sets TLS, or has a `[transport]` table, is left as it is.
+- **The panel's own polling no longer grows with the number of user connections.** The 5-second snapshot read every socket on the server with `ss` (about 42 MB of output a tick at 100k connections) only to find the tunnel's control sessions; `ss` now asks the kernel for the control ports alone. A foreign server without a connected Peer Link stops a second full scan every 10 seconds, and the active connection count is read every 30 seconds instead of twice every 5.
+
+**Fixes**
+- Saving an Xray link no longer fails with `E-XRAY-04` "Failed to get format of …/link-1.json.new". The config is tested as `link-N.new.json`, since Xray takes the format from the file extension.
+
+**If you update only with `hashem.sh`**
+- On a foreign server whose Bagher config was written by an older `hashem.sh`, add `transport.tls.enable = false` as the first line of `/etc/gre-panel/bagher/frpc.toml`, then run `systemctl restart hashem-bagher-frpc`.
+
 ## v2.7.2 — 2026-10-25
 
 A fix for the Spoof Tunnel. Run `hashem update` on the Iran server; update the foreign server too for the clearer messages.
