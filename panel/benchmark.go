@@ -326,11 +326,9 @@ func probePing(ctx context.Context, host string, count int) (avgRTT, minRTT, max
 				jitter, _ = strconv.ParseFloat(parts[3], 64)
 			}
 		}
-	} else if strings.Contains(str, "time=") {
-		// Single or fallback parse
-		avgRTT = 15.0
-		minRTT = 15.0
-		maxRTT = 15.0
+	} else {
+		// No summary line: report nothing rather than an invented time.
+		return 0, 0, 0, 100.0, 0, fmt.Errorf("ping gave no round-trip summary")
 	}
 
 	return avgRTT, minRTT, maxRTT, loss, jitter, nil
@@ -339,10 +337,10 @@ func probePing(ctx context.Context, host string, count int) (avgRTT, minRTT, max
 // runCarrierBenchmark probes all candidate carrier models and evaluates performance.
 func runCarrierBenchmark(customReq ...BenchmarkRunRequest) *BenchmarkReport {
 	if !benchmarkRunning.CompareAndSwap(false, true) {
-		benchmarkMu.RLock()
-		rep := lastBenchmarkReport
-		benchmarkMu.RUnlock()
-		return rep
+		if rep := loadSavedBenchmarkReport(); rep != nil {
+			return rep
+		}
+		return &BenchmarkReport{Timestamp: time.Now().Format("2006-01-02 15:04:05"), Metrics: []CarrierMetric{}}
 	}
 	defer benchmarkRunning.Store(false)
 
@@ -541,9 +539,6 @@ func runCarrierBenchmark(customReq ...BenchmarkRunRequest) *BenchmarkReport {
 				targetHost := remotePub
 				addr := net.JoinHostPort(targetHost, strconv.Itoa(c.Port))
 				avg, min, max, loss, jit, err := probeTLS(cctx, addr, probeCount, timeout)
-				if err != nil {
-					avg, min, max, loss, jit, err = probeTCP(cctx, addr, probeCount, timeout)
-				}
 				c.AvgRTTMs = math.Round(avg*10) / 10
 				c.MinRTTMs = math.Round(min*10) / 10
 				c.MaxRTTMs = math.Round(max*10) / 10
