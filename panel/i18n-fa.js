@@ -99,6 +99,8 @@ window.FA_TEXT = {
 "Loss": "افت",
 "These are the IPs the sender server can forge. Paste them into the spoof source IPs on the sender server, not on this one.": "این‌ها IPهایی هستند که سرور فرستنده می‌تواند جعل کند. آن‌ها را در IPهای مبدأ اسپوفِ سرور فرستنده بچسبانید، نه روی این سرور.",
 "Copy for the sender server": "کپی برای سرور فرستنده",
+"Pre-connect (connections kept ready)": "اتصال از پیش (اتصال‌های آماده)",
+"Direct mode over raw, WS or HTTPUpgrade: the dialing end keeps connections open ahead of time, so a new user connection skips the handshake (lower ping). -1 = off. Needs this version on both servers.": "در حالت مستقیم روی raw، WS یا HTTPUpgrade: سمتی که وصل می‌شود چند اتصال را از قبل باز نگه می‌دارد تا اتصال تازه کاربر منتظر دست‌دادن نماند (پینگ کمتر). ‎-1 یعنی خاموش. باید روی هر دو سرور همین نسخه باشد.",
 "Select the list above and copy it by hand.": "لیست بالا را انتخاب کنید و دستی کپی کنید.",
 "Spoof IPs copied": "IPهای اسپوف کپی شد",
 "Paste them into the Spoof tab on the sender server.": "آن‌ها را در تب اسپوف سرور فرستنده بچسبانید.",

@@ -579,6 +579,9 @@ func main() {
 	} else if ok {
 		log.Printf("bagher: frp TLS turned off inside the SSH tunnel (it encrypted everything twice)")
 	}
+	if n := migrateXrayConfigs(); n > 0 {
+		log.Printf("xray: %d link(s) rebuilt for this version (pre-connect: lower ping in direct mode)", n)
+	}
 	if ok, err := migrateBagherCarrierUnit(bagherLinkUnitPath(1)); err != nil {
 		log.Printf("bagher: moving the carrier off ssh -N: %v", err)
 	} else if ok {

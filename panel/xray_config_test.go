@@ -610,3 +610,60 @@ func TestXrayNoise(t *testing.T) {
 		t.Errorf("noise on a TCP link: %v", err)
 	}
 }
+
+// Pre-connect: the dialing end in direct mode keeps connections ready
+// (testpre) on the transports that open one per user connection, and the
+// server end waits long enough for them.
+func TestXrayPreConnect(t *testing.T) {
+	testpre := func(l XrayLink) any {
+		cfg, err := buildXrayConfig(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, o := range cfg["outbounds"].([]any) {
+			if m := o.(map[string]any); m["tag"] == xrayTagTunnel {
+				return m["settings"].(map[string]any)["testpre"]
+			}
+		}
+		return nil
+	}
+	iran := xrayTestLink(t, "reality", xrayModeDirect, xraySideIran)
+	if got := testpre(iran); got != xrayPreConnectDefault {
+		t.Fatalf("direct Reality: testpre = %v, want %d", got, xrayPreConnectDefault)
+	}
+	iran.Profile.PreConnect = 9
+	if got := testpre(iran); got != 9 {
+		t.Fatalf("chosen count: testpre = %v", got)
+	}
+	iran.Profile.PreConnect = -1
+	if got := testpre(iran); got != nil {
+		t.Fatalf("-1 should turn it off, got %v", got)
+	}
+	for _, preset := range []string{"xhttp", "grpc", "cdn"} {
+		if got := testpre(xrayTestLink(t, preset, xrayModeDirect, xraySideIran)); got != nil {
+			t.Fatalf("%s reuses its connections: testpre = %v", preset, got)
+		}
+	}
+	if got := testpre(xrayTestLink(t, "reality", xrayModeReverse, xraySideForeign)); got != nil {
+		t.Fatalf("the reverse link is already open: testpre = %v", got)
+	}
+
+	// The server end of a direct link waits 150 s for the first request.
+	cfg, err := buildXrayConfig(xrayTestLink(t, "reality", xrayModeDirect, xraySideForeign))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(xrayJSON(t, cfg["policy"]), `"handshake":150`) {
+		t.Fatalf("server end policy missing: %s", xrayJSON(t, cfg["policy"]))
+	}
+	cfg, _ = buildXrayConfig(xrayTestLink(t, "reality", xrayModeDirect, xraySideIran))
+	if cfg["policy"] != nil {
+		t.Fatal("the dialing end needs no policy")
+	}
+
+	bad := xrayTestLink(t, "reality", xrayModeDirect, xraySideIran)
+	bad.Profile.PreConnect = 99
+	if err := bad.validate(); err == nil {
+		t.Fatal("pre-connect above the maximum must be refused")
+	}
+}

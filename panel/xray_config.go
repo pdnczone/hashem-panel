@@ -129,6 +129,9 @@ type XrayProfile struct {
 	Congestion string `json:"congestion,omitempty"` // tcpCongestion: bbr, cubic, …
 	MPTCP      bool   `json:"mptcp,omitempty"`
 	Mark       int    `json:"mark,omitempty"`
+	// PreConnect is how many connections the dialing end keeps open ahead of
+	// time (Xray's VLESS "testpre"): 0 = the default, -1 = off.
+	PreConnect int `json:"preconnect,omitempty"`
 
 	Fragment *XrayFragment `json:"fragment,omitempty"` // dialing end only
 	Noise    *XrayNoise    `json:"noise,omitempty"`    // dialing end, UDP (mKCP) only
@@ -542,6 +545,9 @@ func (l XrayLink) validate() error {
 	if p.Mux < 0 || p.Mux > 1024 || p.XUDP < 0 || p.XUDP > 1024 {
 		return fmt.Errorf("mux concurrency must be 0-1024")
 	}
+	if p.PreConnect < -1 || p.PreConnect > xrayPreConnectMax {
+		return fmt.Errorf("pre-connect must be 0-%d connections (-1 = off)", xrayPreConnectMax)
+	}
 	if !validXrayName(p.SNI, true) || !validXrayName(p.Host, true) || !validXrayName(p.Address, true) {
 		return fmt.Errorf("SNI, host and address must be domain names or IPs")
 	}
@@ -690,6 +696,36 @@ func (l XrayLink) flow() string {
 	return ""
 }
 
+// Pre-connect: in direct mode every user connection is a new TCP connection
+// plus a new Reality/TLS handshake to the foreign server, about 4 round trips
+// before the first byte (the reverse link and HTTP/2 transports reuse one
+// that is already open: 1). The dialing end keeps a few ready instead.
+const (
+	xrayPreConnectDefault = 4
+	xrayPreConnectMax     = 32
+	// xrayPreConnectIdle is how long the server end waits for the first
+	// request on a connection (Xray's "handshake" policy, 4 s by default).
+	// Xray keeps a pre-connected connection for 2 minutes, so the server must
+	// wait longer; only clients that passed Reality/TLS get this far.
+	xrayPreConnectIdle = 150
+)
+
+// preConnect is the testpre count for this link's dialing end (0 = none):
+// direct mode only (the reverse link is already open), on the transports
+// that open a connection per user connection, not through a CDN (it closes
+// idle connections sooner than Xray's 2 minutes) and not with mux.
+func (l XrayLink) preConnect() int {
+	p := l.Profile
+	if l.Mode != xrayModeDirect || p.CDN || p.Mux > 0 || p.PreConnect < 0 ||
+		!xrayOneOf(p.Transport, []string{"raw", "ws", "httpupgrade"}) {
+		return 0
+	}
+	if p.PreConnect == 0 {
+		return xrayPreConnectDefault
+	}
+	return p.PreConnect
+}
+
 // buildXrayConfig is this end's whole Xray config.
 func buildXrayConfig(l XrayLink) (map[string]any, error) {
 	if err := l.validate(); err != nil {
@@ -746,6 +782,9 @@ func buildXrayConfig(l XrayLink) (map[string]any, error) {
 		if f := l.flow(); f != "" {
 			ob["flow"] = f
 		}
+		if n := l.preConnect(); n > 0 {
+			ob["testpre"] = n
+		}
 		if l.Mode == xrayModeReverse {
 			// The foreign server: the link it opens to Iran is an inbound for
 			// the users' connections Iran sends down it.
@@ -787,6 +826,12 @@ func buildXrayConfig(l XrayLink) (map[string]any, error) {
 		"inbounds":  inbounds,
 		"outbounds": outbounds,
 		"routing":   map[string]any{"domainStrategy": "AsIs", "rules": rules},
+	}
+	// The server end waits for the dialing end's pre-connected connections.
+	// Always set in direct mode, so a dialing end that turns pre-connect on
+	// later needs nothing new here.
+	if l.serverEnd() && l.Mode == xrayModeDirect && l.Profile.Transport != "kcp" {
+		cfg["policy"] = map[string]any{"levels": map[string]any{"0": map[string]any{"handshake": xrayPreConnectIdle}}}
 	}
 	if len(l.Expert) > 0 {
 		var ex map[string]any
