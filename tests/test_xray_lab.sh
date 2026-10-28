@@ -259,7 +259,19 @@ while read -r name; do
         echo "--- Iran:"; tail -n 15 "$TMP/iran-$name.log"; echo "--- foreign:"; tail -n 15 "$TMP/fo-$name.log"
         stop_link; continue
     fi
-    probes+="$name ${ms} ms, "
+    # again once the link is open: what a user's new connection costs
+    sleep 1
+    warm=$(py $IR probe $PROBE 2>/dev/null || echo "?")
+    probes+="$name ${ms}/${warm} ms, "
+    # Direct Reality keeps connections ready (pre-connect): a new connection
+    # skips the TCP and Reality handshakes, about one round trip.
+    if [[ $name == reality-direct && -n $NETEM && $warm != "?" ]]; then
+        if awk -v w="$warm" 'BEGIN { exit !(w < 60) }'; then
+            ok "pre-connect: a new connection through direct Reality takes $warm ms over a $NETEM round trip"
+        else
+            bad "pre-connect: a new connection through direct Reality took $warm ms over a $NETEM round trip (want under 60)"
+        fi
+    fi
     sent=ok
     py $USR tcp $IR_U $PORT $((8 << 20)) || { bad "$name: 8 MiB each way through the tunnel (sha256)"; sent=; }
     py $USR par $IR_U $PORT 16 $((256 << 10)) || { bad "$name: 16 parallel connections"; sent=; }
@@ -283,7 +295,7 @@ while read -r name; do
     stop_link
 done <"$TMP/cfg/combos"
 unblock_iran_out
-note "a request through each link and back${NETEM:+ over a $NETEM round trip}: ${probes%, }"
+note "a request through each link and back, first/once open${NETEM:+, over a $NETEM round trip}: ${probes%, }"
 
 # ---- IPv6: the servers connect over IPv6 only (IPv4 between them dropped)
 # and the user comes in over IPv6

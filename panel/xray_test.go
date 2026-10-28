@@ -521,3 +521,37 @@ func TestXrayConnsCountsOnlyTheLink(t *testing.T) {
 		t.Errorf("ss filter: %v", got)
 	}
 }
+
+// A link made by an older version gets this version's config and a restart
+// at start; an unchanged one is left alone.
+func TestXrayMigrateConfigs(t *testing.T) {
+	e := newXrayEnv(t)
+	l := xrayTestLink(t, "reality", xrayModeDirect, xraySideIran)
+	st := xrayState{}
+	l = st.add(l)
+	if err := saveXrayState(st); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(xrayConfDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := `{"outbounds": []}`
+	if err := os.WriteFile(xrayLinkConfPath(l.ID), []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if n := migrateXrayConfigs(); n != 1 {
+		t.Fatalf("want 1 link rebuilt, got %d", n)
+	}
+	if got := e.read(xrayLinkConfPath(l.ID)); !strings.Contains(got, `"testpre"`) {
+		t.Fatalf("config not rebuilt:\n%s", got)
+	}
+	if !strings.Contains(e.read(xrayUnitPath(l.ID)), "LogRateLimitBurst") {
+		t.Fatal("unit not rewritten")
+	}
+	if !strings.Contains(strings.Join(e.systemctl, "\n"), "try-restart "+xrayUnitName(l.ID)) {
+		t.Fatalf("link not restarted: %v", e.systemctl)
+	}
+	if n := migrateXrayConfigs(); n != 0 {
+		t.Fatalf("an up-to-date link must not restart, got %d", n)
+	}
+}
