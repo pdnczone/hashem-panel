@@ -7120,23 +7120,44 @@ EOF
     fi
 }
 
+# panel_address [http]: the address to open the panel at. With a certificate
+# the panel serves HTTPS on tls_port, named after the domain it was issued for
+# (Settings → HTTPS, `hashem tls issue`), so that is shown instead of the IP;
+# "http" asks for the plain-HTTP address, which stays on "port".
+panel_address() {
+    local cfg="${PANEL_CONFIG_DIR}/panel.json" tls="${PANEL_CONFIG_DIR}/tls"
+    [[ ! -f "$cfg" && -f "${PANEL_CONFIG_DIR}/config.json" ]] && cfg="${PANEL_CONFIG_DIR}/config.json"
+    local port base tport ip name
+    port=$(grep -o '"port": *[0-9]*' "$cfg" 2>/dev/null | grep -o '[0-9]*' | head -n1)
+    base=$(grep -o '"base_path": *"[^"]*"' "$cfg" 2>/dev/null | cut -d'"' -f4)
+    ip=$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}')
+    if [[ "${1:-}" != "http" && -s "${tls}/server.crt" && -s "${tls}/server.key" ]]; then
+        tport=$(grep -o '"tls_port": *[0-9]*' "$cfg" 2>/dev/null | grep -o '[0-9]*$' | head -n1)
+        name=$(grep -o '"domain": *"[^"]*"' "${tls}/meta.json" 2>/dev/null | cut -d'"' -f4)
+        name=${name:-${ip:-<this-server-ip>}}
+        [[ "$name" == *:* ]] && name="[${name}]"
+        echo "https://${name}:${tport:-7443}/${base}${base:+/}"
+        return
+    fi
+    echo "http://${ip:-<this-server-ip>}:${port:-7777}/${base}${base:+/}"
+}
+
 show_panel_url() {
-    local cfg="/etc/gre-panel/panel.json"
-    if [[ ! -f "$cfg" && -f /etc/gre-panel/config.json ]]; then
-        cfg="/etc/gre-panel/config.json"
+    local cfg="${PANEL_CONFIG_DIR}/panel.json"
+    if [[ ! -f "$cfg" && -f "${PANEL_CONFIG_DIR}/config.json" ]]; then
+        cfg="${PANEL_CONFIG_DIR}/config.json"
     fi
     if [[ ! -f "$cfg" ]]; then
-        echo -e "${YELLOW}Panel is not installed on this server (no /etc/gre-panel/panel.json). Run Setup first.${NC}"
+        echo -e "${YELLOW}Panel is not installed on this server (no ${PANEL_CONFIG_DIR}/panel.json). Run Setup first.${NC}"
         return 1
     fi
-    local port base user
-    port=$(grep -o '"port": *[0-9]*' "$cfg" 2>/dev/null | grep -o '[0-9]*')
-    base=$(grep -o '"base_path": *"[^"]*"' "$cfg" 2>/dev/null | cut -d'"' -f4)
+    local user url http
     user=$(grep -o '"username": *"[^"]*"' "$cfg" 2>/dev/null | cut -d'"' -f4)
-    port=${port:-7777}
     user=${user:-admin}
-    MYIP=$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}')
-    echo -e "${GREEN}Panel URL:  ${CYAN}http://${MYIP:-<this-server-ip>}:${port}/${base}${NC}"
+    url=$(panel_address)
+    http=$(panel_address http)
+    echo -e "${GREEN}Panel URL:  ${CYAN}${url}${NC}"
+    [[ "$url" != "$http" ]] && echo -e "${GREEN}HTTP:       ${CYAN}${http}${NC}"
     echo -e "${GREEN}Username:   ${CYAN}${user}${NC}"
     if [[ -n "$PANEL_PASS" ]]; then
         echo -e "${GREEN}Password:   ${CYAN}${PANEL_PASS}${NC} ${YELLOW}(Please record this password now!)${NC}"
@@ -9294,11 +9315,7 @@ ui_status_refresh() {
     UI_URL=""
     if systemctl is-active --quiet gre-panel 2>/dev/null; then
         UI_PANEL="${GREEN}running${NC}"
-        local port base ip
-        port=$(grep -o '"port": *[0-9]*' "${PANEL_CONFIG_DIR}/panel.json" 2>/dev/null | grep -o '[0-9]*' | head -n1)
-        base=$(grep -o '"base_path": *"[^"]*"' "${PANEL_CONFIG_DIR}/panel.json" 2>/dev/null | cut -d'"' -f4)
-        ip=$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}')
-        UI_URL="http://${ip:-<server-ip>}:${port:-7777}/${base}${base:+/}"
+        UI_URL=$(panel_address)
     fi
     UI_LIC="Free"
     [[ -x "$PANEL_BIN" ]] && "$PANEL_BIN" license check performance >/dev/null 2>&1 && UI_LIC="${GREEN}Pro${NC}"
