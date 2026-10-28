@@ -191,3 +191,25 @@ func TestBenchmarkAllSevenProtocolsAndCustomTarget(t *testing.T) {
 		t.Fatalf("handleBenchmarkRun with custom target failed: %d", rrAPI.Code)
 	}
 }
+
+// A second run while one is in progress, before any report exists, answered
+// nil and the page got "null".
+func TestBenchmarkWhileRunningNeverNil(t *testing.T) {
+	old := configDir
+	configDir = t.TempDir()
+	benchmarkMu.Lock()
+	prev := lastBenchmarkReport
+	lastBenchmarkReport = nil
+	benchmarkMu.Unlock()
+	benchmarkRunning.Store(true)
+	t.Cleanup(func() {
+		benchmarkRunning.Store(false)
+		configDir = old
+		benchmarkMu.Lock()
+		lastBenchmarkReport = prev
+		benchmarkMu.Unlock()
+	})
+	if rep := runCarrierBenchmark(); rep == nil || rep.Metrics == nil {
+		t.Fatalf("want an empty report, got %#v", rep)
+	}
+}
