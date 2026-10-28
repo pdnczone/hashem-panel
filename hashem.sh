@@ -2293,19 +2293,28 @@ SPOOF_SHA256_arm64="caf08b3960d4eea72910fb0613a8893560a41f5b2f2e18f9a6c595c9ad7e
 # install_spoof_binary: download the pinned spoof core, verify its sha256, and
 # install it to INSTALL_DIR/spoof. WireGuard tools are pulled in too, since the
 # panel wraps the pipe with WireGuard.
+# An installed core is kept only while it is the pinned build (same sha256), so
+# a new DEFAULT_SPOOF_VERSION reaches servers that already have one; a running
+# core is restarted onto the new build.
 install_spoof_binary() {
     install_wireguard_tools
-    if [[ -x "${INSTALL_DIR}/spoof" ]]; then
-        return 0
-    fi
     detect_arch
     if [[ "$FRP_ARCH" != "amd64" && "$FRP_ARCH" != "arm64" ]]; then
+        [[ -x "${INSTALL_DIR}/spoof" ]] && return 0
         echo -e "${RED}[!] Spoof Tunnel has no release for ${FRP_ARCH} (amd64/arm64 only).${NC}"
         return 1
     fi
     local SPOOF_VER="$DEFAULT_SPOOF_VERSION"
     local WANT_SHA
     eval "WANT_SHA=\${SPOOF_SHA256_${FRP_ARCH}}"
+    local WAS_RUNNING=0
+    if [[ -x "${INSTALL_DIR}/spoof" ]]; then
+        if [[ -z "$WANT_SHA" || "$(sha256sum "${INSTALL_DIR}/spoof" 2>/dev/null | awk '{print $1}')" == "$WANT_SHA" ]]; then
+            return 0
+        fi
+        echo -e "${CYAN}[*] The installed Spoof core is not ${SPOOF_VER}; replacing it.${NC}"
+        systemctl is-active --quiet spoof-core 2>/dev/null && WAS_RUNNING=1
+    fi
     echo -e "${CYAN}[*] Downloading Spoof Tunnel ${SPOOF_VER} (${FRP_ARCH})...${NC}"
 
     local TMP_DIR
@@ -2330,6 +2339,7 @@ install_spoof_binary() {
     rm -rf "$TMP_DIR"
     if [[ -x "${INSTALL_DIR}/spoof" ]]; then
         echo -e "${GREEN}[OK] Spoof Tunnel ${SPOOF_VER} installed to ${INSTALL_DIR}/spoof.${NC}"
+        [[ $WAS_RUNNING -eq 1 ]] && systemctl restart spoof-core 2>/dev/null || true
         return 0
     fi
     echo -e "${RED}[!] Spoof binary install failed.${NC}"
@@ -2357,6 +2367,16 @@ install_wireguard_tools() {
     command -v wg >/dev/null 2>&1 || echo -e "${YELLOW}[!] WireGuard tools not found; install 'wireguard-tools' manually.${NC}"
 }
 
+# spoof_mark_enabled true|false: record a start/stop from the terminal in the
+# panel's spoof.json, so the Spoof tab shows the real state. A start clears the
+# last error the panel recorded.
+spoof_mark_enabled() {
+    local F="${PANEL_CONFIG_DIR}/spoof.json"
+    [[ -f "$F" ]] || return 0
+    sed -i -E "s/(\"enabled\":[[:space:]]*)(true|false)/\1$1/" "$F" 2>/dev/null || true
+    [[ "$1" == "true" ]] && sed -i -E '/^[[:space:]]*"last_error":/d' "$F" 2>/dev/null || true
+}
+
 # cli_spoof: terminal entry for the Spoof Tunnel. Mutating actions need Pro,
 # checked through the panel binary (same key/rules as the panel).
 cli_spoof() {
@@ -2379,13 +2399,17 @@ cli_spoof() {
         up|start)
             pro_ok spoof "Spoof Tunnel" || return 1
             install_spoof_binary || return 1
-            systemctl restart spoof-core 2>/dev/null && systemctl restart wg-quick@wg-spoof 2>/dev/null \
-                && echo -e "${GREEN}[OK] Spoof tunnel started.${NC}" \
-                || echo -e "${RED}[!] Could not start; set it up in the panel's Spoof tab first.${NC}"
+            if systemctl restart spoof-core 2>/dev/null && systemctl restart wg-quick@wg-spoof 2>/dev/null; then
+                spoof_mark_enabled true
+                echo -e "${GREEN}[OK] Spoof tunnel started.${NC}"
+            else
+                echo -e "${RED}[!] Could not start; set it up in the panel's Spoof tab first.${NC}"
+            fi
             ;;
         down|stop)
             systemctl disable --now wg-quick@wg-spoof 2>/dev/null || true
             systemctl disable --now spoof-core 2>/dev/null || true
+            spoof_mark_enabled false
             echo -e "${GREEN}[OK] Spoof tunnel stopped.${NC}"
             ;;
         *)
@@ -8811,6 +8835,11 @@ update_all() {
         done
     fi
     perf_apply >/dev/null 2>&1 || true
+    # An installed Spoof core moves to the pinned build (the new script's
+    # install_spoof_binary does the sha256 check and the restart).
+    if [[ -x "${INSTALL_DIR}/spoof" ]]; then
+        "$HASHEM_BIN" spoof install </dev/null >/dev/null 2>&1 || true
+    fi
     # The timer runs whether or not alerts are on: scheduled backups,
     # restarts and Auto-Pool depend on it (M6).
     watchdog_timer_ensure >/dev/null 2>&1 || true

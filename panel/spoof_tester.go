@@ -98,7 +98,8 @@ func (r spoofTesterRequest) normalize() spoofTesterRequest {
 	if r.PacketCount <= 0 {
 		r.PacketCount = 10
 	}
-	if r.MaxLoss <= 0 {
+	// 0 is valid (only IPs that lost nothing); the core takes 0-100.
+	if r.MaxLoss < 0 || r.MaxLoss > 100 {
 		r.MaxLoss = 20
 	}
 	return r

@@ -98,7 +98,7 @@ func spoofStatePath() string { return filepath.Join(configDir, "spoof.json") }
 // tunnel and taking the public IP the panel already knows.
 func defaultSpoofState() spoofState {
 	role := "remote"
-	st := localStatus()
+	st := currentLocal()
 	if strings.Contains(strings.ToLower(st.Role), "iran") || st.Role == "master" {
 		role = "local"
 	}
@@ -106,7 +106,6 @@ func defaultSpoofState() spoofState {
 		Role:          role,
 		ListenPort:    defaultSpoofPort,
 		RecvPort:      defaultRecvPort,
-		SpoofPort:     443,
 		SendTransport: "tcp",
 		RecvTransport: "udp",
 		WGListen:      defaultWGListen,
@@ -127,6 +126,9 @@ func (s *spoofState) applyRoleDefaults() {
 		if s.WGPeerIP == "" {
 			s.WGPeerIP = "10.20.0.2"
 		}
+		if s.SpoofPort == 0 {
+			s.SpoofPort = 443
+		}
 	} else {
 		if s.WGLocalIP == "" {
 			s.WGLocalIP = "10.20.0.2"
@@ -134,8 +136,9 @@ func (s *spoofState) applyRoleDefaults() {
 		if s.WGPeerIP == "" {
 			s.WGPeerIP = "10.20.0.1"
 		}
-		// The foreign server's SpoofPort defaults to the listen port.
-		if s.SpoofPort == 443 {
+		// The foreign server's SpoofPort defaults to the listen port (the core's
+		// own default for remote mode).
+		if s.SpoofPort == 0 {
 			s.SpoofPort = s.ListenPort
 		}
 	}
@@ -325,8 +328,8 @@ func (s spoofState) ready() error {
 	if s.PeerPublicIP == "" {
 		return fmt.Errorf("the other server's public IP is not set")
 	}
-	if net.ParseIP(CleanHost(s.PeerPublicIP)) == nil {
-		return fmt.Errorf("the other server's public IP is not a valid address")
+	if ip := net.ParseIP(CleanHost(s.PeerPublicIP)); ip == nil || ip.To4() == nil {
+		return fmt.Errorf("the other server's public IP must be an IPv4 address (the spoof core works over IPv4 only)")
 	}
 	if len(s.SpoofIPs) == 0 {
 		return fmt.Errorf("no spoof IP set: run the tester and pick at least one usable IP")
@@ -394,11 +397,19 @@ func openSpoofFirewall(s spoofState) {
 
 // spoofHealth is a best-effort runtime view (Linux only; empty elsewhere).
 type spoofHealth struct {
-	CoreActive bool   `json:"core_active"`
-	WGActive   bool   `json:"wg_active"`
-	PeerPing   bool   `json:"peer_ping"`
-	Handshake  string `json:"handshake,omitempty"` // last WireGuard handshake, human text
+	CoreActive bool `json:"core_active"`
+	WGActive   bool `json:"wg_active"`
+	// PeerPing is true when WireGuard shook hands with the peer recently. The
+	// name stays for the UI; ping itself is not used, since a server that
+	// receives over ICMP turns off echo replies for the whole host.
+	PeerPing  bool   `json:"peer_ping"`
+	Handshake string `json:"handshake,omitempty"` // last WireGuard handshake, human text
 }
+
+// spoofHandshakeFresh is how old the last handshake may be for the peer to
+// count as reachable: WireGuard renews it every 2 minutes while packets flow,
+// and the Iran side keeps it flowing with PersistentKeepalive.
+const spoofHandshakeFresh = 3 * time.Minute
 
 func spoofRuntimeHealth(s spoofState) spoofHealth {
 	h := spoofHealth{}
@@ -407,16 +418,13 @@ func spoofRuntimeHealth(s spoofState) spoofHealth {
 	if runtime.GOOS != "linux" {
 		return h
 	}
-	if s.Enabled && s.WGPeerIP != "" {
-		if err := exec.Command("ping", "-c", "1", "-W", "2", s.WGPeerIP).Run(); err == nil {
-			h.PeerPing = true
-		}
-	}
 	if out, err := exec.Command("wg", "show", spoofIface, "latest-handshakes").Output(); err == nil {
 		fields := strings.Fields(strings.TrimSpace(string(out)))
 		if len(fields) >= 2 {
 			if ts, err := strconv.ParseInt(fields[len(fields)-1], 10, 64); err == nil && ts > 0 {
-				h.Handshake = time.Since(time.Unix(ts, 0)).Truncate(time.Second).String() + " ago"
+				age := time.Since(time.Unix(ts, 0))
+				h.Handshake = age.Truncate(time.Second).String() + " ago"
+				h.PeerPing = s.Enabled && age < spoofHandshakeFresh
 			}
 		}
 	}
@@ -475,8 +483,8 @@ func makeSpoofBundle(s spoofState) (string, spoofState, error) {
 	if s.LocalPublic == "" {
 		s.LocalPublic = savedPublicIP()
 	}
-	if net.ParseIP(CleanHost(s.LocalPublic)) == nil {
-		return "", s, fmt.Errorf("this server's public IP is unknown, so the foreign server could not reach it")
+	if ip := net.ParseIP(CleanHost(s.LocalPublic)); ip == nil || ip.To4() == nil {
+		return "", s, fmt.Errorf("this server's public IPv4 is unknown, so the foreign server could not reach it (the spoof core works over IPv4 only)")
 	}
 	b := spoofBundle{
 		V: 1, IranPublicIP: CleanHost(s.LocalPublic), ListenPort: s.ListenPort, RecvPort: s.RecvPort,
@@ -599,7 +607,7 @@ func handleSpoofGet(w http.ResponseWriter, r *http.Request) {
 
 // spoofPostRequest carries one action and the fields it needs.
 type spoofPostRequest struct {
-	Action        string   `json:"action"` // save | genkeys | bundle | import | up | down
+	Action        string   `json:"action"` // save | bundle | import | up | down
 	Role          string   `json:"role,omitempty"`
 	PeerPublicIP  string   `json:"peer_public_ip,omitempty"`
 	ListenPort    int      `json:"listen_port,omitempty"`
@@ -631,19 +639,6 @@ func handleSpoofPost(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]any{"status": "ok", "spoof": spoofView(s)})
 
-	case "genkeys":
-		priv, pub, err := spoofGenKeypair()
-		if err != nil {
-			writeAPIError(w, r, "E-ACTION-01", err.Error())
-			return
-		}
-		s.WGPrivKey, s.WGPubKey = priv, pub
-		if err := saveSpoofState(s); err != nil {
-			writeAPIError(w, r, "E-ACTION-01", err.Error())
-			return
-		}
-		writeJSON(w, map[string]any{"status": "ok", "wg_pub": pub})
-
 	case "bundle":
 		applySpoofForm(&s, req)
 		bundle, s2, err := makeSpoofBundle(s)
@@ -667,11 +662,24 @@ func handleSpoofPost(w http.ResponseWriter, r *http.Request) {
 		if len(req.SpoofIPs) > 0 {
 			s2.SpoofIPs = cleanSpoofIPs(req.SpoofIPs)
 		}
+		resp := map[string]any{"status": "ok"}
+		// A running tunnel takes the new bundle now instead of running on the
+		// old keys and ports until someone presses Apply.
+		if s2.Enabled {
+			if out, err := applySpoof(s2); err != nil {
+				s2.LastError = err.Error()
+				resp["warning"] = "The bundle was saved but the tunnel could not restart with it: " + err.Error()
+			} else {
+				s2.LastError = ""
+				resp["detail"] = out
+			}
+		}
 		if err := saveSpoofState(s2); err != nil {
 			writeAPIError(w, r, "E-ACTION-01", err.Error())
 			return
 		}
-		writeJSON(w, map[string]any{"status": "ok", "spoof": spoofView(s2)})
+		resp["spoof"] = spoofView(s2)
+		writeJSON(w, resp)
 
 	case "up", "apply":
 		applySpoofForm(&s, req)
@@ -707,21 +715,21 @@ func handleSpoofPost(w http.ResponseWriter, r *http.Request) {
 
 	case "down", "stop":
 		_ = stopSpoof()
-		s.Enabled = false
+		s.Enabled, s.LastError = false, ""
 		_ = saveSpoofState(s)
 		writeJSON(w, map[string]any{"status": "ok", "detail": "Spoof tunnel stopped."})
 
 	default:
-		writeAPIError(w, r, "E-ACTION-01", "unknown action: want save, genkeys, bundle, import, up or down")
+		writeAPIError(w, r, "E-ACTION-01", "unknown action: want save, bundle, import, up or down")
 	}
 }
 
 // applySpoofForm copies the editable fields from a request onto the state,
 // leaving anything the request omits untouched.
 func applySpoofForm(s *spoofState, req spoofPostRequest) {
-	if req.Role == "local" || req.Role == "remote" {
+	if (req.Role == "local" || req.Role == "remote") && req.Role != s.Role {
 		s.Role = req.Role
-		s.WGLocalIP, s.WGPeerIP = "", "" // re-derive for the new role
+		s.WGLocalIP, s.WGPeerIP, s.SpoofPort = "", "", 0 // re-derive for the new role
 	}
 	if req.PeerPublicIP != "" {
 		s.PeerPublicIP = CleanHost(req.PeerPublicIP)

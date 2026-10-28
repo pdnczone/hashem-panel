@@ -5351,13 +5351,14 @@ function spoofBadge(d, h) {
   if (!b) return;
   let cls = 'dim', txt = tr('spoof_idle', 'Not configured');
   if (d.enabled && h && h.core_active && h.wg_active) { cls = 'ok'; txt = tr('', 'Tunnel up'); }
+  else if (d.last_error) { cls = 'err'; txt = tr('', 'Failed'); }
   else if (d.enabled) { cls = 'warn'; txt = tr('', 'Starting…'); }
   else if (d.has_keys || (d.spoof_ips && d.spoof_ips.length)) { cls = 'info'; txt = tr('', 'Configured'); }
   b.className = 'badge ' + cls;
   b.textContent = txt;
 }
 
-function spoofOpt(sel, cur) {
+function spoofOpt(cur) {
   return SPOOF_TRANSPORTS.map(t => `<option value="${t}"${t === cur ? ' selected' : ''}>${t.toUpperCase()}</option>`).join('');
 }
 
@@ -5384,6 +5385,9 @@ function renderSpoof() {
       ${h.handshake ? `<span class="sp-hs" data-no-i18n>${esc(tr('', 'Last handshake'))}: ${esc(h.handshake)}</span>` : ''}
     </div>` : '';
 
+  const lastErr = d.last_error
+    ? `<div class="sw-result err" data-no-i18n>${esc(String(d.last_error).slice(0, 300))}</div>` : '';
+
   // Setup form. The foreign server fills most fields by importing the bundle.
   const ips = (d.spoof_ips || []).join('\n');
   const form = `<div class="sp-grid">
@@ -5398,6 +5402,7 @@ function renderSpoof() {
         <div><label class="qs-label">${esc(tr('', 'Send transport'))}</label><select class="hashem-input" id="spSend">${spoofOpt(d.send_transport)}</select></div>
         <div><label class="qs-label">${esc(tr('', 'Recv transport'))}</label><select class="hashem-input" id="spRecvT">${spoofOpt(d.recv_transport)}</select></div>
       </div>
+      <p class="qs-hint${/^icmp/.test(d.recv_transport || '') ? '' : ' hidden'}" id="spIcmpHint">${esc(tr('', 'Receiving over ICMP turns off ping replies on this whole server while the tunnel runs (the spoof core needs the echo packets). Checks that ping this server will see it as down.'))}</p>
       <label class="qs-label">${esc(tr('', 'Spoof source IPs (one per line, from the tester)'))}</label>
       <textarea class="hashem-input u-ltr u-mono sp-ips" id="spIPs" rows="3" placeholder="203.0.113.7">${esc(ips)}</textarea>
       <div class="sp-acts">
@@ -5423,7 +5428,7 @@ function renderSpoof() {
       <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" id="spImportBtn">${esc(tr('', 'Import bundle'))}</button></div>`;
   }
 
-  body.innerHTML = (d.installed ? '' : body.innerHTML) + roleSeg + health + form + keyBlock + spoofTesterHTML();
+  body.innerHTML = (d.installed ? '' : body.innerHTML) + roleSeg + health + lastErr + form + keyBlock + spoofTesterHTML();
   spoofWire();
   renderSpoofTester();
 }
@@ -5438,6 +5443,7 @@ function spoofWire() {
   if ($('spDownBtn')) $('spDownBtn').onclick = () => spoofPost({ action: 'down' });
   if ($('spBundleBtn')) $('spBundleBtn').onclick = spoofGenBundle;
   if ($('spImportBtn')) $('spImportBtn').onclick = spoofImport;
+  if ($('spRecvT')) $('spRecvT').onchange = e => { const hint = $('spIcmpHint'); if (hint) hint.classList.toggle('hidden', !/^icmp/.test(e.target.value)); };
   spoofTesterWire();
 }
 
@@ -5492,8 +5498,10 @@ async function spoofImport() {
   const btn = $('spImportBtn');
   btn.disabled = true;
   try {
-    await api('/api/spoof', { action: 'import', bundle });
-    toastOk(tr('', 'Bundle imported'), tr('', 'Now run the tester and bring the tunnel up.'));
+    const r = await api('/api/spoof', { action: 'import', bundle });
+    if (r.warning) toastWarn(tr('', 'Bundle imported'), r.warning);
+    else if (r.detail) toastOk(tr('', 'Bundle imported'), r.detail);
+    else toastOk(tr('', 'Bundle imported'), tr('', 'Now run the tester and bring the tunnel up.'));
     await loadSpoof();
   } catch (e) {
     toastErr(tr('', 'Could not import the bundle'), e.message);
@@ -5504,7 +5512,7 @@ async function spoofImport() {
 // ---- Spoof IP tester ----
 function spoofTesterHTML() {
   return `<div class="sp-sub sp-tester"><b>${esc(tr('', 'Spoof IP tester'))}</b>
-    <p class="qs-hint">${esc(tr('', 'Finds which source IPs the firewall lets through. Run the receiver on one server and the sender on the other, then swap. Passing IPs become that server\'s spoof list.'))}</p>
+    <p class="qs-hint">${esc(tr('', 'Finds which source IPs the firewall lets through. Run the receiver on one server and the sender on the other, then swap. The IPs that pass on the receiver are the ones the sender can forge: they go into the sender server\'s spoof list.'))}</p>
     <div class="sp-row2">
       <div><label class="qs-label">${esc(tr('', 'Mode'))}</label><select class="hashem-input" id="stMode"><option value="receiver">${esc(tr('', 'Receiver'))}</option><option value="sender">${esc(tr('', 'Sender'))}</option></select></div>
       <div><label class="qs-label">${esc(tr('', 'Protocol'))}</label><select class="hashem-input" id="stProto"><option value="icmp">ICMP</option><option value="tcp">TCP</option></select></div>
@@ -5514,7 +5522,10 @@ function spoofTesterHTML() {
       <div><label class="qs-label">${esc(tr('', 'Packets/IP'))}</label><input class="hashem-input u-ltr u-mono" id="stCount" value="10" inputmode="numeric"></div>
       <div><label class="qs-label">${esc(tr('', 'Max loss %'))}</label><input class="hashem-input u-ltr u-mono" id="stLoss" value="20" inputmode="numeric"></div>
     </div>
-    <div id="stSenderRow" class="hidden"><label class="qs-label">${esc(tr('', 'Destination IP (the receiver server)'))}</label><input class="hashem-input u-ltr u-mono" id="stDst" placeholder="198.51.100.10"></div>
+    <div id="stSenderRow" class="hidden sp-row2">
+      <div><label class="qs-label">${esc(tr('', 'Destination IP (the receiver server)'))}</label><input class="hashem-input u-ltr u-mono" id="stDst" placeholder="198.51.100.10"></div>
+      <div><label class="qs-label">${esc(tr('', 'Destination port (TCP)'))}</label><input class="hashem-input u-ltr u-mono" id="stDstPort" value="${esc(String(spoofTesterDstPort()))}" inputmode="numeric"></div>
+    </div>
     <label class="qs-label">${esc(tr('', 'Source IPs / ranges / CIDRs (one per line)'))}</label>
     <textarea class="hashem-input u-ltr u-mono sp-ips" id="stSources" rows="3" placeholder="203.0.113.0/24"></textarea>
     <div class="sp-acts">
@@ -5522,6 +5533,14 @@ function spoofTesterHTML() {
       <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30 hidden" id="stStop">${esc(tr('', 'Stop'))}</button>
     </div>
     <div id="stResult"></div></div>`;
+}
+
+// spoofTesterDstPort is the port this server's tunnel packets go to on the
+// other server: the Iran side sends to the public port, the foreign side to
+// the recv port. TCP tests use it so they cross the same firewall rule.
+function spoofTesterDstPort() {
+  const d = _spoof || {};
+  return (d.role === 'local' ? d.listen_port : d.recv_port) || 80;
 }
 
 function spoofTesterWire() {
@@ -5536,7 +5555,7 @@ async function spoofTesterStart() {
   const sources = (($('stSources') || {}).value || '').split('\n').map(s => s.trim()).filter(Boolean);
   const req = {
     action: 'start', mode: ($('stMode') || {}).value, protocol: ($('stProto') || {}).value,
-    sources, dst_ip: ($('stDst') || {}).value || '',
+    sources, dst_ip: ($('stDst') || {}).value || '', dst_port: num('stDstPort', 0),
     timeout: num('stTimeout', 30), packet_count: num('stCount', 10), max_loss: num('stLoss', 20),
   };
   try {
@@ -5584,10 +5603,14 @@ function renderSpoofTester(t) {
   const rows = passed.map(p => `<tr><td class="u-mono" data-no-i18n>${esc(p.ip)}</td><td class="u-mono" data-no-i18n>${p.received}/${p.sent}</td><td class="u-mono" data-no-i18n>${p.loss_pct.toFixed(1)}%</td></tr>`).join('');
   box.innerHTML = `<div class="sw-result ok">${esc(docTpl('{0} usable spoof IPs found.', [String(passed.length)]))}</div>
     <table class="sp-ttable"><thead><tr><th>${esc(tr('', 'IP'))}</th><th>${esc(tr('', 'Received'))}</th><th>${esc(tr('', 'Loss'))}</th></tr></thead><tbody>${rows}</tbody></table>
-    <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" id="stUse">${esc(tr('', 'Use these as my spoof IPs'))}</button>`;
+    <p class="qs-hint">${esc(tr('', 'These are the IPs the sender server can forge. Paste them into the spoof source IPs on the sender server, not on this one.'))}</p>
+    <textarea class="hashem-input u-ltr u-mono sp-ips" rows="3" readonly data-no-i18n>${esc(passed.map(p => p.ip).join('\n'))}</textarea>
+    <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" id="stUse">${esc(tr('', 'Copy for the sender server'))}</button>`;
   if ($('stUse')) $('stUse').onclick = () => {
-    const el = $('spIPs');
-    if (el) { el.value = passed.map(p => p.ip).join('\n'); toastOk(tr('', 'Spoof IPs filled'), tr('', 'Save or bring the tunnel up to apply.')); }
+    const list = passed.map(p => p.ip).join('\n');
+    (navigator.clipboard ? navigator.clipboard.writeText(list) : Promise.reject())
+      .then(() => toastOk(tr('', 'Spoof IPs copied'), tr('', 'Paste them into the Spoof tab on the sender server.')))
+      .catch(() => toastWarn(tr('', 'Copy failed'), tr('', 'Select the list above and copy it by hand.')));
   };
 }
 
