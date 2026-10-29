@@ -12,6 +12,7 @@ Lower ping on reverse Xray links under load, and removing the first tunnel witho
 - After the update the panel rebuilds and restarts every running Xray link whose config changes, so Xray connections drop for a moment.
 
 **Fixes**
+- Spoof Tunnel: **Copy Bundle** on a server that runs only the Spoof Tunnel no longer fails with "this server's public IPv4 is unknown". The bundle read the address only from a GRE or Backhaul setup; it now finds it itself, and a new field "This server's public IPv4" takes it by hand (for a server behind NAT).
 - The first tunnel has its own **Remove** button and is removed alone when there are other tunnels. Before, the only way was "Remove Tunnel", which removed every tunnel on the server; removing peer 1 on the old names did the same. With no other tunnel, Remove Tunnel still removes everything as before. The terminal menu's Remove Tunnel still removes every tunnel.
 
 ## v2.8.4 — 2026-10-29

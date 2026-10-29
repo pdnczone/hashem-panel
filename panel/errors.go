@@ -80,6 +80,7 @@ var errCatalog = map[string]errInfo{
 	"E-INSTALL-02": {500, "installer (hashem.sh) failed", "Open the steps output — failing detail is appended. \"Unknown command\" = panel hashem.sh is an old version: run Update to latest."},
 	// actions
 	"E-ACTION-01": {400, "unknown action", "Reload the page; the button may be from an older version."},
+	"E-SPOOF-01":  {400, "the spoof bundle could not be made", "Fill in what the message names in the Spoof form, then make the bundle again."},
 	"E-ACTION-02": {400, "bad action request (invalid JSON)", "Reload the page and try again."},
 	"E-ACTION-03": {400, "action command failed", "See the Logs tab for this service right after the failure."},
 	// update
