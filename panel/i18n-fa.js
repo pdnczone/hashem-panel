@@ -101,6 +101,8 @@ window.FA_TEXT = {
 "Copy for the sender server": "کپی برای سرور فرستنده",
 "Pre-connect (connections kept ready)": "اتصال از پیش (اتصال‌های آماده)",
 "Direct mode over raw, WS or HTTPUpgrade: the dialing end keeps connections open ahead of time, so a new user connection skips the handshake (lower ping). -1 = off. Needs this version on both servers.": "در حالت مستقیم روی raw، WS یا HTTPUpgrade: سمتی که وصل می‌شود چند اتصال را از قبل باز نگه می‌دارد تا اتصال تازه کاربر منتظر دست‌دادن نماند (پینگ کمتر). ‎-1 یعنی خاموش. باید روی هر دو سرور همین نسخه باشد.",
+"Reverse connections": "اتصال‌های ریورس",
+"Reverse mode: how many connections the foreign server keeps open to Iran (1-16). Users are spread over them, so one download does not slow the others.": "حالت ریورس: سرور خارج چند اتصال باز به ایران نگه دارد (۱ تا ۱۶). کاربرها بین آن‌ها پخش می‌شوند تا یک دانلود بقیه را کند نکند.",
 "Select the list above and copy it by hand.": "لیست بالا را انتخاب کنید و دستی کپی کنید.",
 "Spoof IPs copied": "IPهای اسپوف کپی شد",
 "Paste them into the Spoof tab on the sender server.": "آن‌ها را در تب اسپوف سرور فرستنده بچسبانید.",

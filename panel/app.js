@@ -6141,6 +6141,7 @@ function xrAdvHTML(w) {
       <div class="xr-fields">
         ${inp('xaMux', 'Mux concurrency (0 = off)', p.mux, '0', 'Not with Vision or in reverse mode.')}
         ${inp('xaPre', 'Pre-connect (connections kept ready)', p.preconnect, '4', 'Direct mode over raw, WS or HTTPUpgrade: the dialing end keeps connections open ahead of time, so a new user connection skips the handshake (lower ping). -1 = off. Needs this version on both servers.')}
+        ${inp('xaRev', 'Reverse connections', p.rev_conns, '4', 'Reverse mode: how many connections the foreign server keeps open to Iran (1-16). Users are spread over them, so one download does not slow the others.')}
         ${sel('xaCong', 'TCP congestion', o.congestions, p.congestion, 'System default')}
         ${inp('xaMark', 'Socket mark', p.mark, '0')}
         <div class="xr-field"><span class="qs-label">${esc(tr('', 'Sockets'))}</span>${chk('xaTFO', 'TCP Fast Open', p.tfo)}${chk('xaMPTCP', 'Multipath TCP', p.mptcp)}</div>
@@ -6192,7 +6193,7 @@ function xrWizRead() {
     p.noise = !t ? null : { type: t, length: v('xaNzLen') || (t === 'rand' ? '10-60' : ''), packet: v('xaNzPkt') || '',
       delay: v('xaNzDelay') || '', count: n('xaNzCount') || 1 };
   }
-  p.mux = n('xaMux'); if ($('xaPre')) p.preconnect = n('xaPre'); p.congestion = v('xaCong'); p.mark = n('xaMark'); p.tfo = !!c('xaTFO'); p.mptcp = !!c('xaMPTCP');
+  p.mux = n('xaMux'); if ($('xaPre')) p.preconnect = n('xaPre'); if ($('xaRev')) p.rev_conns = n('xaRev'); p.congestion = v('xaCong'); p.mark = n('xaMark'); p.tfo = !!c('xaTFO'); p.mptcp = !!c('xaMPTCP');
   if ($('xaListen')) w.listen = v('xaListen');
   if ($('xaFrPk')) {
     const pk = v('xaFrPk');
