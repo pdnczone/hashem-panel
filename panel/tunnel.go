@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -250,16 +251,37 @@ func runAction(action string, peerID int) (string, error) {
 		if peerID > 0 {
 			return removePeerViaInstaller(peerID)
 		}
+		// The first tunnel next to other tunnels: remove it alone. The full
+		// removal stops every frps*, backhaul* and gre-t* and drops peers.json.
+		if peers := loadPeers(); len(peers) > 0 {
+			if p := basePeer(peers); p != nil {
+				return removePeerViaInstaller(p.ID)
+			}
+			out, err := removeViaInstaller("--base")
+			invalidatePeerIfsCache()
+			return out, err
+		}
 		// mirror of hashem.sh remove_tunnel_force(): GRE + FRP gone, panel untouched.
 		// Implemented via the installer itself (single source of truth) so the
 		// shell-out path and the menu path can never drift apart.
-		out, err := removeViaInstaller()
+		out, err := removeViaInstaller("--force")
 		if err != nil {
 			return "", err
 		}
 		return out, nil
 	}
 	return "", fmt.Errorf("unknown action")
+}
+
+// basePeer is the peer record that is the first tunnel itself (peer 1 on the
+// legacy names, or a peer that took gre-tunnel), or nil.
+func basePeer(peers []peerRecord) *peerRecord {
+	for i, p := range peers {
+		if p.Legacy || p.GreIf == "gre-tunnel" || slices.Contains(baseUnits, p.FrpsSvc) {
+			return &peers[i]
+		}
+	}
+	return nil
 }
 
 // tuneViaInstaller runs `hashem.sh optimize|restore|tune-status` and returns its
@@ -287,17 +309,18 @@ func tuneViaInstaller(action string) (string, error) {
 	return o, nil
 }
 
-// removeViaInstaller runs `hashem.sh remove-tunnel --force` and returns its
-// output as the action result. GRE_SKIP_PANEL is irrelevant here (removal
-// never touches the panel), but kept for symmetry with runInstaller.
-func removeViaInstaller() (string, error) {
+// removeViaInstaller runs `hashem.sh remove-tunnel --force` (every tunnel) or
+// `--base` (the first tunnel only) and returns its output as the action
+// result. GRE_SKIP_PANEL is irrelevant here (removal never touches the
+// panel), but kept for symmetry with runInstaller.
+func removeViaInstaller(mode string) (string, error) {
 	script, err := greScriptPath()
 	if err != nil {
 		return "", err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "bash", script, "remove-tunnel", "--force")
+	cmd := exec.CommandContext(ctx, "bash", script, "remove-tunnel", mode)
 	cmd.Env = append(os.Environ(), "GRE_SKIP_PANEL=1", "TERM=dumb", "GRE_PANEL_DIR="+configDir)
 	out, runErr := cmd.CombinedOutput()
 	o := strings.TrimSpace(string(out))
@@ -572,10 +595,11 @@ func stripANSI(s string) string {
 
 // removePeerDirect deletes one peer using its registry record: stop + disable
 // its units, delete unit files + frps toml + GRE iface, drop the record.
-// Legacy peer 1 also drops the old single tunnel (same as remove_tunnel_force).
+// Legacy peer 1 is the first tunnel; an installer this old can only remove
+// every tunnel with it, so it is refused until hashem.sh is updated.
 func removePeerDirect(p *peerRecord) (string, error) {
 	if p.Legacy {
-		return removeViaInstaller()
+		return "", fmt.Errorf("this hashem.sh cannot remove the first tunnel alone; run `hashem update` first")
 	}
 	greSvc := p.GreIf
 	if greSvc == "" {

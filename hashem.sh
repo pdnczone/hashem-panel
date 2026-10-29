@@ -4948,7 +4948,8 @@ cli_remove_peer() {
         [[ "$CONFIRM" =~ ^[Yy]$ ]] || { echo -e "${YELLOW}[*] Aborted.${NC}"; return 0; }
     fi
     if [[ "$LEG" == "1" ]]; then
-        remove_tunnel_force
+        # peer 1 on the legacy names is the first tunnel: only it goes
+        remove_base_tunnel "$ID"
     else
         frps_wss_front_remove "-${ID}"
         [[ "$SVC" == backhaul-* ]] && backhaul_udp_remove "$SVC"
@@ -4960,9 +4961,8 @@ cli_remove_peer() {
             ip tunnel del "$GIF" >/dev/null 2>&1 || true
         fi
     fi
-    PEERS_F="$PEERS_FILE" PEER_ID="$ID" python3 -c \
-'import json,os; f=os.environ["PEERS_F"]; d=json.load(open(f)); d["peers"]=[p for p in d.get("peers",[]) if p["id"]!=int(os.environ["PEER_ID"])]; json.dump(d,open(f,"w"),indent=2)' \
-        || echo -e "${YELLOW}[!] peers registry already gone — nothing left to clean.${NC}"
+    [[ -f "$PEERS_FILE" ]] && PEERS_F="$PEERS_FILE" PEER_ID="$ID" python3 -c \
+'import json,os; f=os.environ["PEERS_F"]; d=json.load(open(f)); d["peers"]=[p for p in d.get("peers",[]) if p["id"]!=int(os.environ["PEER_ID"])]; json.dump(d,open(f,"w"),indent=2)'
     echo -e "${GREEN}[OK] Peer '${NAME}' (id ${ID}) removed.${NC}"
 }
 
@@ -6215,6 +6215,38 @@ remove_tunnel_force() {
         rm -f "$PEERS_FILE"
 
         echo -e "${GREEN}[OK] Tunnel removed — GRE interface, FRP/Backhaul services, binaries and configs gone. Panel still running.${NC}"
+}
+
+# peers_other_than ID: how many peer records other than ID are in the registry.
+peers_other_than() {
+    [[ -f "$PEERS_FILE" ]] || { echo 0; return; }
+    grep -o '"id": *[0-9]*' "$PEERS_FILE" 2>/dev/null | grep -o '[0-9]*$' | grep -cvx "${1:-0}"
+}
+
+# remove_base_tunnel: the first tunnel only (gre-tunnel, frps/frpc or the base
+# Backhaul unit, and their configs). The other tunnels' units, interfaces and
+# configs stay, and so do the rules every tunnel shares (MSS clamp, pools,
+# limits). With no other tunnel left this is remove_tunnel_force.
+remove_base_tunnel() {
+    if [[ "$(peers_other_than "${1:-0}")" -eq 0 ]]; then
+        remove_tunnel_force
+        return
+    fi
+    local d="${HASHEM_SYSTEMD_DIR:-/etc/systemd/system}" u
+    echo -e "${CYAN}[*] Removing the first tunnel; the other tunnels keep running...${NC}"
+    frps_wss_front_remove ""
+    backhaul_udp_remove backhaul-server
+    for u in frps frpc backhaul-server backhaul-client backhaul "$TUNNEL_NAME"; do
+        systemctl disable --now "${u}.service" >/dev/null 2>&1 || true
+        rm -f "$d/${u}.service"
+    done
+    systemctl daemon-reload; systemctl reset-failed >/dev/null 2>&1 || true
+    ip link del "$TUNNEL_NAME" >/dev/null 2>&1 || ip tunnel del "$TUNNEL_NAME" >/dev/null 2>&1 || true
+    ip link del "$(gre6_sit_name "$TUNNEL_NAME")" >/dev/null 2>&1 || true
+    rm -f "${CONFIG_DIR}/frps.toml" "${CONFIG_DIR}/frpc.toml" \
+          "${BACKHAUL_CONFIG_DIR}/config.toml" "${BACKHAUL_CONFIG_DIR}/server.toml" "${BACKHAUL_CONFIG_DIR}/client.toml" \
+          "${PANEL_CONFIG_DIR}/server.toml" "${PANEL_CONFIG_DIR}/client.toml"
+    echo -e "${GREEN}[OK] First tunnel removed. The other tunnels are untouched.${NC}"
 }
 
 PANEL_DIR="/usr/local/gre-panel"
@@ -11587,7 +11619,11 @@ if [[ $# -gt 0 ]]; then
         spoof|spoof-tunnel) shift; cli_spoof "$@" ;;
         xray|xray-tunnel) shift; cli_xray "$@" ;;
         remove-tunnel)
-            if [[ "${2:-}" == "--force" ]]; then remove_tunnel_force; else remove_tunnel; fi ;;
+            case "${2:-}" in
+                --force) remove_tunnel_force ;;
+                --base) remove_base_tunnel ;;
+                *) remove_tunnel ;;
+            esac ;;
         uninstall)
             if [[ "${2:-}" == "--force" ]]; then uninstall_all_force; else uninstall_all; fi ;;
         show-panel-url) show_panel_url ;;

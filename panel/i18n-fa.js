@@ -2156,6 +2156,8 @@ window.FA_TEXT = {
 "More foreign servers can be added from Setup → Add another foreign server.": "سرورهای خارج بیشتر را می‌شود از راه‌اندازی ← افزودن سرور خارج دیگر اضافه کرد.",
 "The tunnel on this server is deleted: its GRE interface, tunnel service and their configs. The other server keeps its side until you remove it there. The panel stays.": "تونل این سرور حذف می‌شود: اینترفیس GRE، سرویس تونل و تنظیماتشان. سرور مقابل سمت خودش را نگه می‌دارد تا آنجا هم حذفش کنید. پنل باقی می‌ماند.",
 "Tunnel removed": "تونل حذف شد",
+"The first tunnel on this server is deleted: its GRE interface, tunnel service and their configs. The other tunnels keep running; remove each from its own card. The panel stays.": "تونل اول این سرور حذف می‌شود: اینترفیس GRE، سرویس تونل و تنظیماتشان. بقیه‌ی تونل‌ها کار می‌کنند؛ هر کدام را از کارت خودش حذف کنید. پنل باقی می‌ماند.",
+"Its GRE interface and tunnel service go away; other tunnels keep running.": "اینترفیس GRE و سرویس تونلش حذف می‌شوند؛ بقیه‌ی تونل‌ها کار می‌کنند.",
 "Applies FQ + BBR, larger TCP buffers, GRE MTU 1380 and MSS clamp 1340. The current settings are saved first, so Restore can bring them back. The tunnel keeps running.": "FQ و BBR، بافرهای بزرگ‌تر TCP، MTU برابر 1380 برای GRE و MSS clamp برابر 1340 اعمال می‌شود. تنظیمات فعلی اول ذخیره می‌شود تا «بازگردانی» بتواند برشان گرداند. تونل در حال کار می‌ماند.",
 "Optimize Network": "بهینه‌سازی شبکه",
 "Network optimized": "شبکه بهینه شد",
