@@ -3,6 +3,18 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## v2.8.5 — 2026-10-29
+
+Lower ping on reverse Xray links under load, reverse links that recover in seconds when the network drops them, and removing the first tunnel without removing the others. Run `hashem update` on both servers, in any order.
+
+**Performance**
+- **A download no longer slows every other user on a reverse Xray link.** The reverse link carries every user connection over one connection to Iran (Xray adds a second only past 16 on it), so one download filled its send queue and every other request waited behind it. The foreign server now keeps 4 reverse connections (set 1–16 under "Reverse connections"), and Iran gives each new user connection to the least busy one. Links that carry many connections on one (reverse, mux, XHTTP, gRPC) also keep at most 16 KiB waiting in each socket.
+- **A reverse link that the network drops without a word is replaced in about half a minute** instead of after several minutes, when users' connections hung on it.
+- After the update the panel rebuilds and restarts every running Xray link whose config changes, so Xray connections drop for a moment.
+
+**Fixes**
+- The first tunnel has its own **Remove** button and is removed alone when there are other tunnels. Before, the only way was "Remove Tunnel", which removed every tunnel on the server; removing peer 1 on the old names did the same. With no other tunnel, Remove Tunnel still removes everything as before. The terminal menu's Remove Tunnel still removes every tunnel.
+
 ## v2.8.4 — 2026-10-29
 
 Lower ping on direct Xray links, a working Spoof IP tester and Spoof form, the panel's domain in the terminal, and honest Benchmark numbers. Run `hashem update` on the **foreign server first**, then the Iran server.
