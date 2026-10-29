@@ -748,8 +748,9 @@ const (
 	// multiplexes connections (TCP_NOTSENT_LOWAT): the rest waits in Xray,
 	// per stream, so a new request is not behind megabytes of a download.
 	xrayNotSentLowat = 16384
-	// The reverse link notices a dead connection within about 10 s idle +
-	// 25 s unanswered, and the foreign server dials a new one.
+	// Keepalive after 10 s idle, and data unanswered for 25 s ends a reverse
+	// connection. The lab does not show requests recovering sooner yet after
+	// the link's connections are silently dropped (test_xray_lab.sh).
 	xrayRevKeepIdle    = 10
 	xrayRevKeepIntvl   = 5
 	xrayRevUserTimeout = 25000 // ms
