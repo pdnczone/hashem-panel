@@ -28,6 +28,7 @@ package main
 import (
 	"context"
 	"hash/fnv"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -265,10 +266,28 @@ func collectHost(recs []peerRecord, prev map[string]devCounters) *hostView {
 	return v
 }
 
-// pingOnce is one ICMP echo with a hard timeout; ms is the wall time.
+var (
+	pingDownMu sync.Mutex
+	pingDown   = map[string]bool{}
+)
+
+// pingOnce is one ICMP echo with a hard timeout; ms is the wall time. The log
+// gets one line when a target stops answering and one when it answers again,
+// not one per poll.
 func pingOnce(target string) (bool, float64) {
 	start := time.Now()
-	if _, err := runCmdTimeout(4*time.Second, "ping", "-c", "1", "-W", "2", target); err != nil {
+	_, err := runCmdTimeout(4*time.Second, "ping", "-c", "1", "-W", "2", target)
+	pingDownMu.Lock()
+	if down := err != nil; down != pingDown[target] {
+		pingDown[target] = down
+		if down {
+			log.Printf("[ICMP] %s does not answer ping", target)
+		} else {
+			log.Printf("[ICMP] %s answers ping again", target)
+		}
+	}
+	pingDownMu.Unlock()
+	if err != nil {
 		return false, -1
 	}
 	return true, float64(time.Since(start).Microseconds()) / 1000

@@ -114,15 +114,18 @@ func TestExitIsAnswer(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		args []string
+		code int
 		want bool
 	}{
-		{"systemctl", []string{"is-active", "frps", "frpc"}, true},
-		{"systemctl", []string{"is-enabled", "frps"}, true},
-		{"systemctl", []string{"restart", "frps"}, false},
-		{"systemctl", nil, false},
-		{"ip", []string{"is-active"}, false},
+		{"systemctl", []string{"is-active", "frps", "frpc"}, 3, true},
+		{"systemctl", []string{"is-enabled", "frps"}, 1, true},
+		{"systemctl", []string{"restart", "frps"}, 1, false},
+		{"systemctl", nil, 1, false},
+		{"ip", []string{"is-active"}, 1, false},
+		{"ping", []string{"-c", "1", "10.10.10.4"}, 1, true},
+		{"ping", []string{"-c", "1", "bad host"}, 2, false},
 	} {
-		if got := exitIsAnswer(c.name, c.args); got != c.want {
+		if got := exitIsAnswer(c.name, c.args, c.code); got != c.want {
 			t.Errorf("exitIsAnswer(%s %v) = %v, want %v", c.name, c.args, got, c.want)
 		}
 	}

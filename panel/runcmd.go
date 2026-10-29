@@ -83,7 +83,7 @@ func runCmdTimeoutCtx(ctx context.Context, timeout time.Duration, name string, a
 	out, err := runner(ctx, name, args...)
 	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
 	var exitErr *exec.ExitError
-	answer := errors.As(err, &exitErr) && exitIsAnswer(name, args)
+	answer := errors.As(err, &exitErr) && exitIsAnswer(name, args, exitErr.ExitCode())
 	if answer {
 		recordExec(name, time.Since(start), nil, false)
 	} else {
@@ -110,8 +110,12 @@ func runCmdTimeoutCtx(ctx context.Context, timeout time.Duration, name string, a
 // exitIsAnswer reports whether a non-zero exit of this command is its answer
 // rather than a failure: `systemctl is-active` exits 3 for a stopped unit and
 // 4 for one that is not installed, which the status pollers ask every few
-// seconds. Logging those filled the activity stream with false errors.
-func exitIsAnswer(name string, args []string) bool {
+// seconds. Logging those filled the activity stream with false errors. So
+// does `ping` exiting 1 for no reply: every caller reports that itself.
+func exitIsAnswer(name string, args []string, code int) bool {
+	if name == "ping" {
+		return code == 1
+	}
 	if name != "systemctl" || len(args) == 0 {
 		return false
 	}
