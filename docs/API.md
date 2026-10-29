@@ -55,6 +55,9 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `GET` | `/api/cluster/rules` | session | `handleClusterRules` |
 | `POST` | `/api/cluster/settings` | session + CSRF | `handleClusterSettings` |
 | `GET` | `/api/cluster/status` | session | `handleClusterStatus` |
+| `GET` | `/api/customers` | session | `handleCustomersGet` |
+| `POST` | `/api/customers` | session + CSRF | `handleCustomersPost` |
+| `GET` | `/api/customers/kit` | session | `handleCustomersKit` |
 | `GET` | `/api/dashboard` | session | `handleDashboard` |
 | `GET` | `/api/dial` | session | `handleDialGet` |
 | `POST` | `/api/dial` | session + CSRF | `handleDialPost` |
@@ -158,4 +161,4 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/xray` | session + CSRF | `handleXrayPost` |
 | `GET` | `/metrics` | none | `handleMetrics` |
 
-Total: 134 routes.
+Total: 137 routes.

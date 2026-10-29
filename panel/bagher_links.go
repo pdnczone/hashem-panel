@@ -103,7 +103,7 @@ func bagherPortOwner(cfg SSHFwdConfig, p, skip int) int {
 // FRP ports or another of Hashem's configs (ports_registry.go) already use.
 // Callers hold sshFwdMu: the claims are built from cfg, not reloaded.
 func checkBagherLinkPorts(cfg SSHFwdConfig, ports []int, self int) error {
-	var claims []portClaim
+	var claims claimIndex
 	for _, p := range ports {
 		if p >= cfg.FRPBindPort && p <= cfg.FRPBindPort+2 {
 			return fmt.Errorf("port %d is Bagher's internal FRP port (%d-%d)", p, cfg.FRPBindPort, cfg.FRPBindPort+2)
@@ -112,12 +112,17 @@ func checkBagherLinkPorts(cfg SSHFwdConfig, ports []int, self int) error {
 			return fmt.Errorf("port %d is already forwarded to foreign server %d (%s)", p, owner, bagherLinkHost(cfg, owner))
 		}
 		if claims == nil {
-			claims = portClaimsWith(cfg)
+			claims = indexClaims(portClaimsWith(cfg))
 		}
-		// Bagher's own claims were checked above; a pool may cover any port
-		skip := func(c portClaim) bool { return c.Kind == claimBagher || c.Kind == claimBagherFR || c.Kind == claimPool }
-		for _, proto := range []string{"tcp", "udp"} {
-			if owner := claimOwner(claims, proto, p, skip); owner != "" {
+		// Bagher's own claims were checked above. A pool's DNAT would take
+		// the port's traffic (Bagher is never a pool member): no skip for it.
+		skip := func(c portClaim) bool { return c.Kind == claimBagher || c.Kind == claimBagherFR }
+		protos := []string{"tcp"}
+		if cfg.UDP {
+			protos = append(protos, "udp")
+		}
+		for _, proto := range protos {
+			if owner := claims.owner(proto, p, skip); owner != "" {
 				return fmt.Errorf("port %d is already used by %s", p, owner)
 			}
 		}

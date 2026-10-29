@@ -123,7 +123,7 @@ func peerPortClash(want []int, excludeID int) string {
 	for _, p := range loadClusterConfig().Pools {
 		pooled[p.Port] = true
 	}
-	claims := hashemPortClaims()
+	claims := indexClaims(hashemPortClaims())
 	skip := func(c portClaim) bool {
 		return c.Kind == claimPool || (c.Kind == claimPeer && c.Ref == excludeID)
 	}
@@ -132,7 +132,7 @@ func peerPortClash(want []int, excludeID int) string {
 			continue
 		}
 		for _, proto := range []string{"tcp", "udp"} {
-			if owner := claimOwner(claims, proto, port, skip); owner != "" {
+			if owner := claims.owner(proto, port, skip); owner != "" {
 				return fmt.Sprintf("%d (%s)", port, owner)
 			}
 		}

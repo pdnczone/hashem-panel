@@ -383,12 +383,18 @@ func limitsTCApply(ifname string, rates map[string]float64) error {
 // list both clsact directions for either one, and print "police" more than
 // once per filter, so distinct filters are counted, not lines or words.
 func limitsTCPresent(ifname string) int {
+	return tcFiltersPresent(ifname, limitsTCPref, limitsTCPref6)
+}
+
+// tcFiltersPresent counts the distinct u32 filters on ifname's clsact hooks
+// at pref (and pref6, which may be absent), -1 when tc cannot list them.
+func tcFiltersPresent(ifname, pref4, pref6 string) int {
 	seen := map[string]bool{}
 	for _, dir := range []string{"egress", "ingress"} {
-		for _, pref := range []string{limitsTCPref, limitsTCPref6} {
+		for _, pref := range []string{pref4, pref6} {
 			out, err := limitsRun("tc", "filter", "show", "dev", ifname, dir, "pref", pref)
 			if err != nil {
-				if pref == limitsTCPref6 {
+				if pref == pref6 {
 					continue // no IPv6 filters
 				}
 				return -1

@@ -56,6 +56,8 @@ jobs:
           mkdir -p panel/dist
           cp hashem.sh panel/dist/hashem.sh
           cp panel/grepanel panel/dist/grepanel
+          # the foreign end of a sold tunnel: panels link to the release they are
+          cp tools/hashem-customer.sh panel/dist/hashem-customer.sh
           ls -la panel/dist/
 
       - name: Generate checksums.txt (SHA256, consumed by the panel updater)
@@ -83,6 +85,7 @@ jobs:
             panel/${{ env.BIN_NAME }}-linux-arm64
             panel/dist/hashem.sh
             panel/dist/grepanel
+            panel/dist/hashem-customer.sh
             panel/checksums.txt
 
       # Dev channel: prerelease only, never "Latest", never touches a stable tag.
@@ -101,6 +104,7 @@ jobs:
             panel/${{ env.BIN_NAME }}-linux-arm64
             panel/dist/hashem.sh
             panel/dist/grepanel
+            panel/dist/hashem-customer.sh
             panel/checksums.txt
 
       # The release description is this version's section of CHANGELOG.md:
@@ -131,4 +135,5 @@ jobs:
             panel/gre-panel-linux-arm64
             panel/dist/hashem.sh
             panel/dist/grepanel
+            panel/dist/hashem-customer.sh
             panel/checksums.txt

@@ -48,7 +48,8 @@ func registryFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeJSONFile(t, xrayStatePath(), xrayState{Links: []XrayLink{
-		{ID: 1, Mode: "reverse", Side: xraySideIran, TunnelPort: 10443, Ports: []int{2087}, UDP: true, Profile: XrayProfile{Transport: "tcp"}},
+		{ID: 1, Mode: "reverse", Side: xraySideIran, TunnelPort: 10443, Ports: []int{2087}, UDP: true, ProbePort: 41234, Profile: XrayProfile{Transport: "tcp"}},
+		{ID: 2, Mode: "reverse", Side: xraySideIran, TunnelPort: 10444, Ports: []int{2095}, Disabled: true, Profile: XrayProfile{Transport: "tcp"}},
 	}})
 	if err := os.WriteFile(filepath.Join(frpDir, "frps-9.toml"), []byte("bindPort = 7009\nquicBindPort = 7010\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -88,6 +89,11 @@ func TestPortRegistryClaims(t *testing.T) {
 	} {
 		if got := claimOwner(claims, c.proto, c.port, nil); !strings.Contains(got, c.want) {
 			t.Errorf("%s/%d: owner %q, want %q", c.proto, c.port, got, c.want)
+		}
+	}
+	for _, port := range []int{41234, 2095, 10444} { // the loopback probe; a stopped link
+		if got := claimOwner(claims, "tcp", port, nil); got != "" {
+			t.Errorf("tcp/%d is claimed by %q", port, got)
 		}
 	}
 	if got := claimOwner(claims, "udp", 2083, nil); got != "" {
@@ -137,8 +143,21 @@ func TestBagherPortsUseRegistry(t *testing.T) {
 			t.Errorf("port %d: %v, want %q", port, err, want)
 		}
 	}
-	if err := checkBagherLinkPorts(b, []int{2083, 6000}, 1); err != nil {
-		t.Errorf("pool and free ports: %v", err)
+	if err := checkBagherLinkPorts(b, []int{6000}, 1); err != nil {
+		t.Errorf("a free port: %v", err)
+	}
+	// a pool's DNAT would take Bagher's traffic
+	if err := checkBagherLinkPorts(b, []int{2083}, 1); err == nil || !strings.Contains(err.Error(), "cluster pool") {
+		t.Errorf("a pooled port: %v", err)
+	}
+	// TCP-only Bagher does not clash with a UDP-only claim (frps-9's QUIC port)
+	b.UDP = false
+	if err := checkBagherLinkPorts(b, []int{7010}, 1); err != nil {
+		t.Errorf("TCP-only Bagher on a UDP-only port: %v", err)
+	}
+	b.UDP = true
+	if err := checkBagherLinkPorts(b, []int{7010}, 1); err == nil {
+		t.Errorf("Bagher with UDP on frps-9's QUIC port was accepted")
 	}
 }
 
