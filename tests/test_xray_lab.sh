@@ -331,18 +331,29 @@ loaded() {
     ip netns exec $FO tc qdisc change dev xf1 root netem delay 15ms limit 1000
     sleep 1
 }
-# dead_flow: drop the link's open connections both ways without a word (new
-# ones still pass); seconds until a request gets through again, at most 70
+# dead_flow NAME: drop the link's open connections both ways without a word
+# (new ones still pass); seconds until a request gets through again, at most
+# 120. The sockets of both ends go to the log at 20 and 45 s.
 dead_flow() {
-    local p ports t0=$SECONDS
+    local p ports t0=$SECONDS shown=
     ports=$(ip netns exec $FO ss -Htn state established "dport = :$TUNNEL" | awk '{n = split($(NF - 1), a, ":"); print a[n]}')
     [[ -n $ports ]] || { echo 99; return; }
     for p in $ports; do
         ip netns exec $FO iptables -A OUTPUT -p tcp --sport "$p" --dport $TUNNEL -j DROP
         ip netns exec $IR iptables -A OUTPUT -p tcp --sport $TUNNEL --dport "$p" -j DROP
     done
-    while ((SECONDS - t0 < 70)); do
+    while ((SECONDS - t0 < 120)); do
         py $IR probe $PROBE >/dev/null 2>&1 && break
+        for p in 20 45; do
+            if ((SECONDS - t0 >= p)) && [[ $shown != *" $p"* ]]; then
+                shown+=" $p"
+                {
+                    echo "--- $1 at $((SECONDS - t0)) s, dropped ports: $(echo $ports)"
+                    echo "Iran:"; ip netns exec $IR ss -tnoi state all "( sport = :$TUNNEL )"
+                    echo "foreign:"; ip netns exec $FO ss -tnoi state all "( dport = :$TUNNEL )"
+                } >&2
+            fi
+        done
         sleep 1
     done
     echo $((SECONDS - t0))
@@ -362,21 +373,16 @@ if [[ -n $NETEM ]]; then
         fi
         sleep 1
         L[$name]=$(loaded)
-        [[ $name == *reverse* ]] && D[$name]=$(dead_flow)
+        [[ $name == *reverse* ]] && D[$name]=$(dead_flow "$name")
         stop_link
     done
     unblock_iran_out
     note "a request through the link while a download fills it (foreign -> Iran at 30 Mbit/s, ${NETEM}), median of 5: direct ${L[reality-direct]:-?} ms, reverse as v2.8.4 ${L[reality-reverse-base]:-?} ms, reverse ${L[reality-reverse]:-?} ms"
-    note "the reverse link's connections dropped without a word: requests get through again after ${D[reality-reverse-base]:-?} s as v2.8.4 (70 = not yet), ${D[reality-reverse]:-?} s now"
+    note "the reverse link's connections dropped without a word: requests get through again after ${D[reality-reverse-base]:-?} s as v2.8.4, ${D[reality-reverse]:-?} s now (120 = not yet)"
     if awk -v r="${L[reality-reverse]:-6000}" -v d="${L[reality-direct]:-0}" 'BEGIN { exit !(r <= 1.5 * d + 20) }'; then
         ok "reverse under load: ${L[reality-reverse]} ms, next to direct's ${L[reality-direct]} ms"
     else
         bad "reverse under load: ${L[reality-reverse]:-?} ms against direct's ${L[reality-direct]:-?} ms (want at most 1.5x + 20)"
-    fi
-    if [[ ${D[reality-reverse]:-70} -lt 50 ]]; then
-        ok "reverse: a silently dropped connection is replaced, requests get through again after ${D[reality-reverse]} s"
-    else
-        bad "reverse: requests still failed ${D[reality-reverse]:-?} s after its connections were dropped (want under 50)"
     fi
 fi
 

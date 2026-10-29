@@ -5,11 +5,10 @@ Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
 ## v2.8.5 — 2026-10-29
 
-Lower ping on reverse Xray links under load, reverse links that recover in seconds when the network drops them, and removing the first tunnel without removing the others. Run `hashem update` on both servers, in any order.
+Lower ping on reverse Xray links under load, and removing the first tunnel without removing the others. Run `hashem update` on both servers, in any order.
 
 **Performance**
-- **A download no longer slows every other user on a reverse Xray link.** The reverse link carries every user connection over one connection to Iran (Xray adds a second only past 16 on it), so one download filled its send queue and every other request waited behind it. The foreign server now keeps 4 reverse connections (set 1–16 under "Reverse connections"), and Iran gives each new user connection to the least busy one. Links that carry many connections on one (reverse, mux, XHTTP, gRPC) also keep at most 16 KiB waiting in each socket.
-- **A reverse link that the network drops without a word is replaced in about half a minute** instead of after several minutes, when users' connections hung on it.
+- **A download no longer slows every other user on a reverse Xray link.** The reverse link carries every user connection over one connection to Iran (Xray adds a second only past 16 on it), so one download filled its send queue and every other request waited behind it. The foreign server now keeps 4 reverse connections (set 1–16 under "Reverse connections"), and Iran gives each new user connection to the least busy one. Links that carry many connections on one (reverse, mux, XHTTP, gRPC) also keep at most 16 KiB waiting in each socket. In the lab, a request during a download that fills a 30 Mbit/s link took 77 ms instead of 560 ms (81 ms on a direct link).
 - After the update the panel rebuilds and restarts every running Xray link whose config changes, so Xray connections drop for a moment.
 
 **Fixes**
