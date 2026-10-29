@@ -3,6 +3,27 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## v2.8.4 — 2026-10-29
+
+Lower ping on direct Xray links, a working Spoof IP tester and Spoof form, the panel's domain in the terminal, and honest Benchmark numbers. Run `hashem update` on the **foreign server first**, then the Iran server.
+
+**Performance**
+- **A direct Xray link no longer pays a full handshake for each new connection.** Every user connection opened a new TCP connection and a new Reality/TLS handshake before its first byte, so clients that test the delay with a new connection saw about 4x the real ping (94–131 ms over a 30 ms round trip, against 31 ms in reverse mode). The Iran end now keeps 4 connections ready (Xray's pre-connect, on raw, WS and HTTPUpgrade; set it from 1 to 32, or -1 to turn it off, next to Mux), and a new connection takes one round trip. HTTP/2 transports, CDN links, mux and reverse mode are unchanged. The foreign end waits up to 150 s for the first request on a ready connection. After the update the panel rebuilds and restarts every running link whose config changes, so Xray connections drop for a moment. If only the Iran server is updated, the foreign server closes ready connections after 4 s and Xray logs a warning each time it redials.
+
+**Spoof Tunnel**
+- The IP tester's results now go to the right server: the receiver lists the IPs the *sender* can forge, so the button copies them for the sender server instead of filling them on the receiver. The sender also gets a destination port, the tunnel's port by default instead of a fixed 80, and a max loss of 0 stays 0.
+- The send/receive transport you choose is kept. The selects never showed the saved value, so every Save or Up went back to TCP/TCP and stopped matching the bundle.
+- "Peer reachable" comes from the WireGuard handshake instead of ping. A server that receives over ICMP turns off ping replies for the whole host, and the form now says so.
+- The tab shows the last error and a Failed badge instead of "Starting…" forever; Stop clears it. `hashem spoof up`/`down` record the state the panel shows.
+- An IPv6 peer is refused at Up, and an IPv6-only Iran server when making the bundle, instead of failing later on the foreign server. The core is IPv4 only.
+- A bundle imported while the tunnel runs is applied at once. The foreign server can keep spoof port 443.
+- `hashem update` replaces a Spoof core that is not the pinned build.
+- The "generate keys" action is gone: it replaced one side's key and broke the pair.
+
+**Fixes**
+- The `hashem` menu and `hashem show-panel-url` show `https://DOMAIN:port/` once a domain certificate is set, instead of `http://IP:port`. `show-panel-url` keeps the plain HTTP address on a second line.
+- Benchmark: a ping without a summary line is a failed probe, not 15 ms; asking for a run while one is in progress no longer returns an empty page; a WSS port whose TLS handshake fails no longer counts as working.
+
 ## v2.8.0 — 2026-10-27
 
 Less CPU under heavy use, on every tunnel type and most of all on Bagher, and a fix for saving Xray links. Run `hashem update` on both servers of a tunnel; Bagher's gain needs the foreign server updated.
