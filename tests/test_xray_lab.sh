@@ -98,6 +98,13 @@ def service(host, port):
     def h(c):
         with c:
             n = struct.unpack("!Q", recvn(c, 8))[0]
+            if n >> 63:  # a download that runs until the client hangs up
+                chunk = os.urandom(1 << 16)
+                try:
+                    while True:
+                        c.sendall(chunk)
+                except OSError:
+                    return
             got = hashlib.sha256(recvn(c, n)).digest()
             data = os.urandom(n)
             c.sendall(got + hashlib.sha256(data).digest() + data)
@@ -144,6 +151,15 @@ def par(host, port, k, n):
     ts = [threading.Thread(target=lambda: res.append(one(host, port, n))) for _ in range(k)]
     [t.start() for t in ts]; [t.join() for t in ts]
     sys.exit(0 if len(res) == k and all(res) else 1)
+
+def load(host, port, secs):
+    c = socket.create_connection((host, port), timeout=10)
+    c.sendall(struct.pack("!Q", 1 << 63))
+    end = time.time() + secs
+    while time.time() < end:
+        if not c.recv(1 << 16):
+            break
+    c.close()
 
 def udp(host, port, count, size):
     s = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(0.2)
@@ -296,6 +312,73 @@ while read -r name; do
 done <"$TMP/cfg/combos"
 unblock_iran_out
 note "a request through each link and back, first/once open${NETEM:+, over a $NETEM round trip}: ${probes%, }"
+
+# ---- Ping under load and a dead connection. The reverse link carries every
+# user as a stream on its connections, so a download used to fill the one
+# connection's send queue in front of everyone else; and a connection the
+# network dropped without a word stayed in use for minutes. "base" is the
+# reverse link as v2.8.4 made it: one connection, no send queue cap, no fast
+# dead-connection check.
+median() { sort -n | awk '{a[NR] = $1} END {if (NR) print a[int((NR + 1) / 2)]; else print "?"}'; }
+# loaded: the probe while one download fills foreign -> Iran at 30 Mbit/s; median of 5, ms
+loaded() {
+    local lp i
+    ip netns exec $FO tc qdisc change dev xf1 root netem delay 15ms rate 30mbit limit 100 || return 1
+    py $USR load $IR_U $PORT 20 >/dev/null 2>&1 & lp=$!
+    sleep 4
+    for i in 1 2 3 4 5; do py $IR probe $PROBE 2>/dev/null || echo 6000; sleep 0.5; done | median
+    kill "$lp" 2>/dev/null; wait "$lp" 2>/dev/null
+    ip netns exec $FO tc qdisc change dev xf1 root netem delay 15ms limit 1000
+    sleep 1
+}
+# dead_flow: drop the link's open connections both ways without a word (new
+# ones still pass); seconds until a request gets through again, at most 70
+dead_flow() {
+    local p ports t0=$SECONDS
+    ports=$(ip netns exec $FO ss -Htn state established "dport = :$TUNNEL" | awk '{n = split($(NF - 1), a, ":"); print a[n]}')
+    [[ -n $ports ]] || { echo 99; return; }
+    for p in $ports; do
+        ip netns exec $FO iptables -A OUTPUT -p tcp --sport "$p" --dport $TUNNEL -j DROP
+        ip netns exec $IR iptables -A OUTPUT -p tcp --sport $TUNNEL --dport "$p" -j DROP
+    done
+    while ((SECONDS - t0 < 70)); do
+        py $IR probe $PROBE >/dev/null 2>&1 && break
+        sleep 1
+    done
+    echo $((SECONDS - t0))
+    for p in $ports; do
+        ip netns exec $FO iptables -D OUTPUT -p tcp --sport "$p" --dport $TUNNEL -j DROP
+        ip netns exec $IR iptables -D OUTPUT -p tcp --sport $TUNNEL --dport "$p" -j DROP
+    done
+}
+if [[ -n $NETEM ]]; then
+    declare -A L D
+    for name in reality-direct reality-reverse-base reality-reverse; do
+        unblock_iran_out
+        [[ $name == *reverse* ]] && block_iran_out
+        start_link "$name"
+        if ! wait_probe 20 >/dev/null; then
+            bad "$name: the link never answered the probe"; stop_link; continue
+        fi
+        sleep 1
+        L[$name]=$(loaded)
+        [[ $name == *reverse* ]] && D[$name]=$(dead_flow)
+        stop_link
+    done
+    unblock_iran_out
+    note "a request through the link while a download fills it (foreign -> Iran at 30 Mbit/s, ${NETEM}), median of 5: direct ${L[reality-direct]:-?} ms, reverse as v2.8.4 ${L[reality-reverse-base]:-?} ms, reverse ${L[reality-reverse]:-?} ms"
+    note "the reverse link's connections dropped without a word: requests get through again after ${D[reality-reverse-base]:-?} s as v2.8.4 (70 = not yet), ${D[reality-reverse]:-?} s now"
+    if awk -v r="${L[reality-reverse]:-6000}" -v d="${L[reality-direct]:-0}" 'BEGIN { exit !(r <= 1.5 * d + 20) }'; then
+        ok "reverse under load: ${L[reality-reverse]} ms, next to direct's ${L[reality-direct]} ms"
+    else
+        bad "reverse under load: ${L[reality-reverse]:-?} ms against direct's ${L[reality-direct]:-?} ms (want at most 1.5x + 20)"
+    fi
+    if [[ ${D[reality-reverse]:-70} -lt 50 ]]; then
+        ok "reverse: a silently dropped connection is replaced, requests get through again after ${D[reality-reverse]} s"
+    else
+        bad "reverse: requests still failed ${D[reality-reverse]:-?} s after its connections were dropped (want under 50)"
+    fi
+fi
 
 # ---- IPv6: the servers connect over IPv6 only (IPv4 between them dropped)
 # and the user comes in over IPv6

@@ -132,6 +132,9 @@ type XrayProfile struct {
 	// PreConnect is how many connections the dialing end keeps open ahead of
 	// time (Xray's VLESS "testpre"): 0 = the default, -1 = off.
 	PreConnect int `json:"preconnect,omitempty"`
+	// RevConns is how many connections the foreign server keeps open to Iran
+	// in reverse mode: 0 = the default.
+	RevConns int `json:"rev_conns,omitempty"`
 
 	Fragment *XrayFragment `json:"fragment,omitempty"` // dialing end only
 	Noise    *XrayNoise    `json:"noise,omitempty"`    // dialing end, UDP (mKCP) only
@@ -542,6 +545,9 @@ func (l XrayLink) validate() error {
 	if p.Mux > 0 && l.Mode == xrayModeReverse {
 		return fmt.Errorf("the reverse link multiplexes by itself: turn mux off")
 	}
+	if p.RevConns < 0 || p.RevConns > xrayRevConnsMax {
+		return fmt.Errorf("reverse connections must be 0-%d", xrayRevConnsMax)
+	}
 	if p.Mux < 0 || p.Mux > 1024 || p.XUDP < 0 || p.XUDP > 1024 {
 		return fmt.Errorf("mux concurrency must be 0-1024")
 	}
@@ -726,6 +732,46 @@ func (l XrayLink) preConnect() int {
 	return p.PreConnect
 }
 
+// The reverse link carries every user connection as a mux stream. Xray opens
+// one connection per reverse outbound and a second only past 16 streams on
+// it, so one download filled the link's send queue and every other user's
+// request waited behind it; and a connection the network dropped without a
+// word stayed in use for minutes (the dialer's keepalive starts after 45 s,
+// the listener has none).
+const (
+	// xrayRevConnsDefault reverse outbounds on the foreign server, each its
+	// own connection: Iran gives a new user connection to the one with the
+	// fewest streams.
+	xrayRevConnsDefault = 4
+	xrayRevConnsMax     = 16
+	// xrayNotSentLowat caps the bytes waiting in a link socket that
+	// multiplexes connections (TCP_NOTSENT_LOWAT): the rest waits in Xray,
+	// per stream, so a new request is not behind megabytes of a download.
+	xrayNotSentLowat = 16384
+	// The reverse link notices a dead connection within about 10 s idle +
+	// 25 s unanswered, and the foreign server dials a new one.
+	xrayRevKeepIdle    = 10
+	xrayRevKeepIntvl   = 5
+	xrayRevUserTimeout = 25000 // ms
+)
+
+// revConns is how many reverse outbounds the foreign server runs.
+func (l XrayLink) revConns() int {
+	if l.Mode != xrayModeReverse {
+		return 1
+	}
+	if l.Profile.RevConns == 0 {
+		return xrayRevConnsDefault
+	}
+	return l.Profile.RevConns
+}
+
+// multiplexed: the link's TCP connections carry many user connections.
+func (l XrayLink) multiplexed() bool {
+	p := l.Profile
+	return p.Transport != "kcp" && (l.Mode == xrayModeReverse || p.Mux > 0 || p.Transport == "xhttp" || p.Transport == "grpc")
+}
+
 // buildXrayConfig is this end's whole Xray config.
 func buildXrayConfig(l XrayLink) (map[string]any, error) {
 	if err := l.validate(); err != nil {
@@ -799,6 +845,12 @@ func buildXrayConfig(l XrayLink) (map[string]any, error) {
 			out["mux"] = mux
 		}
 		outbounds = append(outbounds, out)
+		// More reverse connections: the same outbound under tunnel-2, … (an
+		// expert override of "tunnel" reaches only the first).
+		for i := 2; i <= l.revConns(); i++ {
+			outbounds = append(outbounds, map[string]any{"tag": xrayTagTunnel + "-" + strconv.Itoa(i), "protocol": "vless",
+				"settings": ob, "streamSettings": xrayStream(l, false)})
+		}
 	}
 
 	// The foreign end hands connections only to its own services: if the
@@ -964,6 +1016,14 @@ func xrayStream(l XrayLink, server bool) map[string]any {
 	}
 	if p.Mark > 0 && !server {
 		so["mark"] = p.Mark
+	}
+	if l.multiplexed() {
+		so["customSockopt"] = []any{map[string]any{"system": "linux", "network": "tcp", "level": "6", "opt": "25", // TCP_NOTSENT_LOWAT
+			"type": "int", "value": strconv.Itoa(xrayNotSentLowat)}}
+	}
+	if l.Mode == xrayModeReverse && network != "kcp" {
+		so["tcpKeepAliveIdle"], so["tcpKeepAliveInterval"] = xrayRevKeepIdle, xrayRevKeepIntvl
+		so["tcpUserTimeout"] = xrayRevUserTimeout
 	}
 	if len(so) > 0 {
 		s["sockopt"] = so

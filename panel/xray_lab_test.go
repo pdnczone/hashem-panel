@@ -79,6 +79,12 @@ func TestXrayLabGen(t *testing.T) {
 			write("iran-"+name+".json", ic)
 			write("fo-"+name+".json", fc)
 			combos = append(combos, name)
+			if preset == "reality" && mode == xrayModeReverse {
+				// The reverse link as v2.8.4 made it, for the lab to compare:
+				// one connection, no send queue cap, no fast dead-link check.
+				write("iran-"+name+"-base.json", xrayLabBase(ic))
+				write("fo-"+name+"-base.json", xrayLabBase(fc))
+			}
 			if preset == "reality" && mode == xrayModeDirect {
 				// The same Iran end with one more door, to ask the foreign end
 				// for a port that is not forwarded: it must refuse.
@@ -96,6 +102,36 @@ func TestXrayLabGen(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "combos"), []byte(strings.Join(combos, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// xrayLabBase is cfg without what this version adds to a reverse link: the
+// extra reverse outbounds and the link's socket options.
+func xrayLabBase(cfg map[string]any) map[string]any {
+	cfg = xrayNormalize(cfg)
+	strip := func(o map[string]any) {
+		if ss, ok := o["streamSettings"].(map[string]any); ok {
+			if so, ok := ss["sockopt"].(map[string]any); ok {
+				for _, k := range []string{"customSockopt", "tcpKeepAliveIdle", "tcpKeepAliveInterval", "tcpUserTimeout"} {
+					delete(so, k)
+				}
+			}
+		}
+	}
+	var outs []any
+	for _, o := range cfg["outbounds"].([]any) {
+		m := o.(map[string]any)
+		if tag, _ := m["tag"].(string); strings.HasPrefix(tag, xrayTagTunnel+"-") {
+			continue
+		}
+		strip(m)
+		outs = append(outs, m)
+	}
+	cfg["outbounds"] = outs
+	ins, _ := cfg["inbounds"].([]any)
+	for _, i := range ins {
+		strip(i.(map[string]any))
+	}
+	return cfg
 }
 
 // TestXrayLabPorts runs in the lab's foreign namespace next to a fake x-ui:
