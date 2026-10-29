@@ -5408,6 +5408,8 @@ function renderSpoof() {
   // Setup form. The foreign server fills most fields by importing the bundle.
   const ips = (d.spoof_ips || []).join('\n');
   const form = `<div class="sp-grid">
+      ${isLocal ? `<label class="qs-label" data-i18n-skip>${esc(tr('', "This server's public IPv4"))}</label>
+      <input class="hashem-input u-ltr u-mono" id="spLocalIP" value="${esc(d.local_public || '')}" placeholder="${esc(tr('', 'Found by itself'))}" autocomplete="off">` : ''}
       <label class="qs-label" data-i18n-skip>${esc(tr('', "The other server's public IP"))}</label>
       <input class="hashem-input u-ltr u-mono" id="spPeerIP" value="${esc(d.peer_public_ip || '')}" placeholder="198.51.100.10" autocomplete="off">
       <div class="sp-row3">
@@ -5471,6 +5473,7 @@ function spoofFormReq(action) {
   return {
     action,
     peer_public_ip: ($('spPeerIP') || {}).value || '',
+    local_public_ip: (($('spLocalIP') || {}).value || '').trim(),
     listen_port: num('spListen'), recv_port: num('spRecv'), spoof_port: num('spSpoofPort'),
     send_transport: ($('spSend') || {}).value, recv_transport: ($('spRecvT') || {}).value,
     spoof_ips: ips,

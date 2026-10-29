@@ -333,14 +333,17 @@ loaded() {
 }
 # dead_flow NAME: drop the link's open connections both ways without a word
 # (new ones still pass); seconds until a request gets through again, at most
-# 120. The sockets of both ends go to the log at 20 and 45 s.
+# 120. The sockets of both ends go to the log at 20 and 45 s. Packets are
+# dropped where they arrive, as a network loses them: one dropped by the
+# sender's own OUTPUT chain counts as local congestion, and TCP then retries
+# without ever giving up.
 dead_flow() {
     local p ports t0=$SECONDS shown=
     ports=$(ip netns exec $FO ss -Htn state established "dport = :$TUNNEL" | awk '{n = split($(NF - 1), a, ":"); print a[n]}')
     [[ -n $ports ]] || { echo 99; return; }
     for p in $ports; do
-        ip netns exec $FO iptables -A OUTPUT -p tcp --sport "$p" --dport $TUNNEL -j DROP
-        ip netns exec $IR iptables -A OUTPUT -p tcp --sport $TUNNEL --dport "$p" -j DROP
+        ip netns exec $IR iptables -A INPUT -p tcp --sport "$p" --dport $TUNNEL -j DROP
+        ip netns exec $FO iptables -A INPUT -p tcp --sport $TUNNEL --dport "$p" -j DROP
     done
     while ((SECONDS - t0 < 120)); do
         py $IR probe $PROBE >/dev/null 2>&1 && break
@@ -358,8 +361,8 @@ dead_flow() {
     done
     echo $((SECONDS - t0))
     for p in $ports; do
-        ip netns exec $FO iptables -D OUTPUT -p tcp --sport "$p" --dport $TUNNEL -j DROP
-        ip netns exec $IR iptables -D OUTPUT -p tcp --sport $TUNNEL --dport "$p" -j DROP
+        ip netns exec $IR iptables -D INPUT -p tcp --sport "$p" --dport $TUNNEL -j DROP
+        ip netns exec $FO iptables -D INPUT -p tcp --sport $TUNNEL --dport "$p" -j DROP
     done
 }
 if [[ -n $NETEM ]]; then

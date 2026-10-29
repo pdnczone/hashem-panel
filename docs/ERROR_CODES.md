@@ -231,6 +231,12 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 | --- | --- | --- | --- |
 | `E-LIMIT-01` | 400 | bad limits request | The detail names the field; fix it and try again. |
 
+## E-SPOOF-xx — SPOOF
+
+| Code | HTTP | Meaning | What to do |
+| --- | --- | --- | --- |
+| `E-SPOOF-01` | 400 | the spoof bundle could not be made | Fill in what the message names in the Spoof form, then make the bundle again. |
+
 ## E-LIC-xx — LIC
 
 | Code | HTTP | Meaning | What to do |
@@ -291,4 +297,4 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 | `E-ACCESS-02` | 401 | current password is incorrect | Verify your current password before changing access settings. |
 | `E-ACCESS-03` | 409 | port conflict detected | The requested port is reserved or used by a tunnel/proxy. Pick a free port. |
 
-Total: 155 codes.
+Total: 156 codes.

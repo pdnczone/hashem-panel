@@ -470,6 +470,18 @@ func (s *spoofState) ensurePeerKeypair() error {
 // makeSpoofBundle is called on the Iran side. It ensures both keypairs exist,
 // persists the foreign public key into our own state, and returns the bundle
 // plus the (possibly updated) state to save.
+// spoofPublicIPv4 is this server's public IPv4 for the bundle: the one Setup
+// recorded, else the route's source address or an external lookup. Only
+// setup.json was read, so a server running only the Spoof Tunnel had none.
+var spoofPublicIPv4 = func() string {
+	for _, ip := range []string{savedPublicIP(), detectPublicIP()} {
+		if isV4(ip) && !isPrivateIP(ip) {
+			return ip
+		}
+	}
+	return ""
+}
+
 func makeSpoofBundle(s spoofState) (string, spoofState, error) {
 	if s.Role != "local" {
 		return "", s, fmt.Errorf("the bundle is generated on the Iran server")
@@ -480,11 +492,11 @@ func makeSpoofBundle(s spoofState) (string, spoofState, error) {
 	if err := s.ensurePeerKeypair(); err != nil {
 		return "", s, err
 	}
-	if s.LocalPublic == "" {
-		s.LocalPublic = savedPublicIP()
+	if !isV4(CleanHost(s.LocalPublic)) {
+		s.LocalPublic = spoofPublicIPv4()
 	}
-	if ip := net.ParseIP(CleanHost(s.LocalPublic)); ip == nil || ip.To4() == nil {
-		return "", s, fmt.Errorf("this server's public IPv4 is unknown, so the foreign server could not reach it (the spoof core works over IPv4 only)")
+	if s.LocalPublic == "" {
+		return "", s, fmt.Errorf("this server's public IPv4 was not found: enter it under \"This server's public IPv4\" (the spoof core works over IPv4 only)")
 	}
 	b := spoofBundle{
 		V: 1, IranPublicIP: CleanHost(s.LocalPublic), ListenPort: s.ListenPort, RecvPort: s.RecvPort,
@@ -610,6 +622,7 @@ type spoofPostRequest struct {
 	Action        string   `json:"action"` // save | bundle | import | up | down
 	Role          string   `json:"role,omitempty"`
 	PeerPublicIP  string   `json:"peer_public_ip,omitempty"`
+	LocalPublicIP string   `json:"local_public_ip,omitempty"`
 	ListenPort    int      `json:"listen_port,omitempty"`
 	RecvPort      int      `json:"recv_port,omitempty"`
 	SpoofPort     int      `json:"spoof_port,omitempty"`
@@ -643,7 +656,7 @@ func handleSpoofPost(w http.ResponseWriter, r *http.Request) {
 		applySpoofForm(&s, req)
 		bundle, s2, err := makeSpoofBundle(s)
 		if err != nil {
-			writeAPIError(w, r, "E-ACTION-01", err.Error())
+			writeAPIError(w, r, "E-SPOOF-01", err.Error())
 			return
 		}
 		if err := saveSpoofState(s2); err != nil {
@@ -733,6 +746,9 @@ func applySpoofForm(s *spoofState, req spoofPostRequest) {
 	}
 	if req.PeerPublicIP != "" {
 		s.PeerPublicIP = CleanHost(req.PeerPublicIP)
+	}
+	if ip := CleanHost(req.LocalPublicIP); isV4(ip) {
+		s.LocalPublic = ip
 	}
 	if req.ListenPort > 0 && req.ListenPort <= 65535 {
 		s.ListenPort = req.ListenPort

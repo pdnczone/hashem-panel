@@ -58,6 +58,8 @@ window.FA_TEXT = {
 "Peer reachable": "همتا در دسترس",
 "Last handshake": "آخرین دست‌دهی",
 "The other server's public IP": "IP عمومی سرور دیگر",
+"This server's public IPv4": "IPv4 عمومی این سرور",
+"Found by itself": "خودکار پیدا می‌شود",
 "Public port": "پورت عمومی",
 "Recv port": "پورت دریافت",
 "Spoof port": "پورت اسپوف",

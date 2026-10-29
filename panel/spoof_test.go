@@ -494,3 +494,36 @@ func TestSpoofImportOnRunningTunnelApplies(t *testing.T) {
 		t.Fatalf("import not saved with its error: peer=%q err=%q", got.PeerPublicIP, got.LastError)
 	}
 }
+
+// A server running only the Spoof Tunnel has no setup.json: the bundle finds
+// the public IPv4 itself, takes one typed into the form, and says what to fill
+// in when there is none.
+func TestSpoofBundleFindsPublicIPv4(t *testing.T) {
+	old := spoofPublicIPv4
+	t.Cleanup(func() { spoofPublicIPv4 = old })
+	s := defaultSpoofState()
+	s.Role = "local"
+	s.PeerPublicIP = "198.51.100.20"
+	s.applyRoleDefaults()
+
+	spoofPublicIPv4 = func() string { return "203.0.113.5" }
+	b, s2, err := makeSpoofBundle(s)
+	if err != nil || s2.LocalPublic != "203.0.113.5" || !strings.HasPrefix(b, "spf1_") {
+		t.Fatalf("detected IPv4: bundle %q, local %q, err %v", b, s2.LocalPublic, err)
+	}
+
+	spoofPublicIPv4 = func() string { return "" }
+	applySpoofForm(&s, spoofPostRequest{LocalPublicIP: "203.0.113.9"})
+	if _, s2, err := makeSpoofBundle(s); err != nil || s2.LocalPublic != "203.0.113.9" {
+		t.Fatalf("typed IPv4: local %q, err %v", s2.LocalPublic, err)
+	}
+
+	s.LocalPublic = ""
+	if _, _, err := makeSpoofBundle(s); err == nil || !strings.Contains(err.Error(), "This server's public IPv4") {
+		t.Fatalf("no IPv4: want a message naming the field, got %v", err)
+	}
+	applySpoofForm(&s, spoofPostRequest{LocalPublicIP: "2001:db8::1"})
+	if s.LocalPublic != "" {
+		t.Fatalf("an IPv6 address was taken as the public IPv4: %q", s.LocalPublic)
+	}
+}
