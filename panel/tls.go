@@ -169,6 +169,12 @@ func checkPortConflict(requestedTLSPort int) error {
 		}
 	}
 
+	for _, c := range hashemPortClaims() {
+		if _, ok := tunnelPorts[c.Port]; !ok && c.Proto == "tcp" && c.Kind != claimPanel {
+			tunnelPorts[c.Port] = c.Owner
+		}
+	}
+
 	// 1. Check if ACME port 80 is used by a tunnel proxy
 	if reason, ok := tunnelPorts[80]; ok {
 		return fmt.Errorf("port 80 is forwarded by %s. Let's Encrypt HTTP challenge requires port 80. Free port 80 or use Reverse Proxy mode", reason)

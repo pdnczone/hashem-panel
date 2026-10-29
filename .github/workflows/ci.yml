@@ -56,6 +56,9 @@ jobs:
       - name: bash -n
         run: |
           for f in hashem.sh install.sh; do bash -n "$f"; done
+      - name: panel JavaScript parses
+        run: |
+          for f in panel/app.js panel/i18n-fa.js; do node --check "$f"; done
       - name: generated docs are current
         run: |
           python3 tools/gen_docs.py
