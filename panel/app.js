@@ -1227,7 +1227,9 @@ function armRemovePeer(peerId, name) {
   const btns = document.querySelectorAll(`[data-peer-remove="${peerId}"]`);
   btns.forEach(b => { b.classList.add('armed'); b.innerHTML = 'Confirm 5s <span class="peer-count" data-peer-n="' + peerId + '">5</span>'; });
   box.classList.remove('hidden');
-  box.innerHTML = `<div class="peer-confirm-in">Remove <b>${esc(name)} (#${peerId})</b>? GRE + frps go away; other tunnels keep running. <button class="hashem-btn hashem-btn-ghost u-btn-28" onclick="disarmRemovePeer(${peerId})">Undo</button></div>`;
+  // 'main' is the first tunnel; peers are numbered
+  const label = peerId === 'main' ? esc(name) : `${esc(name)} (#${peerId})`;
+  box.innerHTML = `<div class="peer-confirm-in">${esc(tr('', 'Remove'))} <b>${label}</b>? ${esc(tr('', 'Its GRE interface and tunnel service go away; other tunnels keep running.'))} <button class="hashem-btn hashem-btn-ghost u-btn-28" onclick="disarmRemovePeer(${jsArg(peerId)})">${esc(tr('', 'Undo'))}</button></div>`;
   clearTimeout(peerRemoveTimers[peerId]); clearInterval(peerRemoveTimers[peerId + '_n']);
   let n = 5;
   peerRemoveTimers[peerId + '_n'] = setInterval(() => {
@@ -1247,7 +1249,8 @@ async function removePeer(peerId, name) {
   const btns = document.querySelectorAll(`[data-peer-remove="${peerId}"]`);
   btns.forEach(b => { b.disabled = true; b.innerHTML = '<span class="ent-spinner"></span> Removing…'; });
   try {
-    await api('/api/action', {action: 'remove-tunnel', peer_id: peerId});
+    // without peer_id the panel removes the first tunnel alone when others exist
+    await api('/api/action', peerId === 'main' ? {action: 'remove-tunnel'} : {action: 'remove-tunnel', peer_id: peerId});
     toastOk(`tunnel '${name}' removed`);
     refresh();
   } catch(e) { toastErr('remove failed', e.message); refresh(); }
@@ -1410,7 +1413,7 @@ function renderPeers(peers) {
   }
 
   const L = window._lastLocal || {};
-  const hasMain = !!(L.frp_up || L.frp_svc || (L.gre && L.gre.exists) || (L.proxies || []).length);
+  const hasMain = hasBaseTunnel(L);
   const isForeign = /foreign/i.test(L.role || '') || L.frp_svc === 'frpc' || L.frp_svc === 'backhaul-client';
   const lbl = $('peerCardsLabel');
   if (lbl) lbl.classList.toggle('hidden', !(peers && peers.length) && !bagherCardHtml);
@@ -1543,6 +1546,14 @@ function linkStrip(s) {
     (eng ? sep + '<bdi>' + esc(eng) + '</bdi>' : '') + (ms ? sep + '<bdi>' + esc(ms) + '</bdi>' : '');
   el.title = up ? tr('ls_up', 'Tunnel up') : tr('ls_down', 'Tunnel down');
 }
+// The base tunnel exists. A peer's backhaul-server-N alone is not one: the
+// status names that unit when no base unit runs, for the role of a hub that
+// has only peers, and the first card then came back after its removal.
+function hasBaseTunnel(st) {
+  if (!st) return false;
+  const peerUnit = /^backhaul-server-\d+$/.test(st.frp_svc || '');
+  return !!((st.gre && st.gre.exists) || (st.proxies || []).length || (!peerUnit && (st.frp_up || st.frp_svc)));
+}
 // Engine of the base tunnel: recorded, else derived from the running unit.
 function tunEngine(st) {
   if (!st) return '';
@@ -1553,7 +1564,7 @@ function tunEngine(st) {
 }
 function renderTunnel(st) {
   const gre = st.gre || {};
-  const hasMain = !!(gre.exists || st.frp_up || st.frp_svc || (st.proxies || []).length);
+  const hasMain = hasBaseTunnel(st);
   const up = !!(gre.exists || st.frp_up);
   const eng = tunEngine(st);
   const usesGre = eng === 'frp' || eng === 'gre-backhaul' || !!gre.exists;
@@ -1624,7 +1635,9 @@ function renderTunnel(st) {
         ${isIran ? `<button class="hashem-btn hashem-btn-secondary u-btn-30" onclick="copyMainIranBundle()">${esc(tr('', 'Copy Bundle'))}</button>` : ''}
         ${usesGre ? `<button class="hashem-btn hashem-btn-secondary u-btn-30" data-peer-act="restart-gre-0" onclick="peerAct('restart-gre', 0)">${esc(tr('', 'Restart GRE'))}</button>` : ''}
         ${st.frp_svc ? `<button class="hashem-btn hashem-btn-secondary u-btn-30" data-peer-act="restart-engine-0" onclick="peerAct('restart-engine', 0)">${esc(tr('', 'Restart Service'))}</button>` : ''}
+        <button class="hashem-btn hashem-btn-danger peer-remove-btn u-btn-30" data-peer-remove="main" onclick="peerRemoveClick('main', ${jsArg(title)})">${esc(tr('', 'Remove'))}</button>
       </div>
+      <div id="peer-confirm-main" class="peer-confirm warnbox hidden"></div>
     </div>`;
   $('tunnel').innerHTML = mainCard;
   window._lastLocal = st;
@@ -1665,7 +1678,7 @@ function renderTunChips(st) {
   const box = $('tunChips');
   if (!box) return;
   const chips = [];
-  if (st && (st.gre.exists || st.frp_up || (st.proxies || []).length)) {
+  if (hasBaseTunnel(st)) {
     chips.push({
       key: 'base',
       name: tr('', 'Tunnel'),
@@ -3800,7 +3813,11 @@ $('toggle').addEventListener('click', () => {
 $('logoutBtn').onclick = async () => { try { await api('/api/logout', {}); } catch(e){ /* logout best-effort: always fall through to login screen */ } showLogin(); };
 $('refreshBtn').onclick = refresh;
 $('removeTunnelBtn').onclick = async () => {
-  if (!await entConfirm(tr('', 'Remove Tunnel?'), tr('', 'The tunnel on this server is deleted: its GRE interface, tunnel service and their configs. The other server keeps its side until you remove it there. The panel stays.'), tr('', 'Remove Tunnel'))) return;
+  // peers other than the first tunnel itself (peer 1 on the legacy names)
+  const others = (tunPeerCache || []).filter(p => !p.legacy && p.gre_if !== 'gre-tunnel').length;
+  if (!await entConfirm(tr('', 'Remove Tunnel?'), others
+    ? tr('', 'The first tunnel on this server is deleted: its GRE interface, tunnel service and their configs. The other tunnels keep running; remove each from its own card. The panel stays.')
+    : tr('', 'The tunnel on this server is deleted: its GRE interface, tunnel service and their configs. The other server keeps its side until you remove it there. The panel stays.'), tr('', 'Remove Tunnel'))) return;
   const b = $('removeTunnelBtn');
   b.disabled = true;
   try {
@@ -5098,7 +5115,7 @@ function renderCarriers() {
   if (!card || !box) return;
   const L = window._lastLocal || {};
   const peers = tunPeerCache || [];
-  const hasMain = !!(L.frp_up || L.frp_svc || (L.gre && L.gre.exists));
+  const hasMain = hasBaseTunnel(L);
   const iran = swIsIran(L) || peers.length > 0;
   const rows = [];
   // The base tunnel has its own row unless a peer record already stands for it.
