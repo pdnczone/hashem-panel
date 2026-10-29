@@ -3776,6 +3776,24 @@ UNIT
     echo -e "${GREEN}[OK] WSS TLS front listening on :${FPORT} (-> frps :${CPORT})${NC}"
 }
 
+# frps_ufw_open CONTROL_PORT [PORTS]: with ufw active, open what frps listens
+# on: the control port (tcp, and udp for kcp), quic on the next port, and the
+# users' ports (tcp and udp). Opening the control port's tcp alone left kcp,
+# quic and every user port dropped.
+frps_ufw_open() {
+    command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active" || return 0
+    local CPORT=$1 QPORT=$(($1 + 1)) p
+    (( QPORT > 65535 )) && QPORT=$(($1 - 1))
+    ufw allow "${CPORT}/tcp" >/dev/null 2>&1 || true
+    ufw allow "${CPORT}/udp" >/dev/null 2>&1 || true
+    ufw allow "${QPORT}/udp" >/dev/null 2>&1 || true
+    for p in $(echo "${2:-}" | tr ',' ' '); do
+        is_valid_port "$p" || continue
+        ufw allow "$((10#$p))/tcp" >/dev/null 2>&1 || true
+        ufw allow "$((10#$p))/udp" >/dev/null 2>&1 || true
+    done
+}
+
 # frps_wss_front_remove <suffix>
 frps_wss_front_remove() {
     local SVC="frps-wss${1}"
@@ -3878,9 +3896,7 @@ EOF
         log_msg "tunnel" "ERROR" "frps service failed to start"
     fi
 
-    if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
-        ufw allow "${BIND_PORT}/tcp" >/dev/null 2>&1
-    fi
+    frps_ufw_open "$BIND_PORT" "$PORTS_CLEANED"
 
     tune_apply >/dev/null 2>&1 || true
     watchdog_timer_ensure >/dev/null 2>&1 || true  # drives Auto-Pool + schedules, not just alerts
@@ -4788,9 +4804,7 @@ EOF
     release_frps_port "$BIND_PORT" || true
     reserve_service_ports
     systemctl restart "$SVC"
-    if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
-        ufw allow "${BIND_PORT}/tcp" >/dev/null 2>&1
-    fi
+    frps_ufw_open "$BIND_PORT"
 }
 
 # add a peer tunnel on the Iran side.
@@ -4898,6 +4912,7 @@ cli_add_peer() {
         echo -e "${RED}[!] Error: ${FRPS_SVC} failed to start. Generated configuration might be invalid.${NC}"
         return 1
     fi
+    frps_ufw_open "$FRP_PORT" "$CLEANED"
     if [[ "${PEER_FRP_TRANSPORT:-tcp}" == "wss" ]]; then
         local _fsuf=""; [[ "$LEGACY" == "true" ]] || _fsuf="-${ID}"
         frps_wss_front_ensure "$_fsuf" "$FRP_PORT" || echo -e "${YELLOW}[!] WSS TLS front could not be started for this peer.${NC}"
