@@ -172,7 +172,7 @@ func TestXrayCreateDirectAndImport(t *testing.T) {
 		}
 	}
 	unit := iran.read(xrayUnitPath(1))
-	if !strings.Contains(unit, "ExecStart="+xrayBinPath+" run -c "+xrayLinkConfPath(1)) || !strings.Contains(unit, "XRAY_LOCATION_ASSET="+xrayDir) {
+	if !strings.Contains(unit, "ExecStart="+xrayBinPath+" run -c "+xrayLinkConfPath(1)) || !strings.Contains(unit, "XRAY_LOCATION_ASSET="+xrayDir) || !strings.Contains(unit, "Environment=GODEBUG=multipathtcp=0") {
 		t.Errorf("unit:\n%s", unit)
 	}
 	if got := strings.Join(iran.systemctl, ","); got != "daemon-reload,enable hashem-xray-1,restart hashem-xray-1" {
