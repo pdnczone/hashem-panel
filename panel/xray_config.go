@@ -749,8 +749,9 @@ const (
 	// per stream, so a new request is not behind megabytes of a download.
 	xrayNotSentLowat = 16384
 	// Keepalive after 10 s idle, and data unanswered for 25 s ends a reverse
-	// connection. The lab does not show requests recovering sooner yet after
-	// the link's connections are silently dropped (test_xray_lab.sh).
+	// connection: after the link's connections are silently dropped, requests
+	// get through again in about 28 s instead of over 120 s (test_xray_lab.sh).
+	// It needs the unit's GODEBUG=multipathtcp=0 (see xrayUnit).
 	xrayRevKeepIdle    = 10
 	xrayRevKeepIntvl   = 5
 	xrayRevUserTimeout = 25000 // ms
