@@ -244,11 +244,14 @@ else
     bad "the panel did not see the fake 3x-ui on $TAKEN"; grep -v CMD-ERROR "$TMP/ports.log" | tail -20
 fi
 
+# The environment the panel's hashem-xray-N unit gives Xray
+GO_ENV=$(grep -o 'GODEBUG=[^ ]*' "$ROOT/panel/xray.go" | head -1)
 # start_link NAME [IRAN_CONFIG [CONFIG_DIR]]: both ends of one link; sets IRX and FOX
 start_link() {
-    local ic=${2:-$TMP/cfg/iran-$1.json} dir=${3:-$TMP/cfg}
-    ip netns exec $FO "$XRAY" run -c "$dir/fo-$1.json" >"$TMP/fo-$1.log" 2>&1 & FOX=$!; pids+=($FOX)
-    ip netns exec $IR "$XRAY" run -c "$ic" >"$TMP/iran-$1.log" 2>&1 & IRX=$!; pids+=($IRX)
+    local ic=${2:-$TMP/cfg/iran-$1.json} dir=${3:-$TMP/cfg} g=$GO_ENV
+    [[ $1 == *-base ]] && g=GODEBUG=   # as v2.8.4: no unit environment
+    ip netns exec $FO env "$g" "$XRAY" run -c "$dir/fo-$1.json" >"$TMP/fo-$1.log" 2>&1 & FOX=$!; pids+=($FOX)
+    ip netns exec $IR env "$g" "$XRAY" run -c "$ic" >"$TMP/iran-$1.log" 2>&1 & IRX=$!; pids+=($IRX)
 }
 stop_link() { kill -9 "$IRX" "$FOX" 2>/dev/null; wait "$IRX" "$FOX" 2>/dev/null; sleep 0.3; }
 # wait_probe SECONDS: until a request through the link comes back; prints its ms
@@ -301,7 +304,7 @@ while read -r name; do
     if [[ $name == xhttp-reverse ]]; then
         kill -9 "$FOX"; wait "$FOX" 2>/dev/null
         t0=$SECONDS
-        ip netns exec $FO "$XRAY" run -c "$TMP/cfg/fo-$name.json" >>"$TMP/fo-$name.log" 2>&1 & FOX=$!; pids+=($FOX)
+        ip netns exec $FO env "$GO_ENV" "$XRAY" run -c "$TMP/cfg/fo-$name.json" >>"$TMP/fo-$name.log" 2>&1 & FOX=$!; pids+=($FOX)
         if wait_probe 30 >/dev/null && py $USR tcp $IR_U $PORT $((1 << 20)); then
             ok "reverse: the link comes back after the foreign Xray is killed ($((SECONDS - t0))s)"
         else

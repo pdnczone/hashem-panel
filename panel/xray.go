@@ -215,6 +215,10 @@ Wants=network-online.target
 Type=simple
 User=root
 Environment=XRAY_LOCATION_ASSET=%s
+# Go listens with MPTCP by default, and Linux refuses TCP_USER_TIMEOUT on an
+# MPTCP socket: Xray then skips the rest of the inbound sockopt, and the Iran
+# end keeps a dead reverse connection for minutes.
+Environment=GODEBUG=multipathtcp=0
 ExecStart=%s run -c %s
 Restart=always
 RestartSec=3s
