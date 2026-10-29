@@ -696,6 +696,11 @@ func main() {
 	mux.HandleFunc("POST "+base+"/api/xray", requireAuth(requireCSRF(handleXrayPost)))
 	mux.HandleFunc("GET "+base+"/api/limits", requireAuth(handleLimitsGet))
 	mux.HandleFunc("POST "+base+"/api/limits", requireAuth(requireCSRF(handleLimitsPost)))
+	mux.HandleFunc("GET "+base+"/api/customers", requireAuth(handleCustomersGet))
+	mux.HandleFunc("POST "+base+"/api/customers", requireAuth(requireCSRF(handleCustomersPost)))
+	mux.HandleFunc("GET "+base+"/api/customers/kit", requireAuth(handleCustomersKit))
+	// a sold tunnel's status page: no login, the token in the path is the secret
+	mux.HandleFunc("GET /_hs/{token}", handleCustomerStatus)
 	mux.HandleFunc("POST "+base+"/api/link-name", requireAuth(requireCSRF(handleLinkName)))
 	mux.HandleFunc("GET "+base+"/api/fleet", requireAuth(handleFleet))
 	mux.HandleFunc("GET "+base+"/api/selfstats", requireAuth(handleSelfStats))
@@ -787,6 +792,7 @@ func main() {
 	go startClusterMonitor()
 	go startMeshLoop()
 	go startLimitsLoop()
+	go startCustomersLoop()
 	go func() {
 		cc := loadCarrierConfig()
 		if strings.HasPrefix(cc.ActiveCarrier, "wss") {
@@ -824,6 +830,7 @@ func main() {
 		<-sigc
 		close(histStop)
 		limitsFlush()
+		customersFlush()
 		time.Sleep(300 * time.Millisecond) // let the final history write finish
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()

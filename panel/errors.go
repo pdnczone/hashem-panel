@@ -19,6 +19,7 @@ package main
 //   E-SYS-xx     host tooling (journalctl/systemctl missing)
 //   E-WD-xx      watchdog / telegram alerts / backup
 //   E-XRAY-xx    Xray tunnel (links, ports, the core)
+//   E-CUST-xx    sold customer tunnels (customers, plans, links)
 
 import (
 	"encoding/json"
@@ -117,6 +118,13 @@ var errCatalog = map[string]errInfo{
 	"E-XRAY-07": {409, "an Xray-core install is already running", "Wait for it to finish; the tab shows its progress."},
 	// speed and volume limits
 	"E-LIMIT-01": {400, "bad limits request", "The detail names the field; fix it and try again."},
+	// sold customer tunnels
+	"E-CUST-01": {400, "bad customers request", "Reload the page and try again."},
+	"E-CUST-02": {400, "invalid customer or plan", "The detail names the field; fix it and try again."},
+	"E-CUST-03": {409, "a foreign server's ports are not usable", "The detail names the port and what holds it: pick another port."},
+	"E-CUST-04": {404, "unknown customer or foreign server", "Refresh the page; it may have been removed."},
+	"E-CUST-05": {409, "not possible in the customer's current state", "The detail says what to do first (renew, reset the usage, or set an address)."},
+	"E-CUST-06": {500, "cannot save customers.json", "Disk write failed: check free space and /etc/gre-panel permissions."},
 	// log diagnostics (annotation only, also reused by status hints)
 	"E-GRE-01":     {0, "GRE interface missing / down", "Tunnel setup did not create it, or it was deleted — reinstall that peer."},
 	"E-GRE-02":     {0, "GRE ping failed (100% loss / unreachable)", "Peers cannot reach each other: firewall, wrong public IP, or GRE blocked."},

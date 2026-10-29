@@ -260,6 +260,17 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 | `E-XRAY-06` | 404 | no such Xray link | Reload the page: the link may have been removed. |
 | `E-XRAY-07` | 409 | an Xray-core install is already running | Wait for it to finish; the tab shows its progress. |
 
+## E-CUST-xx — CUST
+
+| Code | HTTP | Meaning | What to do |
+| --- | --- | --- | --- |
+| `E-CUST-01` | 400 | bad customers request | Reload the page and try again. |
+| `E-CUST-02` | 400 | invalid customer or plan | The detail names the field; fix it and try again. |
+| `E-CUST-03` | 409 | a foreign server's ports are not usable | The detail names the port and what holds it: pick another port. |
+| `E-CUST-04` | 404 | unknown customer or foreign server | Refresh the page; it may have been removed. |
+| `E-CUST-05` | 409 | not possible in the customer's current state | The detail says what to do first (renew, reset the usage, or set an address). |
+| `E-CUST-06` | 500 | cannot save customers.json | Disk write failed: check free space and /etc/gre-panel permissions. |
+
 ## E-SSHFWD-xx — SSHFWD
 
 | Code | HTTP | Meaning | What to do |
@@ -297,4 +308,4 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 | `E-ACCESS-02` | 401 | current password is incorrect | Verify your current password before changing access settings. |
 | `E-ACCESS-03` | 409 | port conflict detected | The requested port is reserved or used by a tunnel/proxy. Pick a free port. |
 
-Total: 156 codes.
+Total: 162 codes.

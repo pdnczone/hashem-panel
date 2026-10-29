@@ -32,6 +32,7 @@ type portClaim struct {
 	Port  int
 	Kind  string
 	Ref   int
+	Sub   int    // a customer's link ID
 	Owner string // for messages: "peer de-1", "Xray tunnel link 2", ...
 }
 
@@ -48,13 +49,13 @@ func hashemPortClaims() []portClaim {
 func portClaimsWith(bagher SSHFwdConfig) []portClaim {
 	var out []portClaim
 	both := func(port int, kind string, ref int, owner string) {
-		out = append(out, portClaim{"tcp", port, kind, ref, owner}, portClaim{"udp", port, kind, ref, owner})
+		out = append(out, portClaim{"tcp", port, kind, ref, 0, owner}, portClaim{"udp", port, kind, ref, 0, owner})
 	}
 	if cfg.Port > 0 {
-		out = append(out, portClaim{"tcp", cfg.Port, claimPanel, 0, "the panel"})
+		out = append(out, portClaim{"tcp", cfg.Port, claimPanel, 0, 0, "the panel"})
 	}
 	if cfg.TLSPort > 0 {
-		out = append(out, portClaim{"tcp", cfg.TLSPort, claimPanel, 0, "the panel (HTTPS)"})
+		out = append(out, portClaim{"tcp", cfg.TLSPort, claimPanel, 0, 0, "the panel (HTTPS)"})
 	}
 
 	peers := loadPeers()
@@ -71,14 +72,15 @@ func portClaimsWith(bagher SSHFwdConfig) []portClaim {
 		}
 	}
 	out = append(out, relayConfClaims()...)
+	out = append(out, customerPortClaims()...)
 
 	if bagher.Enabled && bagher.Role != "foreign" && bagher.Role != "server" {
 		add := func(id int, ports []int) {
 			owner := fmt.Sprintf("Bagher (foreign server %d)", id)
 			for _, p := range ports {
-				out = append(out, portClaim{"tcp", p, claimBagher, id, owner})
+				out = append(out, portClaim{"tcp", p, claimBagher, id, 0, owner})
 				if bagher.UDP {
-					out = append(out, portClaim{"udp", p, claimBagher, id, owner})
+					out = append(out, portClaim{"udp", p, claimBagher, id, 0, owner})
 				}
 			}
 		}
@@ -86,21 +88,28 @@ func portClaimsWith(bagher SSHFwdConfig) []portClaim {
 		for _, l := range bagher.Links {
 			add(l.ID, l.Ports)
 		}
-		if bagher.FRPBindPort > 0 {
-			for p := bagher.FRPBindPort; p <= bagher.FRPBindPort+2; p++ {
-				out = append(out, portClaim{"tcp", p, claimBagherFR, 0, fmt.Sprintf("Bagher's internal FRP port (%d-%d)", bagher.FRPBindPort, bagher.FRPBindPort+2)})
+		if bagher.FRPBindPort > 0 && bagher.FRPBindPort <= 65533 {
+			owner := fmt.Sprintf("Bagher's internal FRP port (%d-%d)", bagher.FRPBindPort, bagher.FRPBindPort+2)
+			for i := 0; i < 3; i++ {
+				out = append(out, portClaim{"tcp", bagher.FRPBindPort + i, claimBagherFR, 0, 0, owner})
 			}
 		}
 	}
 
 	for _, l := range loadXrayState().Links {
+		if l.Disabled {
+			continue // stopped by the user: xrayPortConflicts skips it too
+		}
 		owner := fmt.Sprintf("Xray tunnel link %d", l.ID)
 		tcp, udp := l.listens()
 		for _, p := range tcp {
-			out = append(out, portClaim{"tcp", p, claimXray, l.ID, owner})
+			if p == l.ProbePort {
+				continue // loopback only: the panel's probe, never public
+			}
+			out = append(out, portClaim{"tcp", p, claimXray, l.ID, 0, owner})
 		}
 		for _, p := range udp {
-			out = append(out, portClaim{"udp", p, claimXray, l.ID, owner})
+			out = append(out, portClaim{"udp", p, claimXray, l.ID, 0, owner})
 		}
 	}
 
@@ -110,7 +119,7 @@ func portClaimsWith(bagher SSHFwdConfig) []portClaim {
 			owner = "cluster pool " + p.Name
 		}
 		for _, proto := range lbProtos(p.Proto) {
-			out = append(out, portClaim{proto, p.Port, claimPool, 0, owner})
+			out = append(out, portClaim{proto, p.Port, claimPool, 0, 0, owner})
 		}
 	}
 
@@ -169,11 +178,11 @@ func relayConfClaims() []portClaim {
 		owner := "the control port of " + strings.TrimSuffix(filepath.Base(f), ".toml")
 		s := string(data)
 		if p := tomlInt(s, "bindPort"); p > 0 {
-			out = append(out, portClaim{"tcp", p, claimRelay, 0, owner})
+			out = append(out, portClaim{"tcp", p, claimRelay, 0, 0, owner})
 		}
 		for _, k := range []string{"kcpBindPort", "quicBindPort"} {
 			if p := tomlInt(s, k); p > 0 {
-				out = append(out, portClaim{"udp", p, claimRelay, 0, owner})
+				out = append(out, portClaim{"udp", p, claimRelay, 0, 0, owner})
 			}
 		}
 	}
@@ -194,15 +203,38 @@ func relayConfClaims() []portClaim {
 		if _, p, err := net.SplitHostPort(c.BindAddr); err == nil {
 			if n, ok := portNum(p); ok {
 				owner := "the control port of Backhaul (" + strings.TrimSuffix(base, ".toml") + ")"
-				out = append(out, portClaim{"tcp", n, claimRelay, 0, owner}, portClaim{"udp", n, claimRelay, 0, owner})
+				out = append(out, portClaim{"tcp", n, claimRelay, 0, 0, owner}, portClaim{"udp", n, claimRelay, 0, 0, owner})
 			}
 		}
 	}
 	return out
 }
 
-// claimOwner is the owner of the first claim on proto/port that skip does
-// not exempt, "" when the port is free of Hashem's configs.
+// claimIndex is a list of claims by "proto:port" (a peer with a range of
+// 65535 ports makes a long list: each lookup stays one map access).
+type claimIndex map[string][]portClaim
+
+func indexClaims(claims []portClaim) claimIndex {
+	m := claimIndex{}
+	for _, c := range claims {
+		k := c.Proto + ":" + strconv.Itoa(c.Port)
+		m[k] = append(m[k], c)
+	}
+	return m
+}
+
+// owner is the owner of the first claim on proto/port that skip does not
+// exempt, "" when the port is free of Hashem's configs.
+func (x claimIndex) owner(proto string, port int, skip func(portClaim) bool) string {
+	for _, c := range x[proto+":"+strconv.Itoa(port)] {
+		if skip == nil || !skip(c) {
+			return c.Owner
+		}
+	}
+	return ""
+}
+
+// claimOwner is claimIndex.owner for a one-off lookup.
 func claimOwner(claims []portClaim, proto string, port int, skip func(portClaim) bool) string {
 	for _, c := range claims {
 		if c.Port == port && c.Proto == proto && (skip == nil || !skip(c)) {

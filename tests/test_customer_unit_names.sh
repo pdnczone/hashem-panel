@@ -21,8 +21,9 @@ body="$(awk '/^uninstall_all_force\(\) \{/,/^}/ {next} /^customers_teardown\(\) 
 
 # 1. unit globs: systemctl stop/disable/... '<glob>' and /etc/systemd/system/<glob>.service
 globs=$(printf '%s\n' "$body" | grep -oE "systemctl [a-z-]+ [^;|&#]*" | grep -oE "'[^']+'" | tr -d "'")
-globs+=$'\n'$(printf '%s\n' "$body" | grep -oE '/etc/systemd/system/[A-Za-z0-9_*.?{}$\[\]-]+\.service' | sed -e 's#^/etc/systemd/system/##' -e 's#\.service$##')
+globs+=$'\n'$(printf '%s\n' "$body" | grep -oE '/etc/systemd/system/[][A-Za-z0-9_*.?{}$-]+\.service' | sed -e 's#^/etc/systemd/system/##' -e 's#\.service$##')
 globs+=$'\n'$(printf '%s\n' "$body" | grep -oE 'list-units[^|]*' | grep -oE "'[^']+'" | tr -d "'")
+globs+=$'\n'$(printf '%s\n' "$body" | grep -oE '\$\{HASHEM_SYSTEMD_DIR:-/etc/systemd/system\}"?/[][A-Za-z0-9_*.?{}-]+\.service' | sed -e 's#^.*}"\{0,1\}/##' -e 's#\.service$##')
 n=0
 while IFS= read -r g; do
     [[ -z "$g" ]] && continue
@@ -49,10 +50,23 @@ while IFS= read -r p; do
         echo "FAIL: hashem.sh 'pkill -f $p' would kill a customer frps ($cmdline)"
         fail=1
     fi
-done < <(printf '%s\n' "$SH" | xargs cat | grep -oE 'pkill (-9 )?-f "[^"]+"' | sed -E 's/^pkill (-9 )?-f "(.*)"$/\2/' | sort -u)
+done < <(printf '%s\n' "$body" | grep -oE 'pkill (-9 )?-f "[^"]+"' | sed -E 's/^pkill (-9 )?-f "(.*)"$/\2/' | sort -u)
 (( m > 3 )) || { echo "FAIL: found only $m pkill patterns: the parser is broken"; fail=1; }
 
-# 3. the customer names themselves stay what panel/customers.go writes
+# 3. pkill/killall by process name: the customer binary's name is frps
+while IFS= read -r p; do
+    [[ -z "$p" ]] && continue
+    if [[ "frps" =~ ^($p)$ ]]; then
+        echo "FAIL: hashem.sh 'pkill/killall $p' (by name) would kill customer frps processes"
+        fail=1
+    fi
+done < <(printf '%s\n' "$body" | grep -oE '(pkill|killall)( -[0-9A-Za-z]+)* [A-Za-z0-9_.*^$-]+' | grep -vE ' -f$' | awk '{print $NF}' | grep -v '^-' | sort -u)
+
+# 4. release_frps_port kills a stray frps holding a control port: never a customer's
+awk '/^release_frps_port\(\) \{/,/^}/' "$SH" | grep -q '/usr/local/lib/hashem-sell/' \
+    || { echo "FAIL: release_frps_port does not spare customer frps (/usr/local/lib/hashem-sell)"; fail=1; }
+
+# 5. the customer names themselves stay what panel/customers.go writes
 if [[ -f "$ROOT/panel/customers.go" ]]; then
     grep -q '"hsell-%d-%d"' "$ROOT/panel/customers.go" || { echo "FAIL: customers.go unit name is not hsell-%d-%d"; fail=1; }
     grep -q '/usr/local/lib/hashem-sell' "$ROOT/panel/customers.go" || { echo "FAIL: customers.go frps copy is not in /usr/local/lib/hashem-sell"; fail=1; }

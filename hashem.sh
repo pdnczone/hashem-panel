@@ -3274,6 +3274,44 @@ limits_drop() {
     done
 }
 
+# Sold customer tunnels (panel/customers.go): the hsell-<customer>-<link>
+# units, their frps copy, configs, the HASHEM_CUST chain and the speed caps
+# (tc pref 4919, IPv6 4920, police actions 0x48530000-0x4853ffff). Only a
+# full uninstall calls it: removing or rebuilding the seller's own tunnel
+# never touches paying customers.
+customers_teardown() {
+    local f d n p idx
+    for f in "${HASHEM_SYSTEMD_DIR:-/etc/systemd/system}"/hsell-[0-9]*-[0-9]*.service; do
+        [[ -e "$f" ]] || continue
+        systemctl disable --now "${f##*/}" >/dev/null 2>&1 || true
+        rm -f "$f"
+    done
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    pkill -9 -f "/usr/local/lib/hashem-sell/frps" >/dev/null 2>&1 || true
+    rm -rf /usr/local/lib/hashem-sell "${PANEL_CONFIG_DIR}/customers"
+    if command -v iptables >/dev/null 2>&1; then
+        for p in INPUT OUTPUT; do
+            iptables -w 5 -D "$p" -j HASHEM_CUST 2>/dev/null || true
+        done
+        iptables -w 5 -F HASHEM_CUST 2>/dev/null || true
+        iptables -w 5 -X HASHEM_CUST 2>/dev/null || true
+    fi
+    command -v tc >/dev/null 2>&1 || return 0
+    for d in /sys/class/net/*; do
+        n=${d##*/}
+        for p in 4919 4920; do
+            tc filter del dev "$n" egress pref "$p" 2>/dev/null || true
+            tc filter del dev "$n" ingress pref "$p" 2>/dev/null || true
+        done
+    done
+    for idx in $(tc actions ls action police 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "index") print $(i + 1)}'); do
+        [[ "$idx" =~ ^[0-9]+$ ]] || continue
+        if (( idx >= 0x48530000 && idx <= 0x4853ffff )); then
+            tc actions del action police index "$idx" >/dev/null 2>&1 || true
+        fi
+    done
+}
+
 # ---- Performance & Obfuscation Controls (CLI + Menu 22) ----
 
 perf_apply() {
@@ -4719,11 +4757,13 @@ peer_token() {
 # Any other owner is reported and left running; frps then fails to start and
 # the caller reports that.
 release_frps_port() {
-    local port=$1 pid comm busy=0
+    local port=$1 pid comm exe busy=0
     command -v fuser >/dev/null 2>&1 || return 0
     for pid in $(fuser "${port}/tcp" 2>/dev/null); do
         comm=$(cat "/proc/${pid}/comm" 2>/dev/null)
-        if [[ "$comm" == frps* ]]; then
+        exe=$(readlink "/proc/${pid}/exe" 2>/dev/null)
+        # a sold customer tunnel's frps (panel Customers tab) is never a stray
+        if [[ "$comm" == frps* && "$exe" != /usr/local/lib/hashem-sell/* ]]; then
             kill "$pid" 2>/dev/null || true
         else
             echo -e "${RED}[!] Port ${port} is held by '${comm:-unknown}' (pid ${pid}); not killing it. Pick another control port or stop that service.${NC}" >&2
@@ -6099,6 +6139,9 @@ uninstall_all_force() {
         systemctl disable frps frpc "${TUNNEL_NAME}.service" gre-panel hashem-watchdog.timer hashem-watchdog.service backhaul-server backhaul-client backhaul >/dev/null 2>&1 || true
         systemctl disable 'frps*' 'frpc*' 'backhaul*' 'gre-t*' 'gre-h*' hashem-lb-net >/dev/null 2>&1 || true
         purge_legacy_obfuscation
+        # sold customer tunnels (panel Customers tab), stopped before the panel
+        # binary goes so it cannot restart them
+        customers_teardown
 
         # 2. Terminate any leftover processes
         pkill -9 -f "${INSTALL_DIR}/frps" >/dev/null 2>&1 || true
