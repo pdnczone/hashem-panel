@@ -1329,6 +1329,16 @@ func validatePool(c ClusterConfig, p LBPool, skip int) (string, string) {
 	if p.Port == cfg.Port {
 		return "E-CLUSTER-03", fmt.Sprintf("port %d is the panel's own port", p.Port)
 	}
+	// a pool spreads tunnels' user ports; anything else Hashem binds there
+	// (ports_registry.go) cannot be shared
+	claims := hashemPortClaims()
+	for _, proto := range lbProtos(p.Proto) {
+		if owner := claimOwner(claims, proto, p.Port, func(c portClaim) bool {
+			return c.Kind == claimPeer || c.Kind == claimPool || c.Kind == claimRelay
+		}); owner != "" {
+			return "E-CLUSTER-03", fmt.Sprintf("port %d is already used by %s", p.Port, owner)
+		}
+	}
 	for _, l := range lbLinksFrom(lbSnapshot()) {
 		if hasInt(controlPorts(l.CtrlPort), p.Port) {
 			return "E-CLUSTER-03", fmt.Sprintf("port %d is the control port of %s; the foreign server dials it", p.Port, lbLinkName(l))

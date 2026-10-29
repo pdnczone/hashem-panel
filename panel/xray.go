@@ -231,28 +231,12 @@ WantedBy=multi-user.target
 `, l.ID, l.Mode, l.Side, xrayDir, xrayBinPath, xrayLinkConfPath(l.ID))
 }
 
-// xrayClaimedPorts are the ports another tunnel's config takes on this
-// server even while it is down: Bagher's on the Iran server.
+// xrayClaimedPorts are the ports another of Hashem's configs takes on this
+// server even while its unit is down (ports_registry.go): other tunnels,
+// relays' control ports, Bagher, pools, sold customer tunnels and the panel.
+// Other Xray links are checked by xrayPortConflicts itself.
 func xrayClaimedPorts(l XrayLink) map[string]string {
-	m := map[string]string{}
-	if l.Side != xraySideIran {
-		return m
-	}
-	sshFwdMu.Lock()
-	cfg := loadSSHFwdConfigLocked()
-	sshFwdMu.Unlock()
-	if !cfg.Enabled || cfg.Role == "foreign" || cfg.Role == "server" {
-		return m
-	}
-	for _, p := range l.Ports {
-		if owner := bagherPortOwner(cfg, p, 0); owner != 0 {
-			m["tcp:"+strconv.Itoa(p)] = fmt.Sprintf("Bagher (foreign server %d)", owner)
-			if cfg.UDP {
-				m["udp:"+strconv.Itoa(p)] = fmt.Sprintf("Bagher (foreign server %d)", owner)
-			}
-		}
-	}
-	return m
+	return claimedPortsByKey(hashemPortClaims(), func(c portClaim) bool { return c.Kind == claimXray })
 }
 
 // xrayPortsError explains taken ports, with a free tunnel port to use.

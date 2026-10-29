@@ -99,15 +99,27 @@ func bagherPortOwner(cfg SSHFwdConfig, p, skip int) int {
 	return 0
 }
 
-// checkBagherLinkPorts refuses ports another link (or this server's
-// internal FRP ports) already uses.
+// checkBagherLinkPorts refuses ports another link, this server's internal
+// FRP ports or another of Hashem's configs (ports_registry.go) already use.
+// Callers hold sshFwdMu: the claims are built from cfg, not reloaded.
 func checkBagherLinkPorts(cfg SSHFwdConfig, ports []int, self int) error {
+	var claims []portClaim
 	for _, p := range ports {
 		if p >= cfg.FRPBindPort && p <= cfg.FRPBindPort+2 {
 			return fmt.Errorf("port %d is Bagher's internal FRP port (%d-%d)", p, cfg.FRPBindPort, cfg.FRPBindPort+2)
 		}
 		if owner := bagherPortOwner(cfg, p, self); owner != 0 {
 			return fmt.Errorf("port %d is already forwarded to foreign server %d (%s)", p, owner, bagherLinkHost(cfg, owner))
+		}
+		if claims == nil {
+			claims = portClaimsWith(cfg)
+		}
+		// Bagher's own claims were checked above; a pool may cover any port
+		skip := func(c portClaim) bool { return c.Kind == claimBagher || c.Kind == claimBagherFR || c.Kind == claimPool }
+		for _, proto := range []string{"tcp", "udp"} {
+			if owner := claimOwner(claims, proto, p, skip); owner != "" {
+				return fmt.Errorf("port %d is already used by %s", p, owner)
+			}
 		}
 	}
 	return nil

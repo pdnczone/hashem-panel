@@ -113,30 +113,28 @@ func isV4(s string) bool {
 	return ip != nil && ip.To4() != nil
 }
 
-// peerPortClash reports "PORT (peer NAME)" for the first requested port that
-// another registered tunnel already serves. excludeID skips one peer (<0 = none).
-// A port a cluster pool covers may be served by several tunnels: that is what
-// the pool is for.
+// peerPortClash reports "PORT (OWNER)" for the first requested port that
+// something else on this server already takes (ports_registry.go): another
+// tunnel, a relay's control port, the panel, Bagher, Xray or a sold customer
+// tunnel. excludeID skips one peer's own ports (<0 = none). A port a cluster
+// pool covers may be served by several tunnels: that is what the pool is for.
 func peerPortClash(want []int, excludeID int) string {
 	pooled := map[int]bool{}
 	for _, p := range loadClusterConfig().Pools {
 		pooled[p.Port] = true
 	}
-	claimed := map[int]string{}
-	for _, p := range loadPeers() {
-		if p.ID == excludeID {
-			continue
-		}
-		for _, port := range p.Ports {
-			claimed[port] = p.Name
-		}
+	claims := hashemPortClaims()
+	skip := func(c portClaim) bool {
+		return c.Kind == claimPool || (c.Kind == claimPeer && c.Ref == excludeID)
 	}
 	for _, port := range want {
 		if pooled[port] {
 			continue
 		}
-		if name, ok := claimed[port]; ok {
-			return fmt.Sprintf("%d (peer %s)", port, name)
+		for _, proto := range []string{"tcp", "udp"} {
+			if owner := claimOwner(claims, proto, port, skip); owner != "" {
+				return fmt.Sprintf("%d (%s)", port, owner)
+			}
 		}
 	}
 	return ""
