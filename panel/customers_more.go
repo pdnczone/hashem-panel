@@ -318,11 +318,15 @@ func handleCustomersHistory(w http.ResponseWriter, r *http.Request) {
 	custLoadLocked()
 	var hist []custHist
 	var per []custPeriod
-	found := false
+	found, loadErr := false, custs.loadErr
 	if c := custFindLocked(id); c != nil {
 		hist, per, found = append([]custHist{}, c.History...), append([]custPeriod{}, c.Periods...), true
 	}
 	custs.Unlock()
+	if loadErr != "" {
+		writeAPIError(w, r, "E-CUST-06", "customers.json cannot be read: "+loadErr)
+		return
+	}
 	if !found {
 		writeAPIError(w, r, "E-CUST-04", fmt.Sprintf("no customer %d", id))
 		return
