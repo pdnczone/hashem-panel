@@ -3071,6 +3071,7 @@ window.FA_TEXT = {
 "Save template": "ذخیره‌ی قالب",
 "Template saved": "قالب ذخیره شد",
 "Customers ending within 7 days or ended are ticked.": "مشتری‌هایی که تا ۷ روز دیگر تمام می‌شوند یا تمام شده‌اند انتخاب شده‌اند.",
+"Customers ending within 7 days or ended are ticked. A customer with no end date gets one when renewed.": "مشتری‌هایی که تا ۷ روز دیگر تمام می‌شوند یا تمام شده‌اند انتخاب شده‌اند. مشتری بدون تاریخ پایان، با تمدید تاریخ پایان می‌گیرد.",
 "Renew several": "تمدید گروهی",
 "Choose at least one customer": "دست‌کم یک مشتری انتخاب کنید",
 "{n} customers": "{n} مشتری",

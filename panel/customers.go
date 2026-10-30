@@ -2168,6 +2168,7 @@ func customersView() map[string]any {
 	peers := custLinkedPeers(custPeerList(all))
 	views := make([]custView, 0, len(list))
 	for _, c := range list {
+		c.History, c.Periods = nil, nil // on demand: GET /api/customers/history
 		v := custView{customer: c, SpeedRx: speed[c.ID][0], SpeedTx: speed[c.ID][1], DaysLeft: daysLeft(c.ExpiresAt, now), Status: "/_hs/" + c.Token}
 		v.Links = []custLinkView{}
 		for _, l := range c.Links {
@@ -2359,6 +2360,7 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 		if err := custGREAlloc(custs.f.Customers, nc.ID, nc.Links); err != nil {
 			return fail("E-CUST-03", err)
 		}
+		nc.startReminders(now)
 		nc.logEvent(now, "created", custPlanText(nc.Days, nc.QuotaGB, nc.RateMbit)+fmt.Sprintf(", %d foreign server(s)", len(nc.Links)))
 		custs.f.Customers = append(custs.f.Customers, nc)
 		created = nc.ID
@@ -2386,6 +2388,7 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 		// a higher volume (or none) reconnects a customer cut for volume
 		if q := c.quotaBytes(); c.Cut == "quota" && (q == 0 || c.used() < q) {
 			c.Cut = ""
+			c.logEvent(now, "resume", "reconnected: the volume was raised")
 		}
 		if q := c.quotaBytes(); q == 0 || c.used() < q/10*9 {
 			c.Warned = false
