@@ -85,6 +85,28 @@ status page (FA/EN, light/dark, Hashem design tokens).
 
 ### P2: Backhaul and Xray reverse links for customers
 
+- `customerLink.Engine`: `frp`, `backhaul` or `xray`, per foreign server;
+  one customer can mix them. Billing, the shared cap (user ports and
+  control port ingress), cut and the port registry are the same for all.
+- Backhaul (v0.7.2 schema, transports tcp, tcpmux, ws, wsmux, wss, wssmux):
+  the server lists the ports (`p=127.0.0.1:p`), so the client cannot add
+  any; UDP only with tcp (`accept_udp`). wss links get their own
+  self-signed certificate. Unit runs `/usr/local/lib/hashem-sell/backhaul`.
+- Xray reverse (Xray-core v26.3.27, presets reality, xhttp, grpc, kcp):
+  the Iran end is a VLESS portal whose user carries `reverse` (Xray refuses
+  it a forward proxy) and everything unmatched goes to the blackhole; built
+  with `buildXrayConfig`. Keys stay across edits that keep engine and
+  transport, so an installed kit stays valid.
+- Kits: FRP stays version 1 (older installers), Backhaul and Xray are
+  version 2 with `engine=`. The installer builds every config from checked
+  values (Xray's foreign end equals `buildXrayConfig`'s, tested), pins the
+  sha256 of each release, and replaces a link's old tunnel by its token
+  (`<unit>.id`), also across an engine change.
+- Lab: one customer with Backhaul tcp+UDP, Backhaul wssmux, Xray Reality
+  (+UDP) and Xray mKCP links on the real binaries: reach, one cap shared by
+  two links at once, billed volume, the Xray user is no proxy into the
+  seller's server, cut/resume, clean remove.
+
 ### P3: Xray direct and Bagher (Bagher needs the customer to run a command
 that prints a reply code the seller pastes back).
 

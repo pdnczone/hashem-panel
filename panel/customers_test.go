@@ -54,7 +54,7 @@ func newCustLab(t *testing.T) *custLab {
 	t.Helper()
 	dir := registryEnv(t)
 	l := &custLab{}
-	oldUnit, oldBin, oldSrc := engineUnitDir, custBinDir, custFrpsSrc
+	oldUnit, oldBin, oldSrc, oldBH, oldXray := engineUnitDir, custBinDir, custFrpsSrc, custBackhaulSrc, custXraySrc
 	oldRun, oldSave, oldIf, oldAlert, oldBusy, oldSys := custRun, custSaveOut, custIfaces, custAlert, custPortBusy, runSystemctl
 	oldActive, oldLinked, oldLimRun, oldSysctl := custUnitsActive, custLinked, limitsRun, custReserveSysctl
 	custReserveSysctl = filepath.Join(dir, "reserved")
@@ -63,9 +63,13 @@ func newCustLab(t *testing.T) *custLab {
 	engineUnitDir = filepath.Join(dir, "systemd")
 	custBinDir = filepath.Join(dir, "hashem-sell")
 	custFrpsSrc = filepath.Join(dir, "frps-src")
+	custBackhaulSrc = filepath.Join(dir, "backhaul-src")
+	custXraySrc = filepath.Join(dir, "xray-src")
 	_ = os.MkdirAll(engineUnitDir, 0o755)
-	if err := os.WriteFile(custFrpsSrc, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
+	for _, f := range []string{custFrpsSrc, custBackhaulSrc, custXraySrc} {
+		if err := os.WriteFile(f, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	custRun = func(name string, args ...string) ([]byte, error) {
 		cmd := name + " " + strings.Join(args, " ")
@@ -111,7 +115,7 @@ func newCustLab(t *testing.T) *custLab {
 	custLinked = func(ports []int) map[int]bool { return map[int]bool{} }
 	resetCustState()
 	t.Cleanup(func() {
-		engineUnitDir, custBinDir, custFrpsSrc = oldUnit, oldBin, oldSrc
+		engineUnitDir, custBinDir, custFrpsSrc, custBackhaulSrc, custXraySrc = oldUnit, oldBin, oldSrc, oldBH, oldXray
 		custRun, custSaveOut, custIfaces, custAlert, custPortBusy, runSystemctl = oldRun, oldSave, oldIf, oldAlert, oldBusy, oldSys
 		custUnitsActive, custLinked, limitsRun, custReserveSysctl = oldActive, oldLinked, oldLimRun, oldSysctl
 		resetCustState()
@@ -196,18 +200,18 @@ func TestCustomersLifecycle(t *testing.T) {
 	}
 
 	// configs and units
-	conf, _ := os.ReadFile(custConfPath(1, 1))
+	conf, _ := os.ReadFile(custConfPath(1, 1, custEngineFRP))
 	for _, want := range []string{"bindPort = " + fmt.Sprint(c.Links[0].CtrlPort), "{ single = 443 }", "{ single = 2083 }", `auth.token = "` + c.Links[0].Token + `"`, `proxyBindAddr = "0.0.0.0"`} {
 		if !strings.Contains(string(conf), want) {
 			t.Errorf("1-1.toml lacks %q:\n%s", want, conf)
 		}
 	}
-	conf2, _ := os.ReadFile(custConfPath(1, 2))
+	conf2, _ := os.ReadFile(custConfPath(1, 2, custEngineFRP))
 	if !strings.Contains(string(conf2), "kcpBindPort = 30001") {
 		t.Errorf("kcp link:\n%s", conf2)
 	}
 	unit, _ := os.ReadFile(custUnitPath(1, 1))
-	if !strings.Contains(string(unit), "ExecStart="+custBin()+" -c "+custConfPath(1, 1)) {
+	if !strings.Contains(string(unit), "ExecStart="+custBin()+" -c "+custConfPath(1, 1, custEngineFRP)) {
 		t.Errorf("unit:\n%s", unit)
 	}
 	if _, err := os.Stat(custBin()); err != nil {
@@ -319,7 +323,7 @@ func TestCustomersLifecycle(t *testing.T) {
 	if code, m := custPost(t, `{"action":"remove","id":1}`); code != 200 {
 		t.Fatalf("remove: %d %v", code, m)
 	}
-	for _, p := range []string{custUnitPath(1, 1), custConfPath(1, 1), custUnitPath(1, 2)} {
+	for _, p := range []string{custUnitPath(1, 1), custConfPath(1, 1, custEngineFRP), custUnitPath(1, 2)} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Errorf("%s survived remove", p)
 		}
@@ -515,7 +519,7 @@ func TestCustomersKit(t *testing.T) {
 	if !strings.Contains(fmt.Sprint(m["oneliner"]), "/releases/download/"+panelVersion+"/hashem-customer.sh") || !strings.Contains(fmt.Sprint(m["oneliner"]), kit) {
 		t.Errorf("oneliner: %v", m["oneliner"])
 	}
-	toml := fmt.Sprint(m["frpc_toml"])
+	toml := fmt.Sprint(m["manual"])
 	for _, want := range []string{`serverAddr = "iran.example.com"`, "serverPort = 31000", `transport.protocol = "websocket"`, `name = "udp-2083"`, "remotePort = 443"} {
 		if !strings.Contains(toml, want) {
 			t.Errorf("frpc.toml lacks %q:\n%s", want, toml)
@@ -656,7 +660,7 @@ func TestCustomersReviewFixes(t *testing.T) {
 
 	// the frps plugin: tcp on sold ports only, udp only when sold, from loopback
 	c := custGet(t, 1)
-	conf, _ := os.ReadFile(custConfPath(1, 1))
+	conf, _ := os.ReadFile(custConfPath(1, 1, custEngineFRP))
 	key := custPluginKey(c.Links[0].Token)
 	if !strings.Contains(string(conf), `path = "/_hsplugin/`+key+`"`) || !strings.Contains(string(conf), fmt.Sprintf(`addr = "127.0.0.1:%d"`, cfg.Port)) {
 		t.Fatalf("frps config lacks the plugin:\n%s", conf)

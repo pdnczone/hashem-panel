@@ -11247,6 +11247,16 @@ const custState = c => !c.cut ? ['ok', tr('', 'Active')]
   : ['warn', tr('', 'Paused')];
 const custStatusURL = c => location.origin + '/_hs/' + c.token;
 const custDate = sec => new Date(sec * 1000).toLocaleDateString(currentLang === 'fa' ? 'fa-IR' : undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+// the engines a sold link can run and their transports (as customers.go)
+const CUST_ENGINES = {
+  frp: { label: 'FRP', tr: ['tcp', 'websocket', 'kcp', 'quic'] },
+  backhaul: { label: 'Backhaul', tr: ['tcp', 'tcpmux', 'ws', 'wsmux', 'wss', 'wssmux'] },
+  xray: { label: 'Xray reverse', tr: ['reality', 'xhttp', 'grpc', 'kcp'] },
+};
+const CUST_TR_LABEL = { tcp: 'TCP', websocket: 'WebSocket', kcp: 'KCP', quic: 'QUIC', tcpmux: 'TCP mux', ws: 'WS', wsmux: 'WS mux',
+  wss: 'WSS (TLS)', wssmux: 'WSS mux (TLS)', reality: 'Reality', xhttp: 'XHTTP + Reality', grpc: 'gRPC + Reality' };
+function custTrLabel(engine, t) { return engine === 'xray' && t === 'kcp' ? 'mKCP (UDP)' : (CUST_TR_LABEL[t] || t); }
+function custEngLabel(l) { const e = CUST_ENGINES[l.engine || 'frp']; return (e ? tr('', e.label) : l.engine) + ' · ' + custTrLabel(l.engine || 'frp', l.transport); }
 function custLinkDot(l, c) {
   if (c.cut || !l.active) return ['var(--mu)', tr('', 'Stopped')];
   return l.linked ? ['var(--ok)', tr('', 'Connected')] : ['var(--wr)', tr('', 'Waiting for the foreign server')];
@@ -11259,7 +11269,7 @@ function custMap(c) {
     return `<div class="cs-link">
       <span class="cs-wire" style="--c:${col}" title="${esc(why)}" aria-hidden="true"></span>
       <div class="cs-node"><span class="tv-ico far">${ICO_GLOBE}</span><b>${esc(l.name || tr('', 'Foreign server') + ' ' + l.id)}</b>
-        <small class="lm-num">${esc((l.ports || []).join(', '))}${l.udp ? ' · TCP+UDP' : ''} · ${esc(l.transport)}</small>
+        <small class="lm-num">${esc((l.ports || []).join(', '))}${l.udp ? ' · TCP+UDP' : ''} · ${esc(custEngLabel(l))}</small>
         <span class="cs-state" style="--c:${col}">${esc(why)}</span></div>
       <div class="cs-link-acts">
         <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openCustKit(${c.id}, ${l.id})">${esc(tr('', 'Kit'))}</button>
@@ -11310,7 +11320,11 @@ function renderCustomers(d) {
   if ($('custPro')) $('custPro').classList.toggle('hidden', isProLicensed('customers'));
   const err = $('custErr');
   if (err) {
-    const msg = d.error ? tr('', 'Could not apply everything:') + ' ' + d.error : !d.frps_ok ? tr('', 'FRP is not installed on this server: set up any FRP tunnel first (Setup tab), then the customers\' tunnels start.') : '';
+    // an engine some link runs that this server does not have
+    const used = new Set((d.customers || []).flatMap(c => (c.links || []).map(l => l.engine || 'frp')));
+    const missing = [...used].filter(e => d.engines && d.engines[e] === false).map(e => CUST_ENGINES[e] ? CUST_ENGINES[e].label : e);
+    const msg = d.error ? tr('', 'Could not apply everything:') + ' ' + d.error
+      : missing.length ? tr('', '{e} is not installed on this server: set up a tunnel of that engine once (Setup tab), then the customers\' tunnels on it start.').replace('{e}', missing.join(', ')) : '';
     err.textContent = msg; err.classList.toggle('hidden', !msg);
   }
   const list = d.customers || [];
@@ -11420,8 +11434,8 @@ function openCustLink(id, lid) {
   if (!isProLicensed('customers')) { openBagherLicModal('customers'); return; }
   const c = custFind(id);
   if (!c) return;
-  const l = (c.links || []).find(x => x.id === lid) || { name: '', ports: [], udp: false, transport: 'tcp', ctrl_port: 0 };
-  const html = custLinkFields('cl', l) + (lid ? `<div class="qs-hint">${esc(tr('', 'A new control port or transport needs the kit again on the foreign server; new ports only need it if the server serves them.'))}</div>` : '');
+  const l = (c.links || []).find(x => x.id === lid) || { name: '', ports: [], udp: false, engine: 'frp', transport: 'tcp', ctrl_port: 0 };
+  const html = custLinkFields('cl', l) + (lid ? `<div class="qs-hint">${esc(tr('', 'A new control port, engine or transport needs the kit again on the foreign server; new ports only need it if the server serves them.'))}</div>` : '');
   custModal((lid ? tr('', 'Edit foreign server') : tr('', 'Add foreign server')) + ' — ' + c.name, html, lid ? tr('', 'Save') : tr('', 'Add'), async () => {
     const body = { action: lid ? 'link-update' : 'link-add', id, link_id: lid, link: custLinkRead('cl') };
     const d = await api('/api/customers', body);
@@ -11434,20 +11448,43 @@ function openCustLink(id, lid) {
     }
   });
 }
+function custTrOptions(engine, cur) {
+  const list = (CUST_ENGINES[engine] || CUST_ENGINES.frp).tr;
+  return list.map(t => `<option value="${t}"${cur === t ? ' selected' : ''}>${esc(custTrLabel(engine, t))}</option>`).join('');
+}
+// custEngineSync: the transports of the chosen engine, the SNI for Xray's
+// Reality presets, and UDP where the transport cannot carry it.
+function custEngineSync(p, engineChanged) {
+  const eng = $(p + 'Eng').value, trSel = $(p + 'Tr');
+  if (engineChanged) trSel.innerHTML = custTrOptions(eng, '');
+  const t = trSel.value;
+  $(p + 'SniBox').classList.toggle('hidden', !(eng === 'xray' && t !== 'kcp'));
+  const udp = $(p + 'Udp'), noUdp = eng === 'backhaul' && t !== 'tcp';
+  udp.disabled = noUdp;
+  if (noUdp) udp.checked = false;
+  $(p + 'UdpHint').classList.toggle('hidden', !noUdp);
+}
 function custLinkFields(p, l) {
-  const tsel = ['tcp', 'websocket', 'kcp', 'quic'].map(t => `<option value="${t}"${l.transport === t ? ' selected' : ''}>${t.toUpperCase()}</option>`).join('');
+  const eng = l.engine || 'frp';
+  const esel = Object.keys(CUST_ENGINES).map(e => `<option value="${e}"${eng === e ? ' selected' : ''}>${esc(tr('', CUST_ENGINES[e].label))}</option>`).join('');
+  const noUdp = eng === 'backhaul' && l.transport !== 'tcp';
   return `<div class="xr-fields">
       <div class="xr-field"><label class="qs-label" for="${p}Name">${esc(tr('', 'Foreign server name'))}</label><input class="hashem-input" id="${p}Name" maxlength="40" placeholder="${esc(tr('', 'e.g. Frankfurt'))}" value="${esc(l.name || '')}"></div>
       <div class="xr-field"><label class="qs-label" for="${p}Ports">${esc(tr('', 'Users\' ports'))}</label><input class="hashem-input lm-num" id="${p}Ports" placeholder="443, 2083" value="${esc(Array.isArray(l.ports) ? l.ports.join(', ') : (l.ports || ''))}"></div>
     </div>
     <div class="xr-fields">
-      <div class="xr-field"><label class="qs-label" for="${p}Tr">${esc(tr('', 'Transport'))}</label><select class="hashem-input" id="${p}Tr">${tsel}</select></div>
-      <div class="xr-field"><label class="qs-label" for="${p}Ctrl">${esc(tr('', 'Control port'))}</label><input class="hashem-input lm-num" id="${p}Ctrl" type="number" min="1" max="65535" placeholder="${esc(tr('', 'Automatic'))}" value="${l.ctrl_port || ''}"></div>
+      <div class="xr-field"><label class="qs-label" for="${p}Eng">${esc(tr('', 'Engine'))}</label><select class="hashem-input" id="${p}Eng" onchange="custEngineSync('${p}', true)">${esel}</select></div>
+      <div class="xr-field"><label class="qs-label" for="${p}Tr">${esc(tr('', 'Transport'))}</label><select class="hashem-input" id="${p}Tr" onchange="custEngineSync('${p}', false)">${custTrOptions(eng, l.transport)}</select></div>
     </div>
-    <label class="xr-check"><input type="checkbox" id="${p}Udp"${l.udp ? ' checked' : ''}> ${esc(tr('', 'UDP too (games, calls, QUIC)'))}</label>`;
+    <div class="xr-fields">
+      <div class="xr-field"><label class="qs-label" for="${p}Ctrl">${esc(tr('', 'Control port'))}</label><input class="hashem-input lm-num" id="${p}Ctrl" type="number" min="1" max="65535" placeholder="${esc(tr('', 'Automatic'))}" value="${l.ctrl_port || ''}"></div>
+      <div class="xr-field${eng === 'xray' && l.transport !== 'kcp' ? '' : ' hidden'}" id="${p}SniBox"><label class="qs-label" for="${p}Sni">${esc(tr('', 'Reality SNI'))}</label><input class="hashem-input" id="${p}Sni" maxlength="253" placeholder="${esc(tr('', 'Automatic'))}" value="${esc(l.sni || '')}"></div>
+    </div>
+    <label class="xr-check"><input type="checkbox" id="${p}Udp"${l.udp && !noUdp ? ' checked' : ''}${noUdp ? ' disabled' : ''}> ${esc(tr('', 'UDP too (games, calls, QUIC)'))}</label>
+    <div class="qs-hint${noUdp ? '' : ' hidden'}" id="${p}UdpHint">${esc(tr('', 'Backhaul carries UDP on the TCP transport only.'))}</div>`;
 }
-const custLinkRead = p => ({ name: $(p + 'Name').value, ports: $(p + 'Ports').value, transport: $(p + 'Tr').value,
-  ctrl_port: parseInt($(p + 'Ctrl').value, 10) || 0, udp: $(p + 'Udp').checked });
+const custLinkRead = p => ({ name: $(p + 'Name').value, ports: $(p + 'Ports').value, engine: $(p + 'Eng').value, transport: $(p + 'Tr').value,
+  sni: $(p + 'Sni').value.trim(), ctrl_port: parseInt($(p + 'Ctrl').value, 10) || 0, udp: $(p + 'Udp').checked });
 
 async function custLinkRemove(id, lid) {
   const c = custFind(id);
@@ -11476,6 +11513,14 @@ async function custAction(action, id) {
 }
 
 // ---- the kit: what the customer runs on a foreign server ----
+function custKitEngine(k) {
+  return { backhaul: 'Backhaul v0.7.2', xray: 'Xray-core v26.3.27' }[k.engine] || 'FRP v' + k.frp;
+}
+function custKitManualHint(k) {
+  if (k.engine === 'backhaul') return tr('', 'For a foreign server that already runs Backhaul v0.7.2: run backhaul -c with this file.');
+  if (k.engine === 'xray') return tr('', 'For a foreign server that already runs Xray-core v26.3.27: run xray run -c with this file.');
+  return tr('', 'For a foreign server that already runs frpc v{v}: run frpc -c with this file.').replace('{v}', k.frp);
+}
 async function openCustKit(id, lid) {
   const c = custFind(id);
   let k;
@@ -11485,9 +11530,9 @@ async function openCustKit(id, lid) {
       <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="copyTextSafe($('${bid}').textContent, ${jsArg(tr('', 'Copied'))}, ${jsArg(title)})">${esc(tr('', 'Copy'))}</button></div>
       <pre class="cs-code" id="${bid}">${esc(text)}</pre>${hint ? `<div class="qs-hint">${esc(hint)}</div>` : ''}</div>`;
   const html = `<p class="qs-hint">${esc(tr('', 'Send this to the customer. On the foreign server, as root, they run the command below; their service must listen on the same ports there. Users then connect to this server.'))}</p>
-    <div class="cs-facts"><span>${esc(tr('', 'Server'))} <b class="lm-num">${esc(k.address)}</b></span><span>${esc(tr('', 'Control port'))} <b class="lm-num">${esc(String(k.ctrl_port))} · ${esc(k.transport)}</b></span><span>${esc(tr('', 'Users\' ports'))} <b class="lm-num">${esc((k.ports || []).join(', '))}</b></span></div>
-    ${block('ckOne', tr('', 'One command (recommended)'), k.oneliner, tr('', 'It installs FRP v{v} from its official release (checksum verified) and keeps the tunnel running. Running it again updates the tunnel.').replace('{v}', k.frp))}
-    ${block('ckToml', tr('', 'Manual setup: frpc.toml'), k.frpc_toml, tr('', 'For a foreign server that already runs frpc v{v}: run frpc -c with this file.').replace('{v}', k.frp))}
+    <div class="cs-facts"><span>${esc(tr('', 'Server'))} <b class="lm-num">${esc(k.address)}</b></span><span>${esc(tr('', 'Control port'))} <b class="lm-num">${esc(String(k.ctrl_port))} · ${esc(custEngLabel(k))}</b></span><span>${esc(tr('', 'Users\' ports'))} <b class="lm-num">${esc((k.ports || []).join(', '))}</b></span></div>
+    ${block('ckOne', tr('', 'One command (recommended)'), k.oneliner, tr('', 'It installs {e} from its official release (checksum verified) and keeps the tunnel running. Running it again updates the tunnel.').replace('{e}', custKitEngine(k)))}
+    ${block('ckToml', tr('', 'Manual setup: {f}').replace('{f}', k.manual_name || 'frpc.toml'), k.manual, custKitManualHint(k))}
     ${c ? block('ckStatus', tr('', 'Status page for the customer'), custStatusURL(c), tr('', 'Days left, volume used and server state, in Persian and English. Anyone with the link can see it.')) : ''}`;
   custModal(tr('', 'Kit') + ' — ' + ((c && c.name) || '') + (l.name ? ' · ' + l.name : ''), html, '', null);
 }
@@ -11495,7 +11540,7 @@ async function openCustKit(id, lid) {
 // ---- new customer: plan, foreign servers, review ----
 function openCustWizard() {
   if (!isProLicensed('customers')) { openBagherLicModal('customers'); return; }
-  _custWiz = { step: 1, name: '', note: '', address: '', days: 30, quota_gb: 0, rate_mbit: 0, links: [{ name: '', ports: [], udp: false, transport: 'tcp', ctrl_port: 0 }] };
+  _custWiz = { step: 1, name: '', note: '', address: '', days: 30, quota_gb: 0, rate_mbit: 0, links: [{ name: '', ports: [], udp: false, engine: 'frp', transport: 'tcp', ctrl_port: 0 }] };
   custWizRender();
   const w = $('custWizard');
   if (w && w.scrollIntoView) w.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -11542,7 +11587,7 @@ function custWizStep3() {
     [tr('', 'Volume'), w.quota_gb > 0 ? w.quota_gb + ' GB' : tr('', 'Unlimited')],
     [tr('', 'Speed'), w.rate_mbit > 0 ? w.rate_mbit + ' Mbit/s' : tr('', 'Unlimited')],
   ];
-  const srv = w.links.map((l, i) => `<li><b>${esc(l.name || tr('', 'Foreign server') + ' ' + (i + 1))}</b> <span class="lm-num">${esc(String(l.ports))}</span> · ${esc(l.transport.toUpperCase())}${l.udp ? ' · TCP+UDP' : ''}</li>`).join('');
+  const srv = w.links.map((l, i) => `<li><b>${esc(l.name || tr('', 'Foreign server') + ' ' + (i + 1))}</b> <span class="lm-num">${esc(String(l.ports))}</span> · ${esc(custEngLabel(l))}${l.udp ? ' · TCP+UDP' : ''}</li>`).join('');
   return `<div class="cs-review"><div class="cs-facts">${plan.map(([k, v]) => `<span>${esc(k)} <b class="lm-num">${esc(v)}</b></span>`).join('')}</div>
       <b>${esc(w.name)}</b>${w.note ? `<span class="qs-hint">${esc(w.note)}</span>` : ''}
       <ul class="xr-list">${srv}</ul>
@@ -11589,7 +11634,7 @@ function custWizGo(step) {
   _custWiz.step = step;
   custWizRender();
 }
-function custWizAdd() { custWizRead(); _custWiz.links.push({ name: '', ports: [], udp: false, transport: 'tcp', ctrl_port: 0 }); custWizRender(); }
+function custWizAdd() { custWizRead(); _custWiz.links.push({ name: '', ports: [], udp: false, engine: 'frp', transport: 'tcp', ctrl_port: 0 }); custWizRender(); }
 function custWizDrop(i) { custWizRead(); _custWiz.links.splice(i, 1); custWizRender(); }
 async function custWizCreate() {
   const w = _custWiz, btn = $('custWizCreate');
