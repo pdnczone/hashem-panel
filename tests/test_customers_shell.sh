@@ -285,6 +285,8 @@ echo "ssh-ed25519 AAAAOTHER other-seller ${U}0" >> "$AK"
 bash "$SH" remove "$U" >/dev/null 2>&1 || F "remove the bagher tunnel"
 [[ "$(cat "$AK")" == "ssh-ed25519 AAAAOTHER other-seller ${U}0" ]] || F "remove: authorized_keys is now: $(cat "$AK")"
 # sshd that does not read the drop-in, or refuses it: no tunnel, no rules left behind
+mkdir -p "$T/lib/hc"  # the last remove took the engine copies away
+printf '#!/bin/sh\n[ "$1" = "-v" ] && echo 0.71.0\n' > "$T/lib/hc/frpc"; chmod +x "$T/lib/hc/frpc"
 rm -f "$HASHEM_SSHD_DROPIN" "$AK"; : > "$T/calls.log"
 out=$(SSHD_NO_INCLUDE=1 bash "$SH" install "$(mkkit "$BG")" 2>&1) && F "installed with sshd not applying the rules"
 grep -q "Include" <<< "$out" || F "no Include hint: $out"
@@ -299,7 +301,7 @@ printf '#!/bin/sh\necho "LISTEN 0 511 127.0.0.1:31500 0.0.0.0:* users:((\\"redis
 out=$(bash "$SH" install "$(mkkit "$BG")" 2>&1) && F "installed on a port another service holds"
 grep -q "already in use" <<< "$out" || F "busy port: $out"
 printf '#!/bin/sh\necho "LISTEN 0 128 127.0.0.1:31500 0.0.0.0:* users:((\\"sshd\\",pid=9,fd=6))"\n' > "$T/bin/ss"
-bash "$SH" install "$(mkkit "$BG")" >/dev/null 2>&1 || F "a reinstall refused the tunnel's own sshd listener"
+out=$(bash "$SH" install "$(mkkit "$BG")" 2>&1) || F "a reinstall refused the tunnel's own sshd listener: $out"
 rm -f "$T/bin/ss"
 bash "$SH" remove all >/dev/null 2>&1 || true
 unset HASHEM_SSH_DIR
