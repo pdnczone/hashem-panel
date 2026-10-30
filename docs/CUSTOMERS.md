@@ -113,7 +113,9 @@ from **Status page** on the customer's card or from the kit.
 - The Reality SNI must be a public domain: Reality hands every handshake
   it does not recognise to that site. For Xray direct the customer's
   installer also refuses an SNI that resolves to a loopback, private or
-  link-local address there, and pins the address it resolved.
+  link-local address there (or one of that server's own), and pins the
+  address it resolved; an hourly timer (`hashem-customer-retarget`) moves
+  it when the site moves, never to such an address.
 - Every relay sees only its own config of the panel's directory.
 - For Xray direct and Bagher the download cap matches the data that comes
   from the foreign server's address and port. A domain is resolved to its

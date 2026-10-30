@@ -135,7 +135,7 @@ public_addr() {
     local a=${1,,} o1 o2 o3 o4
     if [[ "$a" == *:* ]]; then
         [[ "$a" =~ ^::ffff:([0-9.]+)$ ]] && { public_addr "${BASH_REMATCH[1]}"; return; }
-        [[ ! "$a" =~ ^(::1?$|f[cd]|fe[89ab]|ff|2001:db8:|64:ff9b:|::ffff:) ]]
+        [[ ! "$a" =~ ^(::[0-9a-f.:]*$|f[cd]|fe[89a-f]|ff|2001:db8:|2002:|64:ff9b:) ]]
         return
     fi
     [[ "$a" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
@@ -151,21 +151,95 @@ public_addr() {
     return 0
 }
 
+# sni_addrs NAME: the SNI's addresses, each public and none this server's
+# own; on a bad one it prints that one and fails.
+sni_addrs() {
+    local a ips own
+    ips=$(getent ahosts "$1" 2>/dev/null | awk '!seen[$1]++ { print $1 }') || true
+    own=$(ip -o addr show 2>/dev/null | awk '{ split($4, a, "/"); print a[1] }') || true
+    for a in $ips; do
+        if ! public_addr "$a" || grep -qixF -- "$a" <<< "$own"; then
+            echo "$a"
+            return 1
+        fi
+    done
+    echo "$ips"
+}
+
+# pick_target ADDRS: the first IPv4 (else IPv6) address, as host:443.
+pick_target() {
+    local a any=""
+    for a in $1; do
+        [[ "$a" == *:* ]] || { echo "$a:443"; return; }
+        [[ -n "$any" ]] || any=$a
+    done
+    echo "[$any]:443"
+}
+
 # resolve_sni: SNI_TARGET, where Reality hands the handshakes it does not
 # recognise (anyone's who connects to the tunnel's port). The kit names the
 # SNI, so it must not lead to this server or its network: every answer must
-# be public, and the address is pinned (a later DNS answer cannot move it).
+# be public, and the address is pinned (a later DNS answer cannot move it
+# there; `retarget` follows the site to its new public address).
 SNI_TARGET=""
 resolve_sni() {
-    local a ips v4="" any=""
-    ips=$(getent ahosts "$K_SNI" 2>/dev/null | awk '!seen[$1]++ { print $1 }') || true
+    local ips
+    if ! ips=$(sni_addrs "$K_SNI"); then
+        die "the SNI ${K_SNI} points at ${ips}, an address of this server or its network: anyone could reach it through the tunnel's port. Ask the seller for another SNI."
+    fi
     [[ -n "$ips" ]] || die "the SNI ${K_SNI} does not resolve on this server: check its DNS, or ask the seller for another SNI"
-    for a in $ips; do
-        public_addr "$a" || die "the SNI ${K_SNI} points at ${a}, an address of this server or its network: anyone could reach it through the tunnel's port. Ask the seller for another SNI."
-        [[ -n "$v4" || "$a" == *:* ]] || v4=$a
-        [[ -n "$any" ]] || any=$a
+    SNI_TARGET=$(pick_target "$ips")
+}
+
+# cmd_retarget UNIT: an Xray direct tunnel's pinned Reality target follows
+# its site (a CDN moves names between addresses): when the pinned address
+# is no longer one of the SNI's, the first public one replaces it. Prints
+# "changed" then. A failed or non-public answer keeps the pinned address.
+cmd_retarget() {
+    local conf="$CONF_DIR/$1.json" text sni cur host ips new
+    [[ -f "$conf" ]] || return 0
+    text=$(cat "$conf")
+    [[ "$text" =~ \"target\":\ \"([^\"]+)\",\ \"xver\":\ 0,\ \"serverNames\":\ \[\"([^\"]+)\"\] ]] || return 0
+    cur=${BASH_REMATCH[1]} sni=${BASH_REMATCH[2]}
+    public_name "$sni" || return 0
+    if ! ips=$(sni_addrs "$sni") || [[ -z "$ips" ]]; then
+        echo "[!] $1: the SNI $sni has no usable address now; keeping $cur" >&2
+        return 0
+    fi
+    host=${cur%:443}
+    host=${host#[}
+    host=${host%]}
+    grep -qixF -- "$host" <<< "$ips" && return 0
+    new=$(pick_target "$ips")
+    text=${text//"\"target\": \"$cur\""/"\"target\": \"$new\""}
+    (umask 077 && printf '%s\n' "$text" > "$conf.new")
+    mv -f "$conf.new" "$conf"
+    echo changed
+}
+
+# cmd_retarget_all: every Xray direct tunnel (the hourly timer), restarted
+# when its target moved.
+cmd_retarget_all() {
+    local f u
+    for f in "$UNIT_DIR"/hcust-*.service; do
+        [[ -e "$f" ]] || continue
+        u=$(basename "${f%.service}")
+        if [[ "$(cmd_retarget "$u")" == changed ]]; then
+            say "$u: the SNI moved; restarting"
+            systemctl restart "$u.service" || true
+        fi
     done
-    if [[ -n "$v4" ]]; then SNI_TARGET="$v4:443"; else SNI_TARGET="[$any]:443"; fi
+}
+
+RETARGET=hashem-customer-retarget
+
+# retarget_timer: the hourly check, once an Xray direct tunnel needs it.
+retarget_timer() {
+    [[ -e "$UNIT_DIR/$RETARGET.timer" ]] && return 0
+    printf '[Unit]\nDescription=Hashem: Xray direct tunnels follow their SNI\n\n[Service]\nType=oneshot\nExecStart=/bin/bash %s/hashem-customer.sh retarget-all\n' "$BIN_DIR" > "$UNIT_DIR/$RETARGET.service"
+    printf '[Unit]\nDescription=Hashem: Xray direct tunnels follow their SNI\n\n[Timer]\nOnBootSec=10min\nOnUnitActiveSec=1h\nRandomizedDelaySec=5min\n\n[Install]\nWantedBy=timers.target\n' > "$UNIT_DIR/$RETARGET.timer"
+    systemctl daemon-reload
+    systemctl enable --now "$RETARGET.timer" >/dev/null 2>&1 || true
 }
 
 valid_port() { [[ "$1" =~ ^[0-9]{1,5}$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 )); }
@@ -355,6 +429,7 @@ Match User ${SSH_USER}
     PermitOpen none
     GatewayPorts no
     ForceCommand /bin/false
+Match all
 EOF
 }
 
@@ -376,7 +451,11 @@ bagher_sshd() {
         fi
         sshd_reload
     fi
-    out=$(sshd -T -C "user=$SSH_USER,host=hashem.invalid,addr=192.0.2.1" 2>/dev/null || true)
+    # as sshd sees the seller's server (a Match Address/Host may apply)
+    local addr
+    addr=$(getent ahostsv4 "$K_SERVER" 2>/dev/null | awk '{ print $1; exit }' || true)
+    [[ "$addr" =~ ^[0-9.]+$ ]] || addr=192.0.2.1
+    out=$(sshd -T -C "user=$SSH_USER,host=$K_SERVER,addr=$addr" 2>/dev/null || true)
     if ! grep -qix "allowtcpforwarding remote" <<< "$out" || ! grep -qix "allowstreamlocalforwarding no" <<< "$out" \
         || ! grep -qixF "authorizedkeysfile $KEYS_FILE" <<< "$out"; then
         rm -f "$SSHD_DROPIN"
@@ -431,8 +510,10 @@ bagher_unauthorize() {
 # listens on the tunnel's port here: the key may open that port, so it must
 # not be another service's.
 bagher_port_free() {
+    local out
     command -v ss >/dev/null 2>&1 || return 0
-    ! ss -Hltnp "sport = :$K_PORT" 2>/dev/null | grep -v 'users:(("sshd' | grep -q .
+    out=$(ss -Hltnp "sport = :$K_PORT" 2>/dev/null || true)
+    [[ -z "$(grep -vE 'users:\(\("sshd(-session)?",' <<< "$out" || true)" ]]
 }
 
 # reply_code UNIT: what the seller pastes back: sshd's port, the user and
@@ -579,6 +660,10 @@ unit_exec() {
 # unit_guard UNIT: the Backhaul fence's ExecStartPre/ExecStopPost ("+": as
 # root outside the sandbox, still in the unit's cgroup).
 unit_guard() {
+    if [[ "$K_ENGINE" == xray-direct && "$K_TRANSPORT" != kcp ]]; then
+        printf 'ExecStartPre=+/bin/bash %s/hashem-customer.sh retarget %s\n' "$BIN_DIR" "$1"
+        return 0
+    fi
     [[ "$K_ENGINE" == backhaul ]] || return 0
     printf 'ExecStartPre=+/bin/bash %s/hashem-customer.sh guard %s\nExecStopPost=+/bin/bash %s/hashem-customer.sh unguard %s\n' "$BIN_DIR" "$1" "$BIN_DIR" "$1"
 }
@@ -786,6 +871,7 @@ CapabilityBoundingSet=
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
+    [[ "$K_ENGINE" != xray-direct || "$K_TRANSPORT" == kcp ]] || retarget_timer
     systemctl enable "${unit}.service" >/dev/null 2>&1
     systemctl restart "${unit}.service"
     if [[ "$K_ENGINE" == bagher ]]; then
@@ -837,6 +923,9 @@ cmd_remove() {
     systemctl daemon-reload >/dev/null 2>&1 || true
     (( n > 0 )) || die "no tunnel named $what"
     if ! compgen -G "$UNIT_DIR/hcust-*.service" >/dev/null; then
+        systemctl disable --now "$RETARGET.timer" >/dev/null 2>&1 || true
+        rm -f "$UNIT_DIR/$RETARGET".{service,timer}
+        systemctl daemon-reload >/dev/null 2>&1 || true
         rm -rf "$BIN_DIR"
         rmdir "$CONF_DIR" 2>/dev/null || true
     fi
@@ -870,6 +959,8 @@ case "${1:-}" in
     idfile) [[ $# -eq 2 ]] || die "usage: $0 idfile hsk1.XXXX"; kit_decode "$2"; id_file ;;
     reply) [[ $# -eq 2 ]] || die "usage: $0 reply hsk1.XXXX"; kit_decode "$2"; [[ "$K_ENGINE" == bagher ]] || die "only a Bagher kit has a reply code"; reply_code ;;
     sshdrules) sshd_rules ;;
+    retarget) [[ $# -eq 2 && "$2" =~ ^hcust-[A-Za-z0-9-]{1,80}$ ]] || die "usage: $0 retarget UNIT"; need_root retarget; cmd_retarget "$2" >/dev/null ;;
+    retarget-all) need_root retarget-all; cmd_retarget_all ;;
     authline) [[ $# -eq 2 ]] || die "usage: $0 authline hsk1.XXXX"; kit_decode "$2"; [[ "$K_ENGINE" == bagher ]] || die "not a Bagher kit"; bagher_auth_line "$(unit_name)" ;;
     *) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
