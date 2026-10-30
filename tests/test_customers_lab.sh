@@ -148,8 +148,8 @@ BH=${CUST_LAB_BACKHAUL:-} XR=${CUST_LAB_XRAY:-}
 RUN='^TestCustomersLab$'
 if [[ -x "$BH" && -x "$XR" ]] && command -v openssl >/dev/null 2>&1; then
     RUN='^TestCustomersLab(Engines)?$'
-    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 -subj "/CN=lab.example" \
-        -addext "subjectAltName=DNS:lab.example" -keyout "$TMP/site.key" -out "$TMP/site.crt" >/dev/null 2>&1
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 -subj "/CN=lab.hashem.dev" \
+        -addext "subjectAltName=DNS:lab.hashem.dev" -keyout "$TMP/site.key" -out "$TMP/site.crt" >/dev/null 2>&1
     ip netns exec $HUB python3 "$TMP/site.py" "$TMP/site.crt" "$TMP/site.key" >/dev/null 2>&1 &
 else
     echo "NOTE: CUST_LAB_BACKHAUL and CUST_LAB_XRAY not set: the Backhaul and Xray part is skipped"
