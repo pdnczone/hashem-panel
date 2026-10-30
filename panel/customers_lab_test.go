@@ -120,7 +120,7 @@ func TestCustomersLab(t *testing.T) {
 		}
 		pmMu.Unlock()
 		custDropChain()
-		custTCClear(custIface(), custApplied.police)
+		custTCClear(custIfaces(), custApplied.police)
 		configDir, engineUnitDir, custBinDir, custFrpsSrc, runner, runSystemctl, cfg.Port = oldDir, oldUnit, oldBin, oldSrc, oldRunner, oldSys, oldPort
 		resetCustState()
 	})
@@ -148,8 +148,9 @@ func TestCustomersLab(t *testing.T) {
 	if !running("hsell-1-1.service") {
 		t.Fatalf("the unit did not start: %v", customersView()["error"])
 	}
-	if n := tcFiltersPresent(custIface(), custTCPref, custTCPref6); !noTC && n != 2 {
-		t.Fatalf("tc filters: %d, want 2 (one per direction)", n)
+	// two interfaces (users', foreign server's), each: the user port and the control port
+	if n := labTCFilters(); !noTC && n != 4 {
+		t.Fatalf("tc filters: %d, want 4", n)
 	}
 
 	// 2. the kit, turned into a frpc config by the customer's installer
@@ -265,7 +266,7 @@ func TestCustomersLab(t *testing.T) {
 
 	// 5. no cap: faster; then the volume runs out: cut
 	post(`{"action":"update","id":1,"name":"lab","quota_gb":0.06,"rate_mbit":0}`)
-	if n := tcFiltersPresent(custIface(), custTCPref, custTCPref6); n != 0 {
+	if n := labTCFilters(); n != 0 {
 		t.Errorf("tc filters after the cap was removed: %d", n)
 	}
 	m = xfer(0, 45e6)
@@ -310,7 +311,7 @@ func TestCustomersLab(t *testing.T) {
 	if out, err := runCmdTimeoutOut(5*time.Second, "iptables", "-w", "5", "-S", custChain); err == nil {
 		t.Errorf("the chain survived remove:\n%s", out)
 	}
-	if n := tcFiltersPresent(custIface(), custTCPref, custTCPref6); n != 0 {
+	if n := labTCFilters(); n != 0 {
 		t.Errorf("tc filters survived remove: %d", n)
 	}
 	for _, idx := range police {
@@ -321,4 +322,14 @@ func TestCustomersLab(t *testing.T) {
 	if running("hsell-1-1.service") {
 		t.Error("the unit survived remove")
 	}
+}
+
+func labTCFilters() int {
+	n := 0
+	for _, ifn := range custIfaces() {
+		if c := tcFiltersPresent(ifn, custTCPref, custTCPref6); c > 0 {
+			n += c
+		}
+	}
+	return n
 }

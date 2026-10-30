@@ -46,7 +46,7 @@ func resetCustState() {
 	custs.Lock()
 	custs.loaded, custs.loadErr, custs.f, custs.speed, custs.at, custs.dirty, custs.err = false, "", customersFile{}, nil, time.Time{}, false, ""
 	custs.Unlock()
-	custApplied.ipt, custApplied.tc, custApplied.tcIf, custApplied.tcCheck = "", "", "", time.Time{}
+	custApplied.ipt, custApplied.tc, custApplied.tcIfs, custApplied.tcCheck = "", "", nil, time.Time{}
 	custApplied.police, custApplied.cleaned, custApplied.running, custApplied.swept, custApplied.reserved = nil, false, nil, false, ""
 }
 
@@ -55,7 +55,7 @@ func newCustLab(t *testing.T) *custLab {
 	dir := registryEnv(t)
 	l := &custLab{}
 	oldUnit, oldBin, oldSrc := engineUnitDir, custBinDir, custFrpsSrc
-	oldRun, oldSave, oldIf, oldAlert, oldBusy, oldSys := custRun, custSaveOut, custIface, custAlert, custPortBusy, runSystemctl
+	oldRun, oldSave, oldIf, oldAlert, oldBusy, oldSys := custRun, custSaveOut, custIfaces, custAlert, custPortBusy, runSystemctl
 	oldActive, oldLinked, oldLimRun, oldSysctl := custUnitsActive, custLinked, limitsRun, custReserveSysctl
 	custReserveSysctl = filepath.Join(dir, "reserved")
 	_ = os.WriteFile(custReserveSysctl, []byte("7000-7002\n"), 0o644)
@@ -94,7 +94,7 @@ func newCustLab(t *testing.T) *custLab {
 		defer l.mu.Unlock()
 		return []byte(l.save), nil
 	}
-	custIface = func() string { return "eth0" }
+	custIfaces = func() []string { return []string{"eth0"} }
 	custAlert = func(e custEvent) {
 		l.mu.Lock()
 		l.alerts = append(l.alerts, e)
@@ -112,7 +112,7 @@ func newCustLab(t *testing.T) *custLab {
 	resetCustState()
 	t.Cleanup(func() {
 		engineUnitDir, custBinDir, custFrpsSrc = oldUnit, oldBin, oldSrc
-		custRun, custSaveOut, custIface, custAlert, custPortBusy, runSystemctl = oldRun, oldSave, oldIf, oldAlert, oldBusy, oldSys
+		custRun, custSaveOut, custIfaces, custAlert, custPortBusy, runSystemctl = oldRun, oldSave, oldIf, oldAlert, oldBusy, oldSys
 		custUnitsActive, custLinked, limitsRun, custReserveSysctl = oldActive, oldLinked, oldLimRun, oldSysctl
 		resetCustState()
 	})
@@ -236,7 +236,8 @@ func TestCustomersLifecycle(t *testing.T) {
 	idxOut, idxIn := fmt.Sprint(custPoliceIndex(1, true)), fmt.Sprint(custPoliceIndex(1, false))
 	for _, want := range []string{
 		"tc actions replace action police rate 20000kbit burst 1250000 mtu 65535 conform-exceed drop/pass index " + idxOut,
-		"tc filter add dev eth0 egress pref 4919 protocol ip u32 match ip sport 8443 0xffff action police index " + idxOut,
+		// to the users: policed as it enters from the customer's frpc (the control port)
+		"tc filter add dev eth0 ingress pref 4919 protocol ip u32 match ip dport 30001 0xffff action police index " + idxOut,
 		"tc filter add dev eth0 ingress pref 4919 protocol ip u32 match ip dport 443 0xffff action police index " + idxIn,
 	} {
 		if !strings.Contains(log, want) {
@@ -600,7 +601,7 @@ COMMIT
 	// no cap: no tc commands; two customers: separate actions
 	list[0].RateMbit = 10
 	list = append(list, customer{ID: 3, RateMbit: 5, Links: []customerLink{{ID: 1, Ports: []int{80}}, {ID: 2, Ports: []int{81}}}})
-	cmds := custTCArgs("eth0", list)
+	cmds := custTCArgs([]string{"eth0"}, list)
 	if got := custTCPolice(cmds); len(got) != 4 || custTCFilters(cmds) != 6 {
 		t.Errorf("tc: police %v, %d filters\n%v", got, custTCFilters(cmds), cmds)
 	}
