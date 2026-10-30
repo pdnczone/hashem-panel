@@ -82,6 +82,29 @@ a manual setup.
 
 The customer's service must listen on the same ports on the foreign server.
 
+## Inside GRE
+
+An FRP or Backhaul link can run inside a plain GRE tunnel: tick **Inside a
+GRE tunnel** and give the foreign server's public IPv4 address (or a domain
+that points to it; it is resolved and pinned when you save). The panel
+makes the GRE interface on your server (`hcg<customer>x<link>`, a /30 from
+10.231.0.0/16, MTU 1380) and the kit (version 3) tells the installer to make
+the other end; the customer's tunnel then dials your inner address. The
+control port still answers on your public address too.
+
+- Over GRE your server takes only the link's control port (and ping): not
+  the panel, SSH or another customer's port. IPv6 is off on the interface
+  and nothing is forwarded from or to it. The installer fences the
+  customer's end the same way (only replies to its own connections).
+- One GRE link per foreign server: a second plain GRE between the same two
+  addresses is refused by the kernel on both ends.
+- Billing and the speed cap work as for any link. Port 2048 cannot be sold
+  (the cap's filters would read GRE packets as that port).
+- A customer who runs Hashem on the foreign server uses the installer too:
+  its units sit next to the customer's own Hashem tunnel without touching
+  it. (A Hashem setup bundle would replace that tunnel, and Hashem's frpc
+  runs with `tcpMux` off by default, which a sold link does not accept.)
+
 ## The status page
 
 Every customer has a private page, `http://<your server>:<panel port>/_hs/<token>`,

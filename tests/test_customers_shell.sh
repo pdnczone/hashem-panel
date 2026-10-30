@@ -11,7 +11,7 @@ fail=0
 F() { echo "FAIL: $*"; fail=1; }
 
 mkdir -p "$T/bin" "$T/sd" "$T/conf" "$T/lib"
-for c in systemctl journalctl pkill iptables ip6tables tc; do
+for c in systemctl journalctl pkill iptables ip6tables tc ip; do
     printf '#!/bin/sh\necho "%s $*" >> %s/calls.log\n' "$c" "$T" > "$T/bin/$c"
     chmod +x "$T/bin/$c"
 done
@@ -306,6 +306,68 @@ rm -f "$T/bin/ss"
 bash "$SH" remove all >/dev/null 2>&1 || true
 unset HASHEM_SSH_DIR
 
+# GRE kits (version 3): the tunnel dials the seller's inner address inside a
+# GRE unit of its own, fenced; remove takes both away
+GK=$'v=3\nengine=frp\nname=hsell-6-1\nserver=203.0.113.7\nport=31600\ntransport=tcp\ntoken=GbCdEfGhIjKlMnOpQrStUvWxYz012345\nudp=0\nports=443\ngpub=203.0.113.7\ngin=10.231.4.9\ngout=10.231.4.10\n'
+out=$(bash "$SH" config "$(mkkit "$GK")" 2>&1) || F "GRE config: $out"
+grep -qF 'serverAddr = "10.231.4.9"' <<< "$out" || F "GRE frpc does not dial the inner address: $out"
+GB=${GK/engine=frp/engine=backhaul}; GB=${GB/name=hsell-6-1/name=hsell-6-2}; GB=${GB/token=G/token=H}
+out=$(bash "$SH" config "$(mkkit "$GB")" 2>&1) || F "GRE backhaul config: $out"
+grep -qF 'remote_addr = "10.231.4.9:31600"' <<< "$out" || F "GRE backhaul does not dial the inner address: $out"
+bad "GRE to a private address" "${GK/gpub=203.0.113.7/gpub=192.168.1.1}"
+bad "GRE to a name" "${GK/gpub=203.0.113.7/gpub=example.com}"
+bad "GRE inner outside the pool" "${GK//10.231.4./10.0.4.}"
+bad "GRE inner not one /30" "${GK/gout=10.231.4.10/gout=10.231.4.14}"
+bad "GRE inner on the network address" "${GK/gin=10.231.4.9/gin=10.231.4.8}"
+bad "GRE inner octet 300" "${GK/gin=10.231.4.9/gin=10.231.300.9}"
+bad "GRE on a version 2 kit" "${GK/v=3/v=2}"
+XG=${XR/v=2/v=3}
+bad "GRE around Xray" "${XG}gpub=203.0.113.7"$'\ngin=10.231.4.9\ngout=10.231.4.10\n'
+bad "a version 3 kit without GRE" "${BH/v=2/v=3}"
+: > "$T/calls.log"
+GU="hcust-203-0-113-7-$(h6 203.0.113.7)-6-1"
+GIF="hcg$(printf '%s' "$GU" | sha256sum | cut -c1-8)"
+out=$(bash "$SH" install "$(mkkit "$GK")" --yes 2>&1) || F "GRE install: $out"
+grep -qF "Requires=hcustgre-${GU#hcust-}.service" "$T/sd/$GU.service" || F "the tunnel does not require its GRE unit: $(cat "$T/sd/$GU.service")"
+grep -qF "ExecStart=/bin/bash $T/lib/hc/hashem-customer.sh gre-up $GU" "$T/sd/hcustgre-${GU#hcust-}.service" || F "GRE unit: $(cat "$T/sd/hcustgre-${GU#hcust-}.service" 2>&1)"
+grep -qx "gin=10.231.4.9" "$T/conf/$GU.id" || F "the id file lacks the GRE"
+grep -q "systemctl restart hcustgre-${GU#hcust-}.service" "$T/calls.log" || F "the GRE unit was not started"
+# gre-up: the interface, its fence before it comes up, IPv6 dropped
+: > "$T/calls.log"
+out=$(bash "$SH" gre-up "$GU" 2>&1) || F "gre-up: $out"
+for want in "ip link add $GIF type gre remote 203.0.113.7 ttl 255" "-A HG.* -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN" \
+            "-A HG.* -j DROP" "iptables -w 5 -I INPUT -i $GIF -j HG" "iptables -w 5 -I FORWARD -i $GIF -j DROP" \
+            "iptables -w 5 -I FORWARD -o $GIF -j DROP" "ip6tables -w 5 -I INPUT -i $GIF -j DROP" "ip addr add 10.231.4.10/30 dev $GIF"; do
+    grep -qE -- "$want" "$T/calls.log" || F "gre-up lacks: $want"
+done
+[[ $(grep -n "ip link set dev $GIF mtu 1380 up" "$T/calls.log" | cut -d: -f1) -gt $(grep -n -- "-A HG.* -j DROP" "$T/calls.log" | cut -d: -f1) ]] || F "the GRE came up before its fence"
+# the fence follows the id file only: a tampered one is refused
+cp "$T/conf/$GU.id" "$T/id.bak"
+sed -i 's/^gpub=.*/gpub=10.0.0.1/' "$T/conf/$GU.id"
+bash "$SH" gre-up "$GU" >/dev/null 2>&1 && F "gre-up took a private GRE address from the id file"
+cp "$T/id.bak" "$T/conf/$GU.id"
+# a Backhaul tunnel inside GRE is fenced to the inner address only
+out=$(bash "$SH" install "$(mkkit "$GB")" --yes 2>&1) || F "GRE backhaul install: $out"
+GBU="hcust-203-0-113-7-$(h6 203.0.113.7)-6-2"
+: > "$T/calls.log"
+out=$(bash "$SH" guard "$GBU" 2>&1) || F "GRE guard: $out"
+grep -q -- "-d 10.231.4.9 -p tcp --dport 31600 -j RETURN" "$T/calls.log" || F "the fence does not allow the inner address"
+grep -q -- "-d 203.0.113.7 -p tcp --dport 31600" "$T/calls.log" && F "the fence of a GRE tunnel allows the public address"
+# the same link out of GRE: its GRE unit goes
+: > "$T/calls.log"
+NG=${GK/v=3/v=1}; NG=${NG%%gpub=*}
+out=$(bash "$SH" install "$(mkkit "$NG")" --yes 2>&1) || F "reinstall without GRE: $out"
+[[ ! -e "$T/sd/hcustgre-${GU#hcust-}.service" ]] || F "the GRE unit survived a kit without GRE"
+grep -q "ip link del dev $GIF" "$T/calls.log" || F "the GRE interface survived a kit without GRE"
+grep -qF 'serverAddr = "203.0.113.7"' "$T/conf/$GU.toml" || F "the tunnel still dials the inner address"
+out=$(bash "$SH" install "$(mkkit "$GK")" --yes 2>&1) || F "GRE reinstall: $out"
+: > "$T/calls.log"
+out=$(bash "$SH" remove all 2>&1) || F "remove all: $out"
+[[ -z "$(ls "$T/sd" | grep hcustgre)" ]] || F "remove left a GRE unit: $(ls "$T/sd")"
+grep -q "ip link del dev $GIF" "$T/calls.log" || F "remove left the GRE interface"
+grep -q "iptables -w 5 -X HG" "$T/calls.log" || F "remove left the GRE fence"
+mkdir -p "$T/lib/hc"; printf '#!/bin/sh\n[ "$1" = "-v" ] && echo 0.71.0\n' > "$T/lib/hc/frpc"; chmod +x "$T/lib/hc/frpc"
+
 # hashem.sh customers_teardown
 : > "$T/calls.log"
 mkdir -p "$T/sd2"
@@ -313,7 +375,8 @@ touch "$T/sd2/hsell-1-1.service" "$T/sd2/hsell-12-3.service" "$T/sd2/frps-2.serv
 awk '/^customers_teardown\(\) \{/,/^}/' "$ROOT/hashem.sh" > "$T/fn.sh"
 [[ -s "$T/fn.sh" ]] || F "customers_teardown not found in hashem.sh"
 (
-    export HASHEM_SYSTEMD_DIR="$T/sd2" PANEL_CONFIG_DIR="$T/panel"
+    mkdir -p "$T/net/hcg12x3" "$T/net/eth0"
+    export HASHEM_SYSTEMD_DIR="$T/sd2" PANEL_CONFIG_DIR="$T/panel" HASHEM_SYSFS_NET="$T/net"
     # shellcheck disable=SC1091
     source "$T/fn.sh"
     # never the real /usr/local/lib in a test
@@ -325,6 +388,11 @@ grep -q "systemctl disable --now hsell-12-3.service" "$T/calls.log" || F "teardo
 grep -q "frps-2" "$T/calls.log" && F "teardown touched the seller's own frps-2"
 grep -q "iptables -w 5 -D INPUT -j HASHEM_CUST" "$T/calls.log" || F "teardown: chain hook not removed"
 grep -q "iptables -w 5 -X HASHEM_CUST" "$T/calls.log" || F "teardown: chain not deleted"
+grep -q "iptables -w 5 -D FORWARD -j HASHEM_CUST_GREF" "$T/calls.log" || F "teardown: GRE forward fence not unhooked"
+grep -q "iptables -w 5 -X HASHEM_CUST_GRE$" "$T/calls.log" || F "teardown: GRE fence chain not deleted"
+grep -q "ip6tables -w 5 -D INPUT -i hcg+ -j DROP" "$T/calls.log" || F "teardown: GRE IPv6 drop not removed"
+grep -q "ip link del dev hcg12x3" "$T/calls.log" || F "teardown: GRE interface not removed"
+grep -q "ip link del dev eth0" "$T/calls.log" && F "teardown removed an interface that is not a GRE link's"
 grep -q "tc filter del dev lo egress pref 4919" "$T/calls.log" || F "teardown: tc filters not removed"
 grep -q "tc actions del action police index 1213399042" "$T/calls.log" || F "teardown: the customer cap not removed"
 grep -q "index 5\$" "$T/calls.log" && grep -q "actions del action police index 5$" "$T/calls.log" && F "teardown removed someone else's police action"

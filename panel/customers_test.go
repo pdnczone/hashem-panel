@@ -25,6 +25,7 @@ type custLab struct {
 	save    string   // what iptables-save prints
 	failRun func(cmd string) bool
 	alerts  []custEvent
+	greIfs  []string // the hcg* interfaces "in the kernel"
 }
 
 func (l *custLab) log() string {
@@ -51,6 +52,7 @@ func resetCustState() {
 	custs.Unlock()
 	custApplied.ipt, custApplied.tc, custApplied.tcIfs, custApplied.tcCheck = "", "", nil, time.Time{}
 	custApplied.police, custApplied.cleaned, custApplied.running, custApplied.swept, custApplied.reserved = nil, false, nil, false, ""
+	custApplied.gre, custApplied.greCheck = "", time.Time{}
 }
 
 func newCustLab(t *testing.T) *custLab {
@@ -61,6 +63,14 @@ func newCustLab(t *testing.T) *custLab {
 	oldUnit, oldBin, oldSrc, oldBH, oldXray := engineUnitDir, custBinDir, custFrpsSrc, custBackhaulSrc, custXraySrc
 	oldRun, oldSave, oldIf, oldAlert, oldBusy, oldSys := custRun, custSaveOut, custIfaces, custAlert, custPortBusy, runSystemctl
 	oldActive, oldLinked, oldLimRun, oldSysctl := custUnitsActive, custLinked, limitsRun, custReserveSysctl
+	oldGREIfs, oldGRE6, oldLocal := custGREIfacesNow, custGRENoIPv6, custLocalNets
+	custGREIfacesNow = func() []string {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return append([]string(nil), l.greIfs...)
+	}
+	custGRENoIPv6 = func(string) {}
+	custLocalNets = func() []ip4net { return []ip4net{netip4("10.231.0.0", 24), netip4("192.0.2.0", 24)} }
 	custReserveSysctl = filepath.Join(dir, "reserved")
 	_ = os.WriteFile(custReserveSysctl, []byte("7000-7002\n"), 0o644)
 	limitsRun = func(name string, args ...string) ([]byte, error) { return nil, nil } // tc filter show
@@ -84,7 +94,7 @@ func newCustLab(t *testing.T) *custLab {
 		if fail != nil && fail(cmd) {
 			return []byte("boom"), fmt.Errorf("exit 1")
 		}
-		if name == "iptables-restore" {
+		if name == "iptables-restore" && strings.HasSuffix(args[len(args)-1], "customers.v4") {
 			// a rebuilt chain counts from zero (args[len-1] is the rules file)
 			data, _ := os.ReadFile(args[len(args)-1])
 			_ = os.WriteFile(filepath.Join(configDir, "customers.v4"), data, 0o600)
@@ -122,6 +132,7 @@ func newCustLab(t *testing.T) *custLab {
 		engineUnitDir, custBinDir, custFrpsSrc, custBackhaulSrc, custXraySrc = oldUnit, oldBin, oldSrc, oldBH, oldXray
 		custRun, custSaveOut, custIfaces, custAlert, custPortBusy, runSystemctl = oldRun, oldSave, oldIf, oldAlert, oldBusy, oldSys
 		custUnitsActive, custLinked, limitsRun, custReserveSysctl = oldActive, oldLinked, oldLimRun, oldSysctl
+		custGREIfacesNow, custGRENoIPv6, custLocalNets = oldGREIfs, oldGRE6, oldLocal
 		resetCustState()
 	})
 	return l

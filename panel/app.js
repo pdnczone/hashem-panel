@@ -11258,7 +11258,9 @@ const CUST_ENGINES = {
 const CUST_TR_LABEL = { tcp: 'TCP', websocket: 'WebSocket', kcp: 'KCP', quic: 'QUIC', tcpmux: 'TCP mux', ws: 'WS', wsmux: 'WS mux',
   wss: 'WSS', wssmux: 'WSS mux', reality: 'Reality', xhttp: 'XHTTP + Reality', grpc: 'gRPC + Reality' };
 function custTrLabel(engine, t) { return (engine === 'xray' || engine === 'xray-direct') && t === 'kcp' ? 'mKCP (UDP)' : t === 'ssh' ? 'SSH' : (CUST_TR_LABEL[t] || t); }
-function custEngLabel(l) { const e = CUST_ENGINES[l.engine || 'frp']; return (e ? tr('', e.label) : l.engine) + ' · ' + custTrLabel(l.engine || 'frp', l.transport); }
+function custEngLabel(l) { const e = CUST_ENGINES[l.engine || 'frp']; return (e ? tr('', e.label) : l.engine) + ' · ' + custTrLabel(l.engine || 'frp', l.transport) + (l.gre ? ' · GRE' : ''); }
+// GRE wraps the links the foreign server dials in (as customers.go)
+const custGreOK = eng => eng === 'frp' || eng === 'backhaul';
 function custLinkDot(l, c) {
   if (l.await_reply) return ['var(--wr)', tr('', 'Waiting for the customer\'s reply code')];
   if (c.cut || !l.active) return ['var(--mu)', tr('', 'Stopped')];
@@ -11470,7 +11472,11 @@ function custEngineSync(p, engineChanged) {
   if (engineChanged) trSel.innerHTML = custTrOptions(eng, '');
   const t = trSel.value;
   $(p + 'SniBox').classList.toggle('hidden', !((eng === 'xray' || eng === 'xray-direct') && t !== 'kcp'));
-  $(p + 'RemoteBox').classList.toggle('hidden', !(CUST_ENGINES[eng] || {}).dials);
+  const greOK = custGreOK(eng), gre = $(p + 'Gre');
+  $(p + 'GreBox').classList.toggle('hidden', !greOK);
+  if (!greOK) gre.checked = false;
+  $(p + 'RemoteBox').classList.toggle('hidden', !((CUST_ENGINES[eng] || {}).dials || gre.checked));
+  $(p + 'RemoteHint').textContent = gre.checked ? tr('', 'The other end of the GRE tunnel: its public IPv4 address (or a domain that points to it).') : tr('', 'This server connects to it: its IPv4 address or a domain.');
   $(p + 'CtrlLbl').textContent = eng === 'xray-direct' ? tr('', 'Port on the foreign server') : tr('', 'Control port');
   const udp = $(p + 'Udp'), noUdp = eng === 'backhaul' && t !== 'tcp';
   udp.disabled = noUdp;
@@ -11493,15 +11499,20 @@ function custLinkFields(p, l) {
       <div class="xr-field"><label class="qs-label" for="${p}Ctrl" id="${p}CtrlLbl">${esc(eng === 'xray-direct' ? tr('', 'Port on the foreign server') : tr('', 'Control port'))}</label><input class="hashem-input lm-num" id="${p}Ctrl" type="number" min="1" max="65535" placeholder="${esc(tr('', 'Automatic'))}" value="${l.ctrl_port || ''}"></div>
       <div class="xr-field${(eng === 'xray' || eng === 'xray-direct') && l.transport !== 'kcp' ? '' : ' hidden'}" id="${p}SniBox"><label class="qs-label" for="${p}Sni">${esc(tr('', 'Reality SNI'))}</label><input class="hashem-input" id="${p}Sni" maxlength="253" placeholder="${esc(tr('', 'Automatic'))}" value="${esc(l.sni || '')}"></div>
     </div>
-    <div class="xr-fields${(CUST_ENGINES[eng] || {}).dials ? '' : ' hidden'}" id="${p}RemoteBox">
+    <div class="${custGreOK(eng) ? '' : 'hidden'}" id="${p}GreBox">
+      <label class="xr-check"><input type="checkbox" id="${p}Gre"${l.gre ? ' checked' : ''} onchange="custEngineSync('${p}', false)"> ${esc(tr('', 'Inside a GRE tunnel'))}</label>
+      <div class="qs-hint">${esc(tr('', 'The foreign server reaches the control port through GRE; over GRE this server takes nothing else.'))}</div>
+    </div>
+    <div class="xr-fields${(CUST_ENGINES[eng] || {}).dials || l.gre ? '' : ' hidden'}" id="${p}RemoteBox">
       <div class="xr-field"><label class="qs-label" for="${p}Remote">${esc(tr('', 'Foreign server address'))}</label><input class="hashem-input lm-num" id="${p}Remote" maxlength="253" placeholder="203.0.113.5" value="${esc(l.remote || '')}">
-      <div class="qs-hint">${esc(tr('', 'This server connects to it: its IPv4 address or a domain.'))}</div></div>
+      <div class="qs-hint" id="${p}RemoteHint">${esc(l.gre ? tr('', 'The other end of the GRE tunnel: its public IPv4 address (or a domain that points to it).') : tr('', 'This server connects to it: its IPv4 address or a domain.'))}</div></div>
     </div>
     <label class="xr-check"><input type="checkbox" id="${p}Udp"${l.udp && !noUdp ? ' checked' : ''}${noUdp ? ' disabled' : ''}> ${esc(tr('', 'UDP too (games, calls, QUIC)'))}</label>
     <div class="qs-hint${noUdp ? '' : ' hidden'}" id="${p}UdpHint">${esc(tr('', 'Backhaul carries UDP on the TCP transport only.'))}</div>`;
 }
 const custLinkRead = p => ({ name: $(p + 'Name').value, ports: $(p + 'Ports').value, engine: $(p + 'Eng').value, transport: $(p + 'Tr').value,
-  sni: $(p + 'Sni').value.trim(), remote: $(p + 'Remote').value.trim(), ctrl_port: parseInt($(p + 'Ctrl').value, 10) || 0, udp: $(p + 'Udp').checked });
+  sni: $(p + 'Sni').value.trim(), remote: $(p + 'Remote').value.trim(), ctrl_port: parseInt($(p + 'Ctrl').value, 10) || 0, udp: $(p + 'Udp').checked,
+  gre: custGreOK($(p + 'Eng').value) && $(p + 'Gre').checked });
 
 async function custLinkRemove(id, lid) {
   const c = custFind(id);

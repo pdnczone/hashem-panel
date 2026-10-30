@@ -3295,7 +3295,23 @@ customers_teardown() {
         done
         iptables -w 5 -F HASHEM_CUST 2>/dev/null || true
         iptables -w 5 -X HASHEM_CUST 2>/dev/null || true
+        # GRE-wrapped links: their fence (INPUT, FORWARD)
+        iptables -w 5 -D INPUT -j HASHEM_CUST_GRE 2>/dev/null || true
+        iptables -w 5 -D FORWARD -j HASHEM_CUST_GREF 2>/dev/null || true
+        for p in HASHEM_CUST_GRE HASHEM_CUST_GREF; do
+            iptables -w 5 -F "$p" 2>/dev/null || true
+            iptables -w 5 -X "$p" 2>/dev/null || true
+        done
     fi
+    if command -v ip6tables >/dev/null 2>&1; then
+        ip6tables -w 5 -D INPUT -i hcg+ -j DROP 2>/dev/null || true
+        ip6tables -w 5 -D FORWARD -i hcg+ -j DROP 2>/dev/null || true
+        ip6tables -w 5 -D FORWARD -o hcg+ -j DROP 2>/dev/null || true
+    fi
+    for d in "${HASHEM_SYSFS_NET:-/sys/class/net}"/hcg[0-9]*x[0-9]*; do
+        [[ -e "$d" ]] || continue
+        ip link del dev "${d##*/}" 2>/dev/null || true
+    done
     command -v tc >/dev/null 2>&1 || return 0
     for d in /sys/class/net/*; do
         n=${d##*/}
