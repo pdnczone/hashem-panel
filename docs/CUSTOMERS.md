@@ -126,14 +126,17 @@ control port still answers on your public address too.
 - **History.** Each customer's card has a History button: when it was
   created, plan changes, renewals, cuts (and why), resumes, usage resets,
   reminders and foreign servers added or removed (the last 100), and the
-  usage of the periods that ended (the last 24).
+  usage of the periods that ended (the last 24). Name, note and address
+  changes are not recorded. A plan that starts inside a reminder's window
+  (a 2-day plan) does not get that reminder; after an upgrade, customers
+  already within 3 days of their end get one reminder at once.
 - **Plan templates.** Save the plans you sell often (name, days, volume,
   speed) and pick one in the new-customer wizard or when renewing.
 - **Renew several.** Tick customers (those ending within 7 days or ended
   are ticked already) and renew them all by N days at once; if one cannot
   be renewed, none is.
 - **Export CSV.** Every customer in one file (plan, status, days left,
-  usage, foreign servers and ports), for a spreadsheet. Cells that would
+  usage, foreign servers and ports, dates in UTC), for a spreadsheet. Cells that would
   start a formula get a leading `'`.
 
 ## The status page

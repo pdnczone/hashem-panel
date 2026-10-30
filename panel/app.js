@@ -11461,28 +11461,40 @@ function openCustRenew(id) {
 }
 // the customer's history (newest first) and the periods that ended
 const CUST_HIST_KIND = { created: 'Created', plan: 'Plan', renew: 'Renewed', cut: 'Cut', resume: 'Resumed', reset: 'Usage reset', reminder: 'Reminder', link: 'Foreign server' };
-function openCustHistory(id) {
+async function openCustHistory(id) {
   const c = custFind(id);
   if (!c) return;
-  const h = (c.history || []).slice().reverse();
+  let d;
+  try { d = await api('/api/customers/history?id=' + id); } catch (e) { toastErr(e.message); return; }
+  const h = (d.history || []).slice().reverse();
   const rows = h.length ? h.map(e => `<tr><td class="lm-num">${esc(custDate(e.at))}</td><td>${esc(tr('', CUST_HIST_KIND[e.kind] || e.kind))}</td><td>${esc(e.text)}</td></tr>`).join('')
     : `<tr><td colspan="3">${esc(tr('', 'Nothing yet'))}</td></tr>`;
-  const per = (c.periods || []).slice().reverse();
+  const per = (d.periods || []).slice().reverse();
   const ptab = per.length ? `<h4 class="u-mt-16">${esc(tr('', 'Ended periods'))}</h4><div class="table-scroll"><table class="data-table"><thead><tr><th>${esc(tr('', 'From'))}</th><th>${esc(tr('', 'To'))}</th><th>${esc(tr('', 'Used'))}</th></tr></thead><tbody>` +
     per.map(x => `<tr><td class="lm-num">${esc(custDate(x.start))}</td><td class="lm-num">${esc(custDate(x.end))}</td><td class="lm-num">${esc(fmtGB(x.used) + (x.quota_gb > 0 ? ' / ' + fmtGB(x.quota_gb * 1e9) : ''))}</td></tr>`).join('') + '</tbody></table></div>' : '';
   custModal(tr('', 'History') + ' — ' + c.name, `<div class="table-scroll"><table class="data-table"><thead><tr><th>${esc(tr('', 'When'))}</th><th>${esc(tr('', 'What'))}</th><th>${esc(tr('', 'Details'))}</th></tr></thead><tbody>${rows}</tbody></table></div>${ptab}
     <div class="qs-hint">${esc(tr('', 'The last 100 events and 24 periods are kept.'))}</div>`, '', null);
 }
 // saved plans: the list (remove) and a form for a new one
-function openCustTemplates() {
+function openCustTemplates(keepName) {
   if (!isProLicensed('customers')) { openBagherLicModal('customers'); return; }
   const t = (_cust && _cust.templates) || [];
   const list = t.length ? '<div class="lm-list">' + t.map(x => `<div class="cs-tpl"><b>${esc(x.name)}</b> <span class="lm-num">${esc(custPlanShort(x))}</span>
       <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30 u-c-er" onclick="custTplRemove(${x.id})">${esc(tr('', 'Remove'))}</button></div>`).join('') + '</div>'
     : `<div class="qs-hint">${esc(tr('', 'No templates yet: save the plans you sell often.'))}</div>`;
   const html = list + `<h4 class="u-mt-16">${esc(tr('', 'New template'))}</h4>
-    <div class="xr-field"><label class="qs-label" for="ctName">${esc(tr('', 'Name'))}</label><input class="hashem-input" id="ctName" maxlength="40" placeholder="${esc(tr('', 'e.g. Gold, 30 days'))}"></div>` +
-    custPlanFields({ days: 30 }, 'ct').replace(custTplPicker('ct', false), '');
+    <div class="xr-field"><label class="qs-label" for="ctName">${esc(tr('', 'Name'))}</label><input class="hashem-input" id="ctName" maxlength="40" placeholder="${esc(tr('', 'e.g. Gold, 30 days'))}" value="${esc(keepName || '')}"></div>
+    <div class="xr-fields">
+      <div class="xr-field"><label class="qs-label" for="ctDays">${esc(tr('', 'Days'))}</label>
+        <input class="hashem-input" id="ctDays" type="number" min="1" max="3660" step="1" inputmode="numeric" value="30">
+        ${custChips('ctDays', [['30', '30'], ['60', '60'], ['90', '90'], ['365', '365']])}</div>
+      <div class="xr-field"><label class="qs-label" for="ctQuota">${esc(tr('', 'Volume (GB)'))}</label>
+        <input class="hashem-input" id="ctQuota" type="number" min="0" step="any" inputmode="decimal" placeholder="${esc(tr('', 'Unlimited'))}">
+        ${custChips('ctQuota', [['50', '50'], ['100', '100'], ['200', '200'], ['', tr('', 'Unlimited')]])}</div>
+      <div class="xr-field"><label class="qs-label" for="ctRate">${esc(tr('', 'Speed (Mbit/s)'))}</label>
+        <input class="hashem-input" id="ctRate" type="number" min="0" step="any" inputmode="decimal" placeholder="${esc(tr('', 'Unlimited'))}">
+        ${custChips('ctRate', [['20', '20'], ['50', '50'], ['100', '100'], ['', tr('', 'Unlimited')]])}</div>
+    </div>`;
   custModal(tr('', 'Plan templates'), html, tr('', 'Save template'), async () => {
     const days = parseInt($('ctDays').value, 10);
     if (!(days >= 1 && days <= 3660)) throw new Error(tr('', 'Days: 1 to 3660'));
@@ -11493,8 +11505,9 @@ function openCustTemplates() {
 }
 async function custTplRemove(id) {
   try {
+    const keep = $('ctName') ? $('ctName').value : '';
     renderCustomers(await api('/api/customers', { action: 'template-remove', template_id: id }));
-    openCustTemplates();
+    openCustTemplates(keep);
   } catch (e) { toastErr(e.message); }
 }
 // renew several customers at once (all or none)
@@ -11504,7 +11517,7 @@ function openCustBulkRenew() {
   if (!list.length) return;
   const rows = list.map(c => `<label class="xr-check"><input type="checkbox" class="cb-bulk" value="${c.id}"${c.cut === 'expired' || (c.days_left != null && c.days_left <= 7) ? ' checked' : ''}>
       ${esc(c.name)} <small class="lm-num">${esc(c.days_left == null ? tr('', 'No end date') : tr('', 'Days left') + ': ' + c.days_left)}${c.cut ? ' · ' + esc(tr('', 'cut')) : ''}</small></label>`).join('');
-  const html = `<div class="qs-hint">${esc(tr('', 'Customers ending within 7 days or ended are ticked.'))}</div><div class="cs-bulk">${rows}</div>
+  const html = `<div class="qs-hint">${esc(tr('', 'Customers ending within 7 days or ended are ticked. A customer with no end date gets one when renewed.'))}</div><div class="cs-bulk">${rows}</div>
     ${custTplPicker('cb', true)}<div class="xr-field"><label class="qs-label" for="cbDays">${esc(tr('', 'Days'))}</label>
       <input class="hashem-input" id="cbDays" type="number" min="1" max="3660" step="1" inputmode="numeric" value="30">
       ${custChips('cbDays', [['30', '30'], ['60', '60'], ['90', '90'], ['365', '365']])}</div>
