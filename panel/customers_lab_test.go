@@ -470,13 +470,15 @@ func TestCustomersLabEngines(t *testing.T) {
 
 	// the customer's ends, from the kits. Link 1's Backhaul client runs
 	// behind the installer's fence, in a cgroup of its own as under systemd.
+	// ip netns exec mounts its own /sys without the cgroup tree: the
+	// client's shell mounts cgroup2 itself (one hierarchy for the host)
 	fenceCG := ""
-	if _, err := os.Stat("/sys/fs/cgroup/cgroup.controllers"); err == nil {
-		fenceCG = "/sys/fs/cgroup/hcust-lab"
-		if err := os.Mkdir(fenceCG, 0o755); err != nil && !os.IsExist(err) {
-			t.Fatalf("cgroup for the fence: %v", err)
-		}
-		t.Cleanup(func() { _ = os.Remove(fenceCG) })
+	if fs, _ := os.ReadFile("/proc/filesystems"); strings.Contains(string(fs), "cgroup2") {
+		fenceCG = filepath.Join(r.dir, "cg")
+		_ = os.MkdirAll(fenceCG, 0o755)
+		t.Cleanup(func() {
+			_ = exec.Command("ip", "netns", "exec", r.foNS, "sh", "-c", "mount -t cgroup2 none "+fenceCG+" && rmdir "+fenceCG+"/hcust-lab; umount "+fenceCG).Run()
+		})
 	} else {
 		t.Log("no cgroup v2 here: the Backhaul fence part is skipped")
 	}
@@ -495,7 +497,8 @@ func TestCustomersLabEngines(t *testing.T) {
 			}
 			_ = os.WriteFile(filepath.Join(cconf, fenceUnit+".id"), id, 0o600)
 			r.runForeign(name, "env", "HASHEM_CUSTOMER_CONF_DIR="+cconf, "bash", "-c",
-				`echo $$ > `+fenceCG+`/cgroup.procs && bash "$1" guard `+fenceUnit+` && exec "$2" -c "$3"`, "fence", r.installer, bh, p)
+				`mount -t cgroup2 none `+fenceCG+` && mkdir -p `+fenceCG+`/hcust-lab && echo $$ > `+fenceCG+`/hcust-lab/cgroup.procs && `+
+					`bash "$1" guard `+fenceUnit+` && exec "$2" -c "$3"`, "fence", r.installer, bh, p)
 			continue
 		}
 		if lid <= 2 {
@@ -533,7 +536,7 @@ func TestCustomersLabEngines(t *testing.T) {
 	if !r.noTC && (both > 23 || both < 8) {
 		t.Errorf("two links together downloaded at %.1f Mbit/s under one 20 Mbit/s cap", both)
 	}
-	m := r.xfer(9002, 6e6, 0)
+	m := r.xfer(9002, 12e6, 0) // large enough that the 500 ms burst does not show
 	t.Logf("capped upload over Backhaul wssmux: %.1f Mbit/s (cap 20)", m["up_mbit"])
 	if !r.noTC && (m["up_mbit"] > 23 || m["up_mbit"] < 8) {
 		t.Errorf("upload %.1f Mbit/s under a 20 Mbit/s cap", m["up_mbit"])
