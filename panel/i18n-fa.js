@@ -3042,6 +3042,7 @@ window.FA_TEXT = {
 "For a foreign server that already runs Backhaul v0.7.2: run backhaul -c with this file.": "برای سرور خارجی که از قبل Backhaul نسخهٔ v0.7.2 دارد: backhaul -c را با این فایل اجرا کنید.",
 "For a foreign server that already runs Xray-core v26.3.27: run xray run -c with this file.": "برای سرور خارجی که از قبل Xray-core نسخهٔ v26.3.27 دارد: xray run -c را با این فایل اجرا کنید.",
 "Reality SNI": "SNI ریالیتی",
+"Any change to an Xray link (ports, SNI, transport, control port) needs the new kit on the foreign server.": "هر تغییری در لینک Xray (پورت‌ها، SNI، ترنسپورت، پورت کنترل) یعنی کیت تازه باید روی سرور خارج اجرا شود.",
 "Backhaul carries UDP on the TCP transport only.": "Backhaul فقط روی ترنسپورت TCP، UDP را منتقل می‌کند.",
 "Xray reverse": "Xray معکوس",
 "For a foreign server that already runs frpc v{v}: run frpc -c with this file.": "برای سرور خارجی که از قبل frpc نسخهٔ {v} دارد: frpc -c را با این فایل اجرا کنید.",

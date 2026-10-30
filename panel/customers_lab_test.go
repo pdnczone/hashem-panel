@@ -468,10 +468,36 @@ func TestCustomersLabEngines(t *testing.T) {
 		t.Fatalf("tc filters: %d, want 16", n)
 	}
 
-	// the customer's ends, from the kits
+	// the customer's ends, from the kits. Link 1's Backhaul client runs
+	// behind the installer's fence, in a cgroup of its own as under systemd.
+	fenceCG := ""
+	if _, err := os.Stat("/sys/fs/cgroup/cgroup.controllers"); err == nil {
+		fenceCG = "/sys/fs/cgroup/hcust-lab"
+		if err := os.Mkdir(fenceCG, 0o755); err != nil && !os.IsExist(err) {
+			t.Fatalf("cgroup for the fence: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Remove(fenceCG) })
+	} else {
+		t.Log("no cgroup v2 here: the Backhaul fence part is skipped")
+	}
+	cconf := filepath.Join(r.dir, "cconf")
+	_ = os.MkdirAll(cconf, 0o700)
+	const fenceUnit = "hcust-lab-1-1"
 	for lid := 1; lid <= 4; lid++ {
-		_, conf := r.kit(1, lid)
+		kit, conf := r.kit(1, lid)
 		name := fmt.Sprintf("client-%d", lid)
+		if lid == 1 && fenceCG != "" {
+			p := filepath.Join(r.dir, name+".toml")
+			_ = os.WriteFile(p, []byte(conf), 0o600)
+			id, err := exec.Command("bash", r.installer, "idfile", kit).Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = os.WriteFile(filepath.Join(cconf, fenceUnit+".id"), id, 0o600)
+			r.runForeign(name, "env", "HASHEM_CUSTOMER_CONF_DIR="+cconf, "bash", "-c",
+				`echo $$ > `+fenceCG+`/cgroup.procs && bash "$1" guard `+fenceUnit+` && exec "$2" -c "$3"`, "fence", r.installer, bh, p)
+			continue
+		}
 		if lid <= 2 {
 			p := filepath.Join(r.dir, name+".toml")
 			_ = os.WriteFile(p, []byte(conf), 0o600)
@@ -516,6 +542,26 @@ func TestCustomersLabEngines(t *testing.T) {
 	t.Logf("Xray mKCP: down %.1f Mbit/s, up %.1f Mbit/s", m["down_mbit"], m["up_mbit"])
 	r.checkBilled(1, 400000)
 
+	// a seller who adds targets to a Backhaul server: the customer's fence
+	// lets 127.0.0.1 on the link's own port through and rejects the rest
+	if fenceCG != "" {
+		bhConf := custConfPath(1, 1, custEngineBackhaul)
+		data, _ := os.ReadFile(bhConf)
+		evil := strings.Replace(string(data), `"0.0.0.0:9000=127.0.0.1:9000"`,
+			`"0.0.0.0:9000=127.0.0.1:9000", "0.0.0.0:9011=127.0.0.1:9000", "0.0.0.0:9010=127.0.0.1:9004"`, 1)
+		if evil == string(data) {
+			t.Fatalf("cannot find the port line in:\n%s", data)
+		}
+		_ = os.WriteFile(bhConf, []byte(evil), 0o600)
+		_ = runSystemctl("restart", "hsell-1-1.service")
+		r.waitUp(9011, "the allowed extra target (control)", 60*time.Second, "client-1", "hsell-1-1.service")
+		if _, err := r.user(9010, "tcp", "0", "1"); err == nil {
+			t.Errorf("the seller reached 127.0.0.1:9004 on the customer's server past the fence\n%s", r.logs("client-1"))
+		}
+		customersTick(time.Now()) // the panel writes its own config back
+		r.waitUp(9000, "after the panel restored the config", 60*time.Second, "client-1", "hsell-1-1.service")
+	}
+
 	// the Xray link's user cannot reach the seller's own services: a VLESS
 	// client with its UUID asks for the panel's port on the hub's loopback
 	_, conf := r.kit(1, 3)
@@ -527,8 +573,8 @@ func TestCustomersLabEngines(t *testing.T) {
 	for _, ob := range rogue["outbounds"].([]any) {
 		if o := ob.(map[string]any); o["tag"] == "tunnel" {
 			tunnel = o
+			// a plain VLESS client: the same user, Vision and all, minus reverse
 			delete(o["settings"].(map[string]any), "reverse")
-			delete(o["settings"].(map[string]any), "flow")
 		}
 	}
 	rogue["outbounds"] = []any{tunnel}
@@ -552,6 +598,7 @@ sys.stdout.write(repr(d))`
 	}
 	_ = rc.Process.Kill()
 	_ = rc.Wait()
+	t.Logf("the Xray user as a forward proxy: %s", out)
 
 	// cut: every link stops; resume: every link comes back
 	r.post(`{"action":"cut","id":1}`)

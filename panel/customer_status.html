@@ -99,11 +99,11 @@ footer{margin-top:20px;font-size:12px;color:var(--mu);text-align:center}
     en: {brand: "Hashem", days: "Days left", speed: "Speed cap", volume: "Volume used", servers: "Your servers",
       active: "Active", expired: "Plan ended", quota: "Volume used up", manual: "Paused by the seller",
       noEnd: "No end date", until: "until ", unlimited: "Unlimited", of: "of ", noQuota: "no volume limit",
-      now: "now ↓ ", up: "Connected", down: "Not connected", server: "Server ", updated: "Updated ", lang: "فارسی", day: "", mbit: " Mbit/s"},
+      now: "now ↓ ", up: "Connected", down: "Not connected", running: "Running", server: "Server ", updated: "Updated ", lang: "فارسی", day: "", mbit: " Mbit/s"},
     fa: {brand: "هاشم", days: "روزهای باقی‌مانده", speed: "سقف سرعت", volume: "حجم مصرف‌شده", servers: "سرورهای شما",
       active: "فعال", expired: "پلن تمام شده", quota: "حجم تمام شده", manual: "متوقف‌شده توسط فروشنده",
       noEnd: "بدون تاریخ پایان", until: "تا ", unlimited: "نامحدود", of: "از ", noQuota: "بدون محدودیت حجم",
-      now: "اکنون ↓ ", up: "متصل", down: "قطع", server: "سرور ", updated: "به‌روزرسانی ", lang: "English", day: "", mbit: " مگابیت"}
+      now: "اکنون ↓ ", up: "متصل", down: "قطع", running: "در حال اجرا", server: "سرور ", updated: "به‌روزرسانی ", lang: "English", day: "", mbit: " مگابیت"}
   };
   var lang = "en";
   try { lang = localStorage.getItem("hs-lang") || ""; } catch (e) { lang = ""; }
@@ -147,8 +147,8 @@ footer{margin-top:20px;font-size:12px;color:var(--mu);text-align:center}
       var li = document.createElement("li"), a = document.createElement("span"), b = document.createElement("span");
       a.textContent = t.server + num(i + 1, 0);
       b.className = "dot";
-      b.textContent = s === "up" ? t.up : t.down;
-      b.style.setProperty("--c", s === "up" ? "var(--ok)" : "var(--mu)");
+      b.textContent = s === "up" ? t.up : s === "running" ? t.running : t.down;
+      b.style.setProperty("--c", s === "down" ? "var(--mu)" : "var(--ok)");
       li.appendChild(a); li.appendChild(b); ul.appendChild(li);
     });
     $("at").textContent = t.updated + new Date(data.at * 1000).toLocaleTimeString(lang === "fa" ? "fa-IR" : "en-GB");

@@ -11,7 +11,7 @@ fail=0
 F() { echo "FAIL: $*"; fail=1; }
 
 mkdir -p "$T/bin" "$T/sd" "$T/conf" "$T/lib"
-for c in systemctl journalctl pkill iptables tc; do
+for c in systemctl journalctl pkill iptables ip6tables tc; do
     printf '#!/bin/sh\necho "%s $*" >> %s/calls.log\n' "$c" "$T" > "$T/bin/$c"
     chmod +x "$T/bin/$c"
 done
@@ -33,6 +33,7 @@ printf '#!/bin/sh\n[ "$1" = "-v" ] && echo 0.71.0\n' > "$T/lib/hc/frpc"; chmod +
 export PATH="$T/bin:$PATH" HASHEM_SYSTEMD_DIR="$T/sd" HASHEM_CUSTOMER_CONF_DIR="$T/conf" HASHEM_CUSTOMER_BIN_DIR="$T/lib/hc"
 
 SH="$ROOT/tools/hashem-customer.sh"
+h6() { printf '%s' "$1" | sha256sum | cut -c1-6; }
 mkkit() { printf 'hsk1.%s' "$(printf '%s' "$1" | base64 -w0 | tr '+/' '-_' | tr -d '=')"; }
 GOOD=$'v=1\nname=hsell-3-1\nserver=203.0.113.7\nport=31000\ntransport=tcp\ntoken=AbCdEfGhIjKlMnOpQrStUvWxYz012345\nudp=1\nports=443,2083\n'
 KIT=$(mkkit "$GOOD")
@@ -61,7 +62,7 @@ if bash "$SH" config "hsk1.%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%" >/dev/null 2>&1; then
 
 # install: config (0600), unit, started; installing again updates the same unit
 out=$(bash "$SH" install "$KIT" 2>&1) || F "install: $out"
-U=hcust-203-0-113-7-3-1
+U=hcust-203-0-113-7-$(h6 203.0.113.7)-3-1
 [[ -f "$T/sd/$U.service" ]] || F "no unit $U ($(ls "$T/sd"))"
 [[ -f "$T/conf/$U.toml" ]] || F "no config"
 [[ "$(stat -c %a "$T/conf/$U.toml" 2>/dev/null)" == 600 ]] || F "config is not 0600"
@@ -81,8 +82,8 @@ grep -q "serverPort = 31555" "$T/conf/$U.toml" || F "the moved kit did not updat
 # the seller switched the address to a domain: the old tunnel goes too
 KIT3=$(mkkit "${GOOD/server=203.0.113.7/server=iran.example.com}")
 bash "$SH" install "$KIT3" >/dev/null 2>&1 || F "install the kit with a domain"
-[[ "$(ls "$T/sd")" == "hcust-iran-example-com-3-1.service" ]] || F "a new address left the old tunnel: $(ls "$T/sd")"
-U=hcust-iran-example-com-3-1
+U=hcust-iran-example-com-$(h6 iran.example.com)-3-1
+[[ "$(ls "$T/sd")" == "$U.service" ]] || F "a new address left the old tunnel: $(ls "$T/sd")"
 # a damaged download is refused and nothing is left behind
 rm -f "$T/lib/hc/frpc"
 printf 'not frp' > "$T/fake.tgz"
@@ -98,6 +99,20 @@ out=$(bash "$SH" remove "$U" 2>&1) || F "remove: $out ($(ls "$T/sd"))"
 [[ ! -e "$T/lib/hc" ]] || F "the frpc copy survived the last tunnel"
 
 # Backhaul and Xray kits (version 2: the kit names the engine)
+cat > "$T/bin/iptables" <<EOF
+#!/bin/sh
+echo "iptables \$*" >> $T/calls.log
+case "\$*" in
+  *"-m cgroup -h"*) echo "cgroup match options: --path path" ;;
+  *"-S OUTPUT"*) [ -f $T/hook ] && cat $T/hook ;;
+esac
+exit 0
+EOF
+chmod +x "$T/bin/iptables"
+sed 's/iptables/ip6tables/' "$T/bin/iptables" > "$T/bin/ip6tables"; chmod +x "$T/bin/ip6tables"
+printf '#!/bin/sh\necho "203.0.113.7     STREAM 203.0.113.7"\n' > "$T/bin/getent"; chmod +x "$T/bin/getent"
+printf 'nameserver 127.0.0.53\nnameserver 2001:db8::53\n' > "$T/resolv.conf"
+export HASHEM_CUSTOMER_CGROUP=/system.slice/test.service HASHEM_RESOLV_CONF="$T/resolv.conf"
 printf '#!/bin/sh\necho "ESTAB 0 0 10.0.0.2:40000 203.0.113.7:31000"\n' > "$T/bin/ss"; chmod +x "$T/bin/ss"
 mkdir -p "$T/lib/hc"
 for b in backhaul xray; do printf '#!/bin/sh\n' > "$T/lib/hc/$b"; chmod +x "$T/lib/hc/$b"; done
@@ -126,10 +141,46 @@ bad "a bad mKCP password" "${XK/kcppw=d6bc/kcppw=\"d6bc}"
 # install a Backhaul tunnel, then the same link sold as Xray: one tunnel, its new engine
 : > "$T/calls.log"
 out=$(bash "$SH" install "$(mkkit "$BH")" 2>&1) || F "backhaul install: $out"
-U=hcust-203-0-113-7-4-2
+U=hcust-203-0-113-7-$(h6 203.0.113.7)-4-2
 grep -q "ExecStart=$T/lib/hc/backhaul -c $T/conf/$U.toml" "$T/sd/$U.service" || F "backhaul unit: $(cat "$T/sd/$U.service")"
 grep -q "Connected" <<< "$out" || F "backhaul: no success message: $out"
-[[ "$(cat "$T/conf/$U.id")" == "token=AbCdEfGhIjKlMnOpQrStUvWxYz012345" ]] || F "backhaul: no link id file"
+grep -qx "token=AbCdEfGhIjKlMnOpQrStUvWxYz012345" "$T/conf/$U.id" || F "backhaul: no link id file"
+grep -q "^ExecStartPre=+/bin/bash $T/lib/hc/hashem-customer.sh guard $U$" "$T/sd/$U.service" || F "backhaul unit: no fence: $(cat "$T/sd/$U.service")"
+grep -q "^ExecStopPost=+/bin/bash $T/lib/hc/hashem-customer.sh unguard $U$" "$T/sd/$U.service" || F "backhaul unit: the fence is not removed on stop"
+[[ -x "$T/lib/hc/hashem-customer.sh" ]] || F "the installer was not kept for the fence"
+grep -q "skip_optz = true" "$T/conf/$U.toml" || F "backhaul client tunes the server's sysctls"
+# the fence: the seller's control port, 127.0.0.1 on the sold ports, the resolvers; the rest rejected
+: > "$T/calls.log"
+bash "$SH" guard "$U" >/dev/null 2>&1 || F "guard failed: $(cat "$T/calls.log")"
+C="HC$(printf '%s' "$U" | sha256sum | cut -c1-10)"
+for want in "iptables -w 5 -N $C" "iptables -w 5 -A $C -o lo -d 127.0.0.1 -p tcp --dport 443 -j RETURN" \
+    "iptables -w 5 -A $C -o lo -d 127.0.0.1 -p tcp --dport 2083 -j RETURN" "iptables -w 5 -A $C -d 203.0.113.7 -p tcp --dport 31000 -j RETURN" \
+    "iptables -w 5 -A $C -d 127.0.0.53 -p udp --dport 53 -j RETURN" "iptables -w 5 -A $C -j REJECT" \
+    "iptables -w 5 -I OUTPUT 1 -m cgroup --path /system.slice/test.service -j $C"; do
+    grep -qxF -- "$want" "$T/calls.log" || F "guard lacks: $want"
+done
+grep -q -- "-p udp --dport 443" "$T/calls.log" && F "guard let UDP through on a TCP-only tunnel"
+grep -q "^iptables .*2001:db8::53" "$T/calls.log" && F "an IPv6 resolver went into iptables"
+grep -qxF "ip6tables -w 5 -A $C -d 2001:db8::53 -p udp --dport 53 -j RETURN" "$T/calls.log" || F "guard: no IPv6 resolver rule"
+grep -qxF "ip6tables -w 5 -A $C -j REJECT" "$T/calls.log" || F "guard: IPv6 is not fenced"
+grep -q "^ip6tables .*-o lo" "$T/calls.log" && F "guard: IPv6 loopback allowed"
+echo "-A OUTPUT -m cgroup --path /system.slice/test.service -j $C" > "$T/hook"
+: > "$T/calls.log"
+bash "$SH" unguard "$U" >/dev/null 2>&1 || F "unguard failed"
+for want in "iptables -w 5 -D OUTPUT -m cgroup --path /system.slice/test.service -j $C" "iptables -w 5 -F $C" "iptables -w 5 -X $C"; do
+    grep -qxF -- "$want" "$T/calls.log" || F "unguard lacks: $want ($(cat "$T/calls.log"))"
+done
+rm -f "$T/hook"
+if bash "$SH" guard 'hcust-x;reboot' >/dev/null 2>&1; then F "guard took a hostile unit name"; fi
+# no cgroup match: a Backhaul kit is refused before anything changes
+mv "$T/bin/iptables" "$T/bin/iptables.ok"
+printf '#!/bin/sh\nexit 0\n' > "$T/bin/iptables"; chmod +x "$T/bin/iptables"
+BH2=${BH/name=hsell-4-2/name=hsell-4-9}
+BH2=${BH2/token=AbCd/token=QbCd}
+if out=$(bash "$SH" install "$(mkkit "$BH2")" 2>&1); then F "a Backhaul kit installed without the fence: $out"; fi
+grep -q "cannot fence" <<< "$out" || F "no fence message: $out"
+ls "$T/sd" | grep -q -- "-4-9.service" && F "a refused Backhaul install left a unit"
+mv -f "$T/bin/iptables.ok" "$T/bin/iptables"
 XS=${XR/name=hsell-4-3/name=hsell-4-2}
 XS=${XS/token=ZbCd/token=AbCd}
 bash "$SH" install "$(mkkit "$XS")" >/dev/null 2>&1 || F "the same link as xray"
