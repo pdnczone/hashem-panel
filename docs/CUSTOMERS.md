@@ -99,9 +99,9 @@ control port still answers on your public address too.
   10 s), so no ACCEPT rule added later can open it; if it cannot be put in
   place the GRE goes down. IPv6 is off on the interface, reverse-path
   filtering is strict and nothing is forwarded from or to it. The installer
-  fences the customer's end the same way (only the tunnel's replies and
-  ICMP from your inner address, and after conntrack only flows the
-  customer's server opened), checks it every minute, and refuses a /30
+  fences the customer's end the same way (only the tunnel's replies from
+  your inner address, and after conntrack only flows the customer's
+  server opened: your ping over GRE gets no answer), checks it every minute, and refuses a /30
   that overlaps the customer's own networks.
 - One GRE link per foreign server, and none to a server your own Hashem
   tunnels already use GRE with: a second plain GRE between the same two

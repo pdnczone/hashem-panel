@@ -102,8 +102,7 @@ func TestCustomersGRE(t *testing.T) {
 		"ip addr add " + fi + "/30 dev hcg1x1",
 		fmt.Sprintf("ip link set dev hcg1x1 mtu %d up", custGREMTU),
 		"ip link add hcg1x2 type gre remote 198.51.100.31 local 203.0.113.1 ttl 255",
-		"iptables -w 5 -t raw -I PREROUTING 1 -j HASHEM_CUST_GRE",
-		"iptables -w 5 -t filter -I FORWARD 1 -j HASHEM_CUST_GREF",
+		"customers-gre-hook-raw.v4", "customers-gre-hook-filter.v4",
 		"ip6tables -w 5 -I INPUT 1 -i hcg+ -j DROP",
 	} {
 		if !strings.Contains(log, want) {
@@ -133,8 +132,11 @@ func TestCustomersGRE(t *testing.T) {
 	lab.mu.Lock()
 	lab.greMoved = false
 	lab.mu.Unlock()
-	if l := lab.log(); !strings.Contains(l, "iptables -w 5 -t raw -I PREROUTING 1 -j HASHEM_CUST_GRE\niptables -w 5 -t raw -S PREROUTING\niptables -w 5 -t raw -D PREROUTING 2") {
+	if l := lab.log(); !strings.Contains(l, "customers-gre-hook-raw.v4") {
 		t.Errorf("a hook under another rule was not put back first:\n%s", l)
+	}
+	if h, _ := os.ReadFile(filepath.Join(configDir, "customers-gre-hook-raw.v4")); string(h) != "*raw\n-D PREROUTING -j HASHEM_CUST_GRE\n-I PREROUTING 1 -j HASHEM_CUST_GRE\nCOMMIT\n" {
+		t.Errorf("the hook is not moved in one commit:\n%s", h)
 	}
 	// the fence does not load: the interfaces go down
 	lab.mu.Lock()
