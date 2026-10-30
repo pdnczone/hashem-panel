@@ -172,7 +172,8 @@ grep -E "customers_lab_test.go|^(--- |ok|FAIL|PASS)" "$TMP/lab.log"
 if [[ $rc -ne 0 ]]; then
     tail -60 "$TMP/lab.log"
     # the tail of the log in one annotation (the job log may not be readable)
-    [[ -n ${GITHUB_ACTIONS:-} ]] && echo "::error title=customers lab::$(grep -vE '^=== (RUN|PAUSE|CONT)' "$TMP/lab.log" | tail -45 | cut -c1-300 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+    [[ -n ${GITHUB_ACTIONS:-} ]] && echo "::error title=customers lab::$(grep -E '_test\.go:[0-9]+:|^ *--- |^(FAIL|ok|panic)|goroutine ' "$TMP/lab.log" | grep -v CMD-ERROR | tail -30 | cut -c1-200 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+    [[ -n ${GITHUB_ACTIONS:-} ]] && echo "::error title=customers lab (log tail)::$(grep -vE 'CMD-ERROR|^=== ' "$TMP/lab.log" | tail -25 | cut -c1-160 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
     echo "FAIL: test_customers_lab"
     exit 1
 fi
