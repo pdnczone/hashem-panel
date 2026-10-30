@@ -146,7 +146,7 @@ grep -qF '"target": "203.0.113.7:443", "xver": 0, "serverNames": ["www.digikala.
 bad "an IP as the SNI" "${XD/sni=www.digikala.com/sni=127.0.0.1}"
 bad "a LAN name as the SNI" "${XD/sni=www.digikala.com/sni=router.lan}"
 bad "a single-label SNI" "${XD/sni=www.digikala.com/sni=intranet}"
-for a in 127.0.0.1 10.1.2.3 192.168.1.1 172.20.0.1 169.254.169.254 100.64.0.1 0.0.0.0 ::1 fd00::1 fe80::1 fec0::1 ::ffff:127.0.0.1 ::127.0.0.1 2002:7f00:1::1; do
+for a in 127.0.0.1 10.1.2.3 192.168.1.1 172.20.0.1 169.254.169.254 100.64.0.1 0.0.0.0 ::1 fd00::1 fe80::1 fec0::1 ::ffff:127.0.0.1 ::ffff:203.0.113.9 ::127.0.0.1 2002:7f00:1::1; do
     printf '#!/bin/sh\necho "203.0.113.8     STREAM x"\necho "%s     STREAM x"\n' "$a" > "$T/bin/getent"
     bad "an SNI resolving to $a" "$XD"
 done

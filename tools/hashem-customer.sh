@@ -134,7 +134,8 @@ public_name() {
 public_addr() {
     local a=${1,,} o1 o2 o3 o4
     if [[ "$a" == *:* ]]; then
-        [[ "$a" =~ ^::ffff:([0-9.]+)$ ]] && { public_addr "${BASH_REMATCH[1]}"; return; }
+        # an IPv4-mapped answer is refused whatever it maps: a public one
+        # could be this server's own address in another form
         [[ ! "$a" =~ ^(::[0-9a-f.:]*$|f[cd]|fe[89a-f]|ff|2001:db8:|2002:|64:ff9b:) ]]
         return
     fi
