@@ -105,6 +105,8 @@ echo "iptables \$*" >> $T/calls.log
 case "\$*" in
   *"-m cgroup -h"*) echo "cgroup match options: --path path" ;;
   *"-S OUTPUT"*) [ -f $T/hook ] && cat $T/hook ;;
+  *"-t raw -S PREROUTING"*) [ -n "\${FENCE_PRE:-}" ] && printf '%s\\n' "\$FENCE_PRE" ;;
+  *"-t raw -S HG"*) [ -n "\${FENCE_CH:-}" ] && printf '%s\\n' "\$FENCE_CH" ;;
 esac
 exit 0
 EOF
@@ -335,12 +337,34 @@ grep -q "systemctl restart hcustgre-${GU#hcust-}.service" "$T/calls.log" || F "t
 # gre-up: the interface, its fence before it comes up, IPv6 dropped
 : > "$T/calls.log"
 out=$(bash "$SH" gre-up "$GU" 2>&1) || F "gre-up: $out"
-for want in "ip link add $GIF type gre remote 203.0.113.7 ttl 255" "-A HG.* -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN" \
-            "-A HG.* -j DROP" "iptables -w 5 -I INPUT -i $GIF -j HG" "iptables -w 5 -I FORWARD -i $GIF -j DROP" \
-            "iptables -w 5 -I FORWARD -o $GIF -j DROP" "ip6tables -w 5 -I INPUT -i $GIF -j DROP" "ip addr add 10.231.4.10/30 dev $GIF"; do
+for want in "ip link add $GIF type gre remote 203.0.113.7 ttl 255" \
+            "-t raw -A HG[0-9a-f]+ -s 10.231.4.9 -d 10.231.4.10 -p tcp --sport 31600 -j RETURN" "-t raw -A HG[0-9a-f]+ -s 10.231.4.9 -d 10.231.4.10 -p icmp -j RETURN" \
+            "-t raw -A HG.* -j DROP" "iptables -w 5 -t raw -I PREROUTING 1 -i $GIF -j HG" "iptables -w 5 -t filter -I FORWARD 1 -i $GIF -j DROP" \
+            "iptables -w 5 -t filter -I FORWARD 1 -o $GIF -j DROP" "ip6tables -w 5 -t filter -I INPUT 1 -i $GIF -j DROP" "ip addr add 10.231.4.10/30 dev $GIF"; do
     grep -qE -- "$want" "$T/calls.log" || F "gre-up lacks: $want"
 done
-[[ $(grep -n "ip link set dev $GIF mtu 1380 up" "$T/calls.log" | cut -d: -f1) -gt $(grep -n -- "-A HG.* -j DROP" "$T/calls.log" | cut -d: -f1) ]] || F "the GRE came up before its fence"
+grep -q -- "-p udp" "$T/calls.log" && F "an FRP tcp tunnel's fence lets UDP in"
+grep -q "ctstate" "$T/calls.log" && F "the GRE fence trusts conntrack (any flow's replies)"
+[[ $(grep -n "ip link set dev $GIF mtu 1380 up" "$T/calls.log" | cut -d: -f1) -gt $(grep -n -- "-t raw -I PREROUTING" "$T/calls.log" | cut -d: -f1) ]] || F "the GRE came up before its fence"
+# a /30 the server already uses (a VPN route) is refused, before anything is made
+printf '#!/bin/sh\necho "ip $*" >> %s/calls.log\ncase "$*" in *"route show"*) echo "10.231.0.0/16 dev wg0 scope link" ;; esac\n' "$T" > "$T/bin/ip"; chmod +x "$T/bin/ip"
+: > "$T/calls.log"
+out=$(bash "$SH" gre-up "$GU" 2>&1) && F "gre-up on a /30 a route already covers"
+grep -q "already used" <<< "$out" || F "overlap: $out"
+grep -q "ip link add" "$T/calls.log" && F "a GRE was made on an overlapping /30"
+GO=${GK/name=hsell-6-1/name=hsell-6-9}; GO=${GO/token=G/token=O}
+out=$(bash "$SH" install "$(mkkit "$GO")" --yes 2>&1) && F "install on an overlapping /30"
+[[ ! -e "$T/sd/hcust-203-0-113-7-$(h6 203.0.113.7)-6-9.service" ]] || F "an overlapping install wrote its unit"
+# the minute check: a fenced GRE is left alone, a changed one is made again
+GCH="HG$(printf '%s' "$GU" | sha256sum | cut -c1-10)"
+printf '#!/bin/sh\necho "ip $*" >> %s/calls.log\ncase "$*" in *"link show dev"*) echo "9: x: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1380" ;; esac\n' "$T" > "$T/bin/ip"; chmod +x "$T/bin/ip"
+: > "$T/calls.log"
+FENCE_PRE="-A PREROUTING -i $GIF -j $GCH" FENCE_CH="-A $GCH -j DROP" bash "$SH" gre-check-all >/dev/null 2>&1 || F "gre-check-all failed"
+grep -q "ip link add" "$T/calls.log" && F "the minute check remade a fenced GRE"
+: > "$T/calls.log"
+FENCE_PRE=$'-A PREROUTING -p tcp -j ACCEPT\n'"-A PREROUTING -i $GIF -j $GCH" FENCE_CH="-A $GCH -j DROP" bash "$SH" gre-check-all >/dev/null 2>&1
+grep -q "ip link add $GIF" "$T/calls.log" || F "a GRE fence under an ACCEPT was not made again"
+printf '#!/bin/sh\necho "ip $*" >> %s/calls.log\n' "$T" > "$T/bin/ip"; chmod +x "$T/bin/ip"
 # the fence follows the id file only: a tampered one is refused
 cp "$T/conf/$GU.id" "$T/id.bak"
 sed -i 's/^gpub=.*/gpub=10.0.0.1/' "$T/conf/$GU.id"
@@ -353,6 +377,7 @@ GBU="hcust-203-0-113-7-$(h6 203.0.113.7)-6-2"
 out=$(bash "$SH" guard "$GBU" 2>&1) || F "GRE guard: $out"
 grep -q -- "-d 10.231.4.9 -p tcp --dport 31600 -j RETURN" "$T/calls.log" || F "the fence does not allow the inner address"
 grep -q -- "-d 203.0.113.7 -p tcp --dport 31600" "$T/calls.log" && F "the fence of a GRE tunnel allows the public address"
+grep -q -- "iptables -w 5 -A HC[0-9a-f]* -d 203.0.113.7 -p gre -j RETURN" "$T/calls.log" || F "the Backhaul fence drops its own GRE packets"
 # the same link out of GRE: its GRE unit goes
 : > "$T/calls.log"
 NG=${GK/v=3/v=1}; NG=${NG%%gpub=*}
@@ -365,7 +390,8 @@ out=$(bash "$SH" install "$(mkkit "$GK")" --yes 2>&1) || F "GRE reinstall: $out"
 out=$(bash "$SH" remove all 2>&1) || F "remove all: $out"
 [[ -z "$(ls "$T/sd" | grep hcustgre)" ]] || F "remove left a GRE unit: $(ls "$T/sd")"
 grep -q "ip link del dev $GIF" "$T/calls.log" || F "remove left the GRE interface"
-grep -q "iptables -w 5 -X HG" "$T/calls.log" || F "remove left the GRE fence"
+grep -q "iptables -w 5 -t raw -X HG" "$T/calls.log" || F "remove left the GRE fence"
+grep -q "systemctl disable --now hashem-customer-retarget.timer hashem-customer-gre.timer" "$T/calls.log" || F "remove left the GRE check timer"
 mkdir -p "$T/lib/hc"; printf '#!/bin/sh\n[ "$1" = "-v" ] && echo 0.71.0\n' > "$T/lib/hc/frpc"; chmod +x "$T/lib/hc/frpc"
 
 # hashem.sh customers_teardown

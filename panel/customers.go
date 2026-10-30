@@ -1191,7 +1191,7 @@ func customersTick(now time.Time) {
 			custApplied.ipt, custApplied.tc, custApplied.tcIfs, custApplied.police, custApplied.cleaned = "", "", nil, nil, true
 			custSweepPolice() // nothing of ours may stay in the kernel
 		}
-		_ = custGRESync(nil, now) // only removes
+		_, _ = custGRESync(nil, now) // only removes
 		if !custApplied.swept {
 			custApplied.swept = true
 			custSweepUnits(nil)
@@ -1295,6 +1295,17 @@ func customersTick(now time.Time) {
 	}
 	custReservePorts()
 
+	// GRE before the caps (its interface carries a control port's filters)
+	// and the units (a wrapped link's foreign end dials the inner address)
+	if made, err := custGRESync(list, now); err != nil || made {
+		if err != nil {
+			errs = append(errs, err.Error())
+		}
+		if made {
+			custApplied.tc = "" // a new interface has no filters yet
+		}
+	}
+
 	ifaces := custIfaces()
 	if len(ifaces) == 0 {
 		for _, c := range list {
@@ -1333,10 +1344,6 @@ func customersTick(now time.Time) {
 		}
 	}
 
-	// before the units: a wrapped link's foreign end dials the inner address
-	if err := custGRESync(list, now); err != nil {
-		errs = append(errs, err.Error())
-	}
 	if err := custSyncUnits(list, chainOK); err != nil {
 		errs = append(errs, err.Error())
 	}
@@ -1714,8 +1721,10 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 		}
 	}
 	l.Ports = parsePorts(in.Ports)
-	if hasInt(l.Ports, custGREPortBad) {
-		return l, fmt.Errorf("port %d is not sold: the speed cap's filters read GRE packets as port %d", custGREPortBad, custGREPortBad)
+	for _, p := range custGREPortsBad {
+		if hasInt(l.Ports, p) {
+			return l, fmt.Errorf("port %d is not sold: the speed cap's filters read GRE packets as port %d", p, p)
+		}
 	}
 	if len(l.Ports) > custMaxPorts {
 		return l, fmt.Errorf("at most %d ports per foreign server", custMaxPorts)
@@ -1756,7 +1765,7 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 	if l.CtrlPort == 0 {
 		for i := 0; i < 200 && l.CtrlPort == 0; i++ {
 			p := 20000 + rand.IntN(40000)
-			if hasInt(l.Ports, p) || p == custGREPortBad || (l.ctrlLocal() && (free("tcp", p, nil) != "" || (ctrlProto == "udp" && free("udp", p, nil) != ""))) {
+			if hasInt(l.Ports, p) || hasInt(custGREPortsBad, p) || (l.ctrlLocal() && (free("tcp", p, nil) != "" || (ctrlProto == "udp" && free("udp", p, nil) != ""))) {
 				continue
 			}
 			l.CtrlPort = p
@@ -1771,8 +1780,8 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 		if hasInt(l.Ports, l.CtrlPort) {
 			return l, fmt.Errorf("control port %d is also a user port", l.CtrlPort)
 		}
-		if l.CtrlPort == custGREPortBad {
-			return l, fmt.Errorf("control port %d: the speed cap's filters read GRE packets as port %d", custGREPortBad, custGREPortBad)
+		if hasInt(custGREPortsBad, l.CtrlPort) {
+			return l, fmt.Errorf("control port %d: the speed cap's filters read GRE packets as port %d", l.CtrlPort, l.CtrlPort)
 		}
 		for _, proto := range []string{"tcp", ctrlProto} {
 			if !l.ctrlLocal() {
@@ -2688,6 +2697,11 @@ func handleCustomersKit(w http.ResponseWriter, r *http.Request) {
 		pub, err := custResolveRemote(addr)
 		if err != nil || !validPublicIP(pub, 4) {
 			writeAPIError(w, r, "E-CUST-05", "a GRE link needs this server's public IPv4 address: set the customer's address to it")
+			return
+		}
+		if custIsLocalAddr(pub) && custGRELocal(c) != pub {
+			// the GRE leaves from it only when it is the address set
+			writeAPIError(w, r, "E-CUST-05", fmt.Sprintf("a GRE link: set the customer's address to %s (this server's address the kit names), not a domain", pub))
 			return
 		}
 		confAddr, gpub = iran, pub

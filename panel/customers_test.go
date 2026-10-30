@@ -26,6 +26,88 @@ type custLab struct {
 	failRun func(cmd string) bool
 	alerts  []custEvent
 	greIfs  []string // the hcg* interfaces "in the kernel"
+	// greMoved: something was put above the GRE fence's hooks
+	greMoved bool
+	greLink  map[string][3]string // made GRE interfaces: remote, local, inner
+}
+
+// greIP plays `ip` for the GRE interfaces: add/del/addr add, and the show
+// commands custGREIfaceOK reads.
+func (l *custLab) greIP(args []string) ([]byte, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.greLink == nil {
+		l.greLink = map[string][3]string{}
+	}
+	a := strings.Join(args, " ")
+	switch {
+	case len(args) >= 6 && args[0] == "link" && args[1] == "add" && args[3] == "type" && args[4] == "gre":
+		g := [3]string{}
+		for i := 5; i+1 < len(args); i++ {
+			switch args[i] {
+			case "remote":
+				g[0] = args[i+1]
+			case "local":
+				g[1] = args[i+1]
+			}
+		}
+		l.greLink[args[2]] = g
+	case strings.HasPrefix(a, "link del dev "):
+		delete(l.greLink, args[3])
+	case strings.HasPrefix(a, "addr add ") && len(args) == 5:
+		if g, ok := l.greLink[args[4]]; ok {
+			g[2] = strings.TrimSuffix(args[2], "/30")
+			l.greLink[args[4]] = g
+		}
+	case strings.HasPrefix(a, "-d -o link show dev "):
+		g, ok := l.greLink[args[5]]
+		if !ok {
+			return nil, false
+		}
+		local := g[1]
+		if local == "" {
+			local = "any"
+		}
+		return []byte(fmt.Sprintf("9: %s@NONE: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1380 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\\    link/gre %s peer %s promiscuity 0 \\    gre remote %s local %s ttl 255 pmtudisc\n",
+			args[5], local, g[0], g[0], local)), true
+	case strings.HasPrefix(a, "-o -4 addr show dev "):
+		g, ok := l.greLink[args[5]]
+		if !ok {
+			return nil, false
+		}
+		return []byte(fmt.Sprintf("9: %s    inet %s/30 scope global %s\\       valid_lft forever preferred_lft forever\n", args[5], g[2], args[5])), true
+	}
+	return nil, false
+}
+
+// greSave is `iptables -S chain` for the GRE fence as the panel loaded it
+// (customers-gre.v4).
+func (l *custLab) greSave(chain string) ([]byte, bool) {
+	rules, err := os.ReadFile(filepath.Join(configDir, "customers-gre.v4"))
+	if err != nil {
+		return nil, false
+	}
+	l.mu.Lock()
+	moved := l.greMoved
+	l.mu.Unlock()
+	hook := map[string]string{"PREROUTING": custGREChain, "FORWARD": custGREFwd}
+	if h, ok := hook[chain]; ok {
+		out := "-P " + chain + " ACCEPT\n"
+		if moved {
+			out += "-A " + chain + " -j ACCEPT\n"
+		}
+		return []byte(out + "-A " + chain + " -j " + h + "\n"), true
+	}
+	if chain != custGREChain && chain != custGREFwd {
+		return nil, false
+	}
+	out := "-N " + chain + "\n"
+	for _, r := range strings.Split(string(rules), "\n") {
+		if strings.HasPrefix(r, "-A "+chain+" ") {
+			out += r + "\n"
+		}
+	}
+	return []byte(out), true
 }
 
 func (l *custLab) log() string {
@@ -63,13 +145,15 @@ func newCustLab(t *testing.T) *custLab {
 	oldUnit, oldBin, oldSrc, oldBH, oldXray := engineUnitDir, custBinDir, custFrpsSrc, custBackhaulSrc, custXraySrc
 	oldRun, oldSave, oldIf, oldAlert, oldBusy, oldSys := custRun, custSaveOut, custIfaces, custAlert, custPortBusy, runSystemctl
 	oldActive, oldLinked, oldLimRun, oldSysctl := custUnitsActive, custLinked, limitsRun, custReserveSysctl
-	oldGREIfs, oldGRE6, oldLocal := custGREIfacesNow, custGRENoIPv6, custLocalNets
+	oldGREIfs, oldGRE6, oldLocal, oldOwn, oldIsLocal := custGREIfacesNow, custGREHarden, custLocalNets, custOwnGRERemotes, custIsLocalAddr
 	custGREIfacesNow = func() []string {
 		l.mu.Lock()
 		defer l.mu.Unlock()
 		return append([]string(nil), l.greIfs...)
 	}
-	custGRENoIPv6 = func(string) {}
+	custGREHarden = func(string) {}
+	custOwnGRERemotes = func() []string { return []string{"198.51.100.99"} }
+	custIsLocalAddr = func(a string) bool { return a == "203.0.113.1" }
 	custLocalNets = func() []ip4net { return []ip4net{netip4("10.231.0.0", 24), netip4("192.0.2.0", 24)} }
 	custReserveSysctl = filepath.Join(dir, "reserved")
 	_ = os.WriteFile(custReserveSysctl, []byte("7000-7002\n"), 0o644)
@@ -102,6 +186,16 @@ func newCustLab(t *testing.T) *custLab {
 			l.save = chainSave(nil)
 			l.mu.Unlock()
 		}
+		if name == "ip" {
+			if out, ok := l.greIP(args); ok {
+				return out, nil
+			}
+		}
+		if name == "iptables" && len(args) >= 2 && args[len(args)-2] == "-S" {
+			if out, ok := l.greSave(args[len(args)-1]); ok {
+				return out, nil
+			}
+		}
 		if name == "tc" && len(args) > 1 && args[0] == "qdisc" && args[1] == "show" {
 			return []byte("qdisc clsact ffff: parent ffff:fff1"), nil
 		}
@@ -132,7 +226,7 @@ func newCustLab(t *testing.T) *custLab {
 		engineUnitDir, custBinDir, custFrpsSrc, custBackhaulSrc, custXraySrc = oldUnit, oldBin, oldSrc, oldBH, oldXray
 		custRun, custSaveOut, custIfaces, custAlert, custPortBusy, runSystemctl = oldRun, oldSave, oldIf, oldAlert, oldBusy, oldSys
 		custUnitsActive, custLinked, limitsRun, custReserveSysctl = oldActive, oldLinked, oldLimRun, oldSysctl
-		custGREIfacesNow, custGRENoIPv6, custLocalNets = oldGREIfs, oldGRE6, oldLocal
+		custGREIfacesNow, custGREHarden, custLocalNets, custOwnGRERemotes, custIsLocalAddr = oldGREIfs, oldGRE6, oldLocal, oldOwn, oldIsLocal
 		resetCustState()
 	})
 	return l
