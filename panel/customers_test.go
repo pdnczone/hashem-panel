@@ -94,7 +94,7 @@ func newCustLab(t *testing.T) *custLab {
 		defer l.mu.Unlock()
 		return []byte(l.save), nil
 	}
-	custIfaces = func() []string { return []string{"eth0"} }
+	custIfaces = func() []custIfc { return []custIfc{{"eth0", []string{"192.0.2.10"}}} }
 	custAlert = func(e custEvent) {
 		l.mu.Lock()
 		l.alerts = append(l.alerts, e)
@@ -237,8 +237,8 @@ func TestCustomersLifecycle(t *testing.T) {
 	for _, want := range []string{
 		"tc actions replace action police rate 20000kbit burst 1250000 mtu 65535 conform-exceed drop/pass index " + idxOut,
 		// to the users: policed as it enters from the customer's frpc (the control port)
-		"tc filter add dev eth0 ingress pref 4919 protocol ip u32 match ip dport 30001 0xffff action police index " + idxOut,
-		"tc filter add dev eth0 ingress pref 4919 protocol ip u32 match ip dport 443 0xffff action police index " + idxIn,
+		"tc filter add dev eth0 ingress pref 4919 protocol ip u32 match ip dst 192.0.2.10/32 match ip dport 30001 0xffff action police index " + idxOut,
+		"tc filter add dev eth0 ingress pref 4919 protocol ip u32 match ip dst 192.0.2.10/32 match ip dport 443 0xffff action police index " + idxIn,
 	} {
 		if !strings.Contains(log, want) {
 			t.Errorf("tc lacks %q:\n%s", want, log)
@@ -601,7 +601,7 @@ COMMIT
 	// no cap: no tc commands; two customers: separate actions
 	list[0].RateMbit = 10
 	list = append(list, customer{ID: 3, RateMbit: 5, Links: []customerLink{{ID: 1, Ports: []int{80}}, {ID: 2, Ports: []int{81}}}})
-	cmds := custTCArgs([]string{"eth0"}, list)
+	cmds := custTCArgs([]custIfc{{"eth0", []string{"192.0.2.10"}}}, list)
 	if got := custTCPolice(cmds); len(got) != 4 || custTCFilters(cmds) != 6 {
 		t.Errorf("tc: police %v, %d filters\n%v", got, custTCFilters(cmds), cmds)
 	}

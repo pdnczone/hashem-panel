@@ -78,6 +78,11 @@ KIT2=$(mkkit "${GOOD/port=31000/port=31555}")
 bash "$SH" install "$KIT2" >/dev/null 2>&1 || F "install the moved kit"
 [[ $(ls "$T/sd" | wc -l) -eq 1 ]] || F "the moved kit left the old tunnel: $(ls "$T/sd")"
 grep -q "serverPort = 31555" "$T/conf/$U.toml" || F "the moved kit did not update the config"
+# the seller switched the address to a domain: the old tunnel goes too
+KIT3=$(mkkit "${GOOD/server=203.0.113.7/server=iran.example.com}")
+bash "$SH" install "$KIT3" >/dev/null 2>&1 || F "install the kit with a domain"
+[[ "$(ls "$T/sd")" == "hcust-iran-example-com-3-1.service" ]] || F "a new address left the old tunnel: $(ls "$T/sd")"
+U=hcust-iran-example-com-3-1
 # a damaged download is refused and nothing is left behind
 rm -f "$T/lib/hc/frpc"
 printf 'not frp' > "$T/fake.tgz"
@@ -88,7 +93,7 @@ printf '#!/bin/sh\n[ "$1" = "-v" ] && echo 0.71.0\n' > "$T/lib/hc/frpc"; chmod +
 # remove: by name, unknown names refused, the frpc copy goes with the last tunnel
 if bash "$SH" remove 'hcust-x;rm -rf /' >/dev/null 2>&1; then F "a hostile remove name was accepted"; fi
 if bash "$SH" remove hcust-nope >/dev/null 2>&1; then F "removing an unknown tunnel succeeded"; fi
-bash "$SH" remove "$U" >/dev/null 2>&1 || F "remove"
+out=$(bash "$SH" remove "$U" 2>&1) || F "remove: $out ($(ls "$T/sd"))"
 [[ ! -e "$T/sd/$U.service" && ! -e "$T/conf/$U.toml" ]] || F "remove left files"
 [[ ! -e "$T/lib/hc" ]] || F "the frpc copy survived the last tunnel"
 

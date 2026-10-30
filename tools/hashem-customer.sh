@@ -163,15 +163,16 @@ cmd_install() {
     local unit conf p f missing=""
     unit=$(unit_name)
     confirm
-    # an older tunnel for this same link (its control port changed) goes
-    for f in "$UNIT_DIR"/hcust-*-"${K_NAME#hsell-}".service; do
+    conf="$CONF_DIR/${unit}.toml"
+    install_frpc
+    # an older tunnel for this same link goes: the seller moved its control
+    # port or address. Same link = same token (never shared between links).
+    for f in "$UNIT_DIR"/hcust-*.service; do
         [[ -e "$f" && "${f##*/}" != "${unit}.service" ]] || continue
-        grep -q "^Description=Hashem tunnel to ${K_SERVER} (" "$f" || continue
+        grep -qF "auth.token = \"${K_TOKEN}\"" "$CONF_DIR/$(basename "${f%.service}").toml" 2>/dev/null || continue
         systemctl disable --now "${f##*/}" >/dev/null 2>&1 || true
         rm -f "$f" "$CONF_DIR/$(basename "${f%.service}").toml"
     done
-    conf="$CONF_DIR/${unit}.toml"
-    install_frpc
     mkdir -p "$CONF_DIR"
     chmod 700 "$CONF_DIR"
     (umask 077 && frpc_config > "$conf.new")
