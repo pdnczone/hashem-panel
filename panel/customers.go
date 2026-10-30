@@ -28,9 +28,11 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/subtle"
 	_ "embed"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -58,6 +60,7 @@ const (
 	custMaxLinks    = 16
 	custMaxPorts    = 64
 	custMaxCount    = 2000
+	custMaxID       = 32767 // custPoliceIndex stays within 0x4853xxxx
 	custFRPVersion  = "0.71.0"
 )
 
@@ -136,18 +139,22 @@ func (c *customer) link(id int) *customerLink {
 type customersFile struct {
 	Customers []customer `json:"customers"`
 	NextID    int        `json:"next_id"`
+	// Counters are the chain's byte counters (by comment) at the last tick,
+	// saved with the usage they were added to: after a panel restart the
+	// bytes counted while it was down are billed, none twice.
+	Counters map[string]uint64 `json:"counters,omitempty"`
 }
 
 var custs = struct {
 	sync.Mutex
-	loaded bool
-	f      customersFile
-	last   map[string]uint64  // counter at the last tick, by comment
-	speed  map[int][2]float64 // bytes/s by customer: [0] from, [1] to the users
-	at     time.Time
-	dirty  bool
-	saved  time.Time
-	err    string
+	loaded  bool
+	loadErr string // customers.json could not be read: nothing is changed
+	f       customersFile
+	speed   map[int][2]float64 // bytes/s by customer: [0] from, [1] to the users
+	at      time.Time
+	dirty   bool
+	saved   time.Time
+	err     string
 }{}
 
 // custTickMu serialises the ticks (the loop and a POST that applies at once).
@@ -161,7 +168,8 @@ var custApplied = struct {
 	police        []int
 	cleaned       bool
 	running       map[string]bool // unit -> started by the tick
-	binSize       int64
+	swept         bool            // stray units and police actions removed once
+	reserved      string          // the ports kept out of the ephemeral range
 }{}
 
 // Commands, swappable for tests.
@@ -195,24 +203,54 @@ func custLoadLocked() {
 	}
 	custs.loaded = true
 	custs.f = customersFile{}
-	custs.last = map[string]uint64{}
+	custs.loadErr = ""
 	custs.speed = map[int][2]float64{}
 	if data, err := os.ReadFile(customersPath()); err == nil {
-		_ = json.Unmarshal(data, &custs.f)
+		if err := json.Unmarshal(data, &custs.f); err != nil {
+			// never treated as "no customers": that would drop the chain
+			// while the units keep running, and reuse their IDs
+			custs.f = customersFile{}
+			custs.loadErr = "customers.json cannot be read (" + err.Error() + "): fix or restore it, then restart the panel; nothing is changed until then"
+		}
+	} else if !os.IsNotExist(err) {
+		custs.loadErr = "customers.json: " + err.Error()
+	}
+	if custs.f.Counters == nil {
+		custs.f.Counters = map[string]uint64{}
 	}
 	var ok []customer
 	for _, c := range custs.f.Customers {
-		if c.ID > 0 && custTokenRe.MatchString(c.Token) {
+		if c.ID > 0 && c.ID <= custMaxID {
 			ok = append(ok, c)
-		}
-		if c.ID >= custs.f.NextID {
-			custs.f.NextID = c.ID + 1
 		}
 	}
 	custs.f.Customers = ok
 	if custs.f.NextID < 1 {
 		custs.f.NextID = 1
 	}
+}
+
+// custNewIDLocked is the next customer ID: IDs grow and are not reused while
+// they fit the police index range; past custMaxID the lowest free one.
+func custNewIDLocked() int {
+	used := map[int]bool{}
+	for _, c := range custs.f.Customers {
+		used[c.ID] = true
+		if c.ID >= custs.f.NextID {
+			custs.f.NextID = c.ID + 1
+		}
+	}
+	if custs.f.NextID <= custMaxID {
+		id := custs.f.NextID
+		custs.f.NextID++
+		return id
+	}
+	for id := 1; id <= custMaxID; id++ {
+		if !used[id] {
+			return id
+		}
+	}
+	return 0
 }
 
 func custSaveLocked() error {
@@ -299,6 +337,10 @@ func custFrpsConf(l customerLink) string {
 		fmt.Fprintf(&b, "  { single = %d },\n", p)
 	}
 	b.WriteString("]\n")
+	// every proxy the customer's frpc registers is checked by the panel: only
+	// tcp (and udp when sold) on the sold ports. stcp/sudp/xtcp would carry
+	// traffic over the control port, which is neither billed nor capped.
+	fmt.Fprintf(&b, "\n[[httpPlugins]]\nname = \"hashem\"\naddr = \"127.0.0.1:%d\"\npath = \"/_hsplugin/%s\"\nops = [\"NewProxy\"]\n\n", cfg.Port, custPluginKey(l.Token))
 	return b.String()
 }
 
@@ -321,6 +363,8 @@ func custFrpcConf(c customer, l customerLink, addr string) string {
 	return b.String()
 }
 
+// custUnitFile has no [Install]: only the panel starts it, after the chain
+// that counts it is loaded (also after a reboot).
 func custUnitFile(cid, lid int) string {
 	return fmt.Sprintf(`[Unit]
 Description=Hashem sold tunnel: customer %d, link %d
@@ -337,9 +381,14 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 `, cid, lid, custBin(), custConfPath(cid, lid))
 }
 
@@ -380,15 +429,40 @@ func custEnsureBin() (bool, error) {
 }
 
 // custRemoveLinkFiles stops a link's unit and deletes its unit and config.
+// It holds custTickMu: a tick that read the list before the removal must not
+// write the files back and start the unit again.
 func custRemoveLinkFiles(cid, lid int) {
-	u := custUnit(cid, lid)
-	_ = runSystemctl("disable", "--now", u+".service")
-	_ = os.Remove(custUnitPath(cid, lid))
-	_ = os.Remove(custConfPath(cid, lid))
-	_ = runSystemctl("daemon-reload")
 	custTickMu.Lock()
+	defer custTickMu.Unlock()
+	custRemoveUnitLocked(custUnit(cid, lid), custUnitPath(cid, lid), custConfPath(cid, lid))
+}
+
+func custRemoveUnitLocked(u, unitPath, confPath string) {
+	_ = runSystemctl("disable", "--now", u+".service")
+	_ = os.Remove(unitPath)
+	_ = os.Remove(confPath)
+	_ = runSystemctl("daemon-reload")
 	delete(custApplied.running, u)
-	custTickMu.Unlock()
+}
+
+// custSweepUnits removes hsell units on disk that no customer has (a crash
+// between saving customers.json and removing a unit, or a hand-made copy).
+func custSweepUnits(list []customer) {
+	known := map[string]bool{}
+	for _, c := range list {
+		for _, l := range c.Links {
+			known[custUnit(c.ID, l.ID)] = true
+		}
+	}
+	files, _ := filepath.Glob(filepath.Join(engineUnitDir, "hsell-*.service"))
+	for _, f := range files {
+		u := strings.TrimSuffix(filepath.Base(f), ".service")
+		var cid, lid int
+		if _, err := fmt.Sscanf(u, "hsell-%d-%d", &cid, &lid); err != nil || known[u] || custUnit(cid, lid) != u {
+			continue
+		}
+		custRemoveUnitLocked(u, f, custConfPath(cid, lid))
+	}
 }
 
 // ---- kernel rules ----
@@ -426,11 +500,50 @@ func custRules(list []customer) string {
 	return b.String()
 }
 
+// custRuleKey normalises one chain rule ("-A HASHEM_CUST ...", without
+// counters) to proto/direction/port/comment/target, so the kernel's rules
+// compare with the wanted ones whatever order iptables-save prints.
+func custRuleKey(rule string) string {
+	f := strings.Fields(rule)
+	var proto, dir, port, comment, target string
+	for i := 0; i+1 < len(f); i++ {
+		switch f[i] {
+		case "-p":
+			proto = f[i+1]
+		case "--dport", "--sport":
+			dir, port = f[i], f[i+1]
+		case "--comment":
+			comment = strings.Trim(f[i+1], `"`)
+		case "-j":
+			target = f[i+1]
+		}
+	}
+	return strings.Join([]string{proto, dir, port, comment, target}, " ")
+}
+
+// custWantKeys are the rule keys of custRules' output, in order.
+func custWantKeys(text string) []string {
+	var out []string
+	for _, l := range strings.Split(text, "\n") {
+		if strings.HasPrefix(l, "-A "+custChain+" ") {
+			out = append(out, custRuleKey(l))
+		}
+	}
+	return out
+}
+
 // parseCustSave reads the byte counters of the chain's rules from
 // `iptables-save -c` output, by comment, and whether the chain and its two
 // jumps exist.
 func parseCustSave(out string) (map[string]uint64, bool) {
+	m, _, ok := parseCustSaveRules(out)
+	return m, ok
+}
+
+// parseCustSaveRules is parseCustSave plus the chain's rule keys in order.
+func parseCustSaveRules(out string) (map[string]uint64, []string, bool) {
 	m := map[string]uint64{}
+	var keys []string
 	chain, hooks := false, 0
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
@@ -454,6 +567,7 @@ func parseCustSave(out string) (map[string]uint64, bool) {
 		if !strings.HasPrefix(rule, "-A "+custChain+" ") {
 			continue
 		}
+		keys = append(keys, custRuleKey(rule))
 		_, bytesStr, _ := strings.Cut(line[1:end], ":")
 		n, err := strconv.ParseUint(bytesStr, 10, 64)
 		if err != nil {
@@ -467,7 +581,7 @@ func parseCustSave(out string) (map[string]uint64, bool) {
 			}
 		}
 	}
-	return m, chain && hooks == 2
+	return m, keys, chain && hooks == 2
 }
 
 func custLoadChain(rules string) error {
@@ -611,8 +725,14 @@ func customersTick(now time.Time) {
 
 	custs.Lock()
 	custLoadLocked()
-	n := len(custs.f.Customers)
+	n, loadErr := len(custs.f.Customers), custs.loadErr
+	if loadErr != "" {
+		custs.err = loadErr
+	}
 	custs.Unlock()
+	if loadErr != "" {
+		return // the rules and units stay as they are
+	}
 	if n == 0 {
 		if custApplied.ipt != "" || !custApplied.cleaned {
 			custDropChain()
@@ -622,6 +742,12 @@ func customersTick(now time.Time) {
 			}
 			custApplied.ipt, custApplied.tc, custApplied.tcIf, custApplied.police, custApplied.cleaned = "", "", "", nil, true
 		}
+		if !custApplied.swept {
+			custApplied.swept = true
+			custSweepUnits(nil)
+			custSweepPolice()
+		}
+		custReservePorts()
 		custs.Lock()
 		custs.err = ""
 		custs.Unlock()
@@ -630,30 +756,34 @@ func customersTick(now time.Time) {
 	custApplied.cleaned = false
 
 	out, saveErr := custSaveOut()
-	counters, ready := parseCustSave(string(out))
+	counters, kernelKeys, ready := parseCustSaveRules(string(out))
 
 	var events []custEvent
 	custs.Lock()
 	elapsed := now.Sub(custs.at).Seconds()
 	first := custs.at.IsZero()
 	custs.at = now
+	last := custs.f.Counters
 	for i := range custs.f.Customers {
 		c := &custs.f.Customers[i]
 		var d [2]uint64
 		for j, out := range []bool{false, true} {
 			k := custComment(c.ID, out)
 			cur, ok := counters[k]
-			prev := custs.last[k]
+			prev := last[k]
 			if ok {
 				if cur >= prev {
 					d[j] = cur - prev
 				} else {
-					d[j] = cur
+					d[j] = cur // the chain was rebuilt since
 				}
-				custs.last[k] = cur
+				if last[k] != cur {
+					last[k], custs.dirty = cur, true
+				}
 			}
 		}
-		if saveErr == nil && c.Cut == "" && !first {
+		// the saved counters make the first tick after a restart exact too
+		if saveErr == nil && c.Cut == "" {
 			c.UsedRx += d[0]
 			c.UsedTx += d[1]
 			if d[0]+d[1] > 0 {
@@ -686,7 +816,9 @@ func customersTick(now time.Time) {
 		errs = append(errs, "iptables-save: "+saveErr.Error())
 	}
 	text := custRules(list)
-	chainOK := saveErr == nil && ready && text == custApplied.ipt
+	// the kernel's chain is checked rule by rule, not only that it exists:
+	// a flushed chain would bill nothing and cut nobody
+	chainOK := saveErr == nil && ready && strings.Join(kernelKeys, "\n") == strings.Join(custWantKeys(text), "\n")
 	if saveErr == nil && !chainOK {
 		if err := custLoadChain(text); err != nil {
 			errs = append(errs, err.Error())
@@ -694,12 +826,21 @@ func customersTick(now time.Time) {
 		} else {
 			custApplied.ipt, chainOK = text, true
 			custs.Lock()
-			for k := range custs.last {
-				custs.last[k] = 0 // the rebuilt chain counts from zero
+			for k := range custs.f.Counters {
+				custs.f.Counters[k] = 0 // the rebuilt chain counts from zero
 			}
+			custs.dirty = true
 			custs.Unlock()
 		}
+	} else if chainOK {
+		custApplied.ipt = text
 	}
+	if !custApplied.swept {
+		custApplied.swept = true
+		custSweepUnits(list)
+		custSweepPolice()
+	}
+	custReservePorts()
 
 	ifname := custIface()
 	if ifname == "" {
@@ -736,13 +877,106 @@ func customersTick(now time.Time) {
 
 	custs.Lock()
 	custs.err = strings.Join(errs, "; ")
-	if custs.dirty && (len(events) > 0 || now.Sub(custs.saved) > time.Minute) {
-		_ = custSaveLocked()
+	// saved every tick that counted something: the usage and the counters
+	// it came from go to disk together
+	if custs.dirty {
+		if err := custSaveLocked(); err != nil {
+			custs.err = strings.TrimPrefix(custs.err+"; save customers.json: "+err.Error(), "; ")
+		}
 	}
 	custs.Unlock()
 	for _, e := range events {
 		custAlert(e)
 	}
+}
+
+// custSweepPolice removes police actions in the customers' index range that
+// no filter uses (a cap left by a panel that stopped mid-change).
+func custSweepPolice() {
+	out, err := custRun("tc", "actions", "ls", "action", "police")
+	if err != nil {
+		return
+	}
+	f := strings.Fields(string(out))
+	for i := 0; i+1 < len(f); i++ {
+		if f[i] != "index" {
+			continue
+		}
+		n, err := strconv.Atoi(f[i+1])
+		if err != nil || n < custPoliceBase || n > custPoliceBase+0xffff || hasInt(custApplied.police, n) {
+			continue
+		}
+		_, _ = custRun("tc", "actions", "del", "action", "police", "index", strconv.Itoa(n))
+	}
+}
+
+// custReservedPath lists the ports Hashem's configs take, for hashem.sh's
+// reserve_service_ports (net.ipv4.ip_local_reserved_ports).
+func custReservedPath() string { return filepath.Join(configDir, "ports.reserved") }
+
+// custReserveSysctl is the kernel's reserved port list (swappable for tests).
+var custReserveSysctl = "/proc/sys/net/ipv4/ip_local_reserved_ports"
+
+// custReservePorts keeps every claimed port (sold ones included) out of the
+// ephemeral range: the server's own outgoing connections never take a sold
+// port as their source port, so they are never billed to a customer or cut
+// with them. It adds to the kernel's list, never removes from it.
+func custReservePorts() {
+	seen := map[int]bool{}
+	var ports []int
+	for _, c := range hashemPortClaims() {
+		if c.Port >= 1024 && !seen[c.Port] {
+			seen[c.Port] = true
+			ports = append(ports, c.Port)
+		}
+	}
+	sort.Ints(ports)
+	strs := make([]string, len(ports))
+	for i, p := range ports {
+		strs[i] = strconv.Itoa(p)
+	}
+	sig := strings.Join(strs, ",")
+	if sig == custApplied.reserved {
+		return
+	}
+	_ = writeFileAtomic(custReservedPath(), []byte(strings.Join(strs, "\n")+"\n"), 0o644)
+	cur, err := os.ReadFile(custReserveSysctl)
+	if err != nil {
+		custApplied.reserved = sig
+		return
+	}
+	merged := strings.TrimSpace(string(cur))
+	have := map[int]bool{}
+	for _, part := range strings.Split(merged, ",") {
+		lo, hi, rng := strings.Cut(strings.TrimSpace(part), "-")
+		a, err1 := strconv.Atoi(lo)
+		b := a
+		var err2 error
+		if rng {
+			b, err2 = strconv.Atoi(hi)
+		}
+		if err1 != nil || err2 != nil || b-a > 65535 {
+			continue
+		}
+		for p := a; p <= b; p++ {
+			have[p] = true
+		}
+	}
+	var add []string
+	for _, p := range ports {
+		if !have[p] {
+			add = append(add, strconv.Itoa(p))
+		}
+	}
+	if len(add) > 0 {
+		if merged != "" {
+			merged += ","
+		}
+		if err := os.WriteFile(custReserveSysctl, []byte(merged+strings.Join(add, ",")), 0o644); err != nil {
+			return // retried next tick
+		}
+	}
+	custApplied.reserved = sig
 }
 
 // custSyncUnits writes each link's config and unit and starts the units of
@@ -801,7 +1035,7 @@ func custSyncUnits(list []customer, chainOK bool) error {
 		running, known := custApplied.running[u]
 		switch {
 		case w && (!known || !running):
-			if err := runSystemctl("enable", "--now", u+".service"); err != nil {
+			if err := runSystemctl("start", u+".service"); err != nil {
 				errs = append(errs, "start "+u+": "+err.Error())
 				continue
 			}
@@ -811,7 +1045,7 @@ func custSyncUnits(list []customer, chainOK bool) error {
 				errs = append(errs, "restart "+u+": "+err.Error())
 			}
 		case !w && (!known || running):
-			_ = runSystemctl("disable", "--now", u+".service")
+			_ = runSystemctl("stop", u+".service")
 			custApplied.running[u] = false
 		}
 	}
@@ -1016,13 +1250,27 @@ var custUnitsActive = func(units []string) map[string]bool {
 	return m
 }
 
+// custSS caches `ss` for 5 s: the public status page must not fork a process
+// per request.
+var custSS = struct {
+	sync.Mutex
+	at  time.Time
+	out []byte
+}{}
+
 // custLinked lists the control ports that hold an established session.
 var custLinked = func(ports []int) map[int]bool {
 	m := map[int]bool{}
 	if len(ports) == 0 {
 		return m
 	}
-	out, _ := runCmdTimeoutOut(5*time.Second, "ss", "-Htn", "state", "established")
+	custSS.Lock()
+	if time.Since(custSS.at) > 5*time.Second {
+		custSS.out, _ = runCmdTimeoutOut(5*time.Second, "ss", "-Htn", "state", "established")
+		custSS.at = time.Now()
+	}
+	out := custSS.out
+	custSS.Unlock()
 	want := map[int]bool{}
 	for _, p := range ports {
 		want[p] = true
@@ -1130,7 +1378,17 @@ func handleCustomersPost(w http.ResponseWriter, r *http.Request) {
 	if !custFreeActions[req.Action] && proRequired(w, r, proCustomers, proCustomersTxt) {
 		return
 	}
-	code, err, removed := customersApply(req, time.Now())
+	custs.Lock()
+	custLoadLocked()
+	loadErr := custs.loadErr
+	custs.Unlock()
+	if loadErr != "" {
+		writeAPIError(w, r, "E-CUST-06", loadErr)
+		return
+	}
+	// bill what passed up to now before a cut, a reset or a removal
+	customersTick(time.Now())
+	code, err, removed, created := customersApply(req, time.Now())
 	if err != nil {
 		writeAPIError(w, r, code, err.Error())
 		return
@@ -1141,16 +1399,14 @@ func handleCustomersPost(w http.ResponseWriter, r *http.Request) {
 	customersTick(time.Now())
 	v := customersView()
 	if req.Action == "create" {
-		custs.Lock()
-		v["created"] = custs.f.NextID - 1
-		custs.Unlock()
+		v["created"] = created
 	}
 	writeJSON(w, v)
 }
 
 // customersApply changes customers.json for one request. It returns the
 // links whose units must go (customer, link).
-func customersApply(req custRequest, now time.Time) (code string, err error, removed [][2]int) {
+func customersApply(req custRequest, now time.Time) (code string, err error, removed [][2]int, created int) {
 	custAPIMu.Lock()
 	defer custAPIMu.Unlock()
 	custs.Lock()
@@ -1168,7 +1424,7 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 	}
 	if req.Action != "create" {
 		if err := find(); err != nil {
-			return "E-CUST-04", err, nil
+			return "E-CUST-04", err, nil, 0
 		}
 	}
 
@@ -1176,7 +1432,11 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 	var claims []portClaim
 	needClaims := req.Action == "create" || req.Action == "link-add" || req.Action == "link-update"
 	if needClaims {
-		claims = custClaimsExcept(req.ID, req.LinkID)
+		skipCID, skipLID := 0, 0
+		if req.Action == "link-update" {
+			skipCID, skipLID = req.ID, req.LinkID
+		}
+		claims = custClaimsExcept(skipCID, skipLID)
 	}
 
 	custs.Lock()
@@ -1185,12 +1445,12 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 	if req.Action != "create" {
 		c = custFindLocked(req.ID)
 		if c == nil {
-			return "E-CUST-04", fmt.Errorf("no customer %d", req.ID), nil
+			return "E-CUST-04", fmt.Errorf("no customer %d", req.ID), nil, 0
 		}
 	}
-	fail := func(code string, e error) (string, error, [][2]int) {
+	fail := func(code string, e error) (string, error, [][2]int, int) {
 		custs.f = snapshot
-		return code, e, nil
+		return code, e, nil, 0
 	}
 
 	switch req.Action {
@@ -1198,15 +1458,19 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 		if len(custs.f.Customers) >= custMaxCount {
 			return fail("E-CUST-02", fmt.Errorf("at most %d customers", custMaxCount))
 		}
-		nc := customer{ID: custs.f.NextID, Token: randomToken(32), Created: now.Unix(), PeriodStart: now.Unix()}
+		id := custNewIDLocked()
+		if id == 0 {
+			return fail("E-CUST-02", fmt.Errorf("no free customer ID"))
+		}
+		nc := customer{ID: id, Token: randomToken(32), Created: now.Unix(), PeriodStart: now.Unix()}
 		if nc.Name, err = custCleanText(req.Name, 60); err != nil || nc.Name == "" {
 			return fail("E-CUST-02", fmt.Errorf("name: 1 to 60 characters, no control characters"))
 		}
 		if nc.Note, err = custCleanText(req.Note, 500); err != nil {
 			return fail("E-CUST-02", fmt.Errorf("note: %v", err))
 		}
-		if a := strings.TrimSpace(req.Address); a != "" && !validBagherHost(a) {
-			return fail("E-CUST-02", fmt.Errorf("address: an IP address or a domain"))
+		if a := strings.TrimSpace(req.Address); a != "" && !custValidAddress(a) {
+			return fail("E-CUST-02", fmt.Errorf("address: an IPv4 address or a domain"))
 		} else {
 			nc.Address = a
 		}
@@ -1232,7 +1496,7 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 			nc.Links = append(nc.Links, l)
 		}
 		custs.f.Customers = append(custs.f.Customers, nc)
-		custs.f.NextID++
+		created = nc.ID
 
 	case "update":
 		name, err := custCleanText(req.Name, 60)
@@ -1244,8 +1508,8 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 			return fail("E-CUST-02", fmt.Errorf("note: %v", err))
 		}
 		a := strings.TrimSpace(req.Address)
-		if a != "" && !validBagherHost(a) {
-			return fail("E-CUST-02", fmt.Errorf("address: an IP address or a domain"))
+		if a != "" && !custValidAddress(a) {
+			return fail("E-CUST-02", fmt.Errorf("address: an IPv4 address or a domain"))
 		}
 		if err := custValidatePlan(req.QuotaGB, req.RateMbit, 0); err != nil {
 			return fail("E-CUST-02", err)
@@ -1364,14 +1628,25 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 	if err := custSaveLocked(); err != nil {
 		return fail("E-CUST-06", err)
 	}
-	return "", nil, removed
+	return "", nil, removed, created
+}
+
+// custValidAddress: an IPv4 address or a domain (the relays bind IPv4 only).
+func custValidAddress(a string) bool {
+	if ip := net.ParseIP(a); ip != nil {
+		return ip.To4() != nil
+	}
+	return validBagherHost(a)
 }
 
 // custAPIMu serialises changes: the port checks run before custs is locked.
 var custAPIMu sync.Mutex
 
 func cloneCustomersFile(f customersFile) customersFile {
-	out := customersFile{NextID: f.NextID, Customers: make([]customer, len(f.Customers))}
+	out := customersFile{NextID: f.NextID, Customers: make([]customer, len(f.Customers)), Counters: map[string]uint64{}}
+	for k, v := range f.Counters {
+		out.Counters[k] = v
+	}
 	for i, c := range f.Customers {
 		out.Customers[i] = c
 		out.Customers[i].Links = make([]customerLink, len(c.Links))
@@ -1474,6 +1749,77 @@ func handleCustomersKit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ---- the frps plugin: which proxies a customer's frpc may open ----
+
+// custPluginKey is the path secret of a link's plugin calls (frps sends it
+// from the config; the link token itself never appears in a URL).
+func custPluginKey(token string) string {
+	h := sha256.Sum256([]byte("hashem-sell-plugin\x00" + token))
+	return hex.EncodeToString(h[:16])
+}
+
+// custPluginVerdict says why a NewProxy is refused, "" to allow it: tcp on a
+// sold port, udp only where UDP is sold. stcp, sudp, xtcp, http, https and
+// tcpmux are refused (they would bypass the billing and the speed cap).
+func custPluginVerdict(l customerLink, typ string, port int) string {
+	switch {
+	case typ != "tcp" && typ != "udp":
+		return "only tcp and udp proxies are allowed on this tunnel"
+	case typ == "udp" && !l.UDP:
+		return "UDP is not part of this tunnel"
+	case !hasInt(l.Ports, port):
+		return fmt.Sprintf("port %d is not part of this tunnel", port)
+	}
+	return ""
+}
+
+// handleCustomerPlugin answers frps's NewProxy calls (POST /_hsplugin/<key>,
+// from this server only).
+func handleCustomerPlugin(w http.ResponseWriter, r *http.Request) {
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		http.NotFound(w, r)
+		return
+	}
+	key := r.PathValue("key")
+	var link *customerLink
+	custs.Lock()
+	custLoadLocked()
+	for _, c := range custs.f.Customers {
+		for _, l := range c.Links {
+			if subtle.ConstantTimeCompare([]byte(custPluginKey(l.Token)), []byte(key)) == 1 {
+				ll := l
+				link = &ll
+			}
+		}
+	}
+	custs.Unlock()
+	if link == nil {
+		http.NotFound(w, r)
+		return
+	}
+	var req struct {
+		Op      string `json:"op"`
+		Content struct {
+			ProxyType  string `json:"proxy_type"`
+			RemotePort int    `json:"remote_port"`
+		} `json:"content"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		writeJSON(w, map[string]any{"reject": true, "reject_reason": "bad request"})
+		return
+	}
+	if req.Op != "NewProxy" {
+		writeJSON(w, map[string]any{"reject": false, "unchange": true})
+		return
+	}
+	if why := custPluginVerdict(*link, req.Content.ProxyType, req.Content.RemotePort); why != "" {
+		writeJSON(w, map[string]any{"reject": true, "reject_reason": why})
+		return
+	}
+	writeJSON(w, map[string]any{"reject": false, "unchange": true})
+}
+
 // ---- the customer's status page data (/_hs/<token>.json) ----
 
 type custPublic struct {
@@ -1540,8 +1886,17 @@ var custStatusLimiter = struct {
 func custStatusAllowed(ip string, now time.Time) bool {
 	custStatusLimiter.Lock()
 	defer custStatusLimiter.Unlock()
-	if len(custStatusLimiter.hits) > 10000 {
-		custStatusLimiter.hits = map[string][]time.Time{}
+	if _, known := custStatusLimiter.hits[ip]; !known && len(custStatusLimiter.hits) >= 10000 {
+		// forget addresses that went quiet; a full table refuses new ones
+		// instead of starting everyone's count again
+		for k, ts := range custStatusLimiter.hits {
+			if len(ts) == 0 || now.Sub(ts[len(ts)-1]) >= time.Minute {
+				delete(custStatusLimiter.hits, k)
+			}
+		}
+		if len(custStatusLimiter.hits) >= 10000 {
+			return false
+		}
 	}
 	keep := custStatusLimiter.hits[ip][:0]
 	for _, t := range custStatusLimiter.hits[ip] {
@@ -1558,7 +1913,7 @@ func custStatusAllowed(ip string, now time.Time) bool {
 }
 
 // handleCustomerStatus serves /_hs/<token> (the page) and /_hs/<token>.json.
-// A wrong token is a plain 404, the same as any unknown path.
+// A wrong token is a plain 404 that says nothing about customers.
 func handleCustomerStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow")

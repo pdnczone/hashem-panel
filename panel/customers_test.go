@@ -44,10 +44,10 @@ func (l *custLab) reset() {
 
 func resetCustState() {
 	custs.Lock()
-	custs.loaded, custs.f, custs.last, custs.speed, custs.at, custs.dirty, custs.err = false, customersFile{}, nil, nil, time.Time{}, false, ""
+	custs.loaded, custs.loadErr, custs.f, custs.speed, custs.at, custs.dirty, custs.err = false, "", customersFile{}, nil, time.Time{}, false, ""
 	custs.Unlock()
 	custApplied.ipt, custApplied.tc, custApplied.tcIf, custApplied.tcCheck = "", "", "", time.Time{}
-	custApplied.police, custApplied.cleaned, custApplied.running, custApplied.binSize = nil, false, nil, 0
+	custApplied.police, custApplied.cleaned, custApplied.running, custApplied.swept, custApplied.reserved = nil, false, nil, false, ""
 }
 
 func newCustLab(t *testing.T) *custLab {
@@ -56,7 +56,10 @@ func newCustLab(t *testing.T) *custLab {
 	l := &custLab{}
 	oldUnit, oldBin, oldSrc := engineUnitDir, custBinDir, custFrpsSrc
 	oldRun, oldSave, oldIf, oldAlert, oldBusy, oldSys := custRun, custSaveOut, custIface, custAlert, custPortBusy, runSystemctl
-	oldActive, oldLinked := custUnitsActive, custLinked
+	oldActive, oldLinked, oldLimRun, oldSysctl := custUnitsActive, custLinked, limitsRun, custReserveSysctl
+	custReserveSysctl = filepath.Join(dir, "reserved")
+	_ = os.WriteFile(custReserveSysctl, []byte("7000-7002\n"), 0o644)
+	limitsRun = func(name string, args ...string) ([]byte, error) { return nil, nil } // tc filter show
 	engineUnitDir = filepath.Join(dir, "systemd")
 	custBinDir = filepath.Join(dir, "hashem-sell")
 	custFrpsSrc = filepath.Join(dir, "frps-src")
@@ -74,8 +77,11 @@ func newCustLab(t *testing.T) *custLab {
 			return []byte("boom"), fmt.Errorf("exit 1")
 		}
 		if name == "iptables-restore" {
+			// a rebuilt chain counts from zero (args[len-1] is the rules file)
+			data, _ := os.ReadFile(args[len(args)-1])
+			_ = os.WriteFile(filepath.Join(configDir, "customers.v4"), data, 0o600)
 			l.mu.Lock()
-			l.save = chainSave(nil) // a rebuilt chain counts from zero
+			l.save = chainSave(nil)
 			l.mu.Unlock()
 		}
 		if name == "tc" && len(args) > 1 && args[0] == "qdisc" && args[1] == "show" {
@@ -107,19 +113,32 @@ func newCustLab(t *testing.T) *custLab {
 	t.Cleanup(func() {
 		engineUnitDir, custBinDir, custFrpsSrc = oldUnit, oldBin, oldSrc
 		custRun, custSaveOut, custIface, custAlert, custPortBusy, runSystemctl = oldRun, oldSave, oldIf, oldAlert, oldBusy, oldSys
-		custUnitsActive, custLinked = oldActive, oldLinked
+		custUnitsActive, custLinked, limitsRun, custReserveSysctl = oldActive, oldLinked, oldLimRun, oldSysctl
 		resetCustState()
 	})
 	return l
 }
 
-// chainSave is iptables-save -c output with the chain hooked in and these
-// byte counters by comment.
+// chainSave is iptables-save -c output with the chain as the panel last
+// loaded it (customers.v4), hooked in, and these byte counters by comment
+// (on the first rule of each comment).
 func chainSave(counters map[string]uint64) string {
 	var b strings.Builder
 	b.WriteString("*filter\n:INPUT ACCEPT [0:0]\n:" + custChain + " - [0:0]\n[1:1] -A INPUT -j " + custChain + "\n[1:1] -A OUTPUT -j " + custChain + "\n")
-	for k, v := range counters {
-		fmt.Fprintf(&b, "[10:%d] -A %s -p tcp -m tcp --dport 443 -m comment --comment %s\n", v, custChain, k)
+	rules, _ := os.ReadFile(filepath.Join(configDir, "customers.v4"))
+	done := map[string]bool{}
+	for _, l := range strings.Split(string(rules), "\n") {
+		if !strings.HasPrefix(l, "-A "+custChain+" ") {
+			continue
+		}
+		var n uint64
+		f := strings.Fields(l)
+		for i := 0; i+1 < len(f); i++ {
+			if f[i] == "--comment" && !done[f[i+1]] {
+				n, done[f[i+1]] = counters[f[i+1]], true
+			}
+		}
+		fmt.Fprintf(&b, "[10:%d] %s\n", n, l)
 	}
 	b.WriteString("COMMIT\n")
 	return b.String()
@@ -197,7 +216,7 @@ func TestCustomersLifecycle(t *testing.T) {
 	// the chain is loaded before the units start
 	log := l.log()
 	sys := l.systemctl()
-	if !strings.Contains(log, "iptables-restore") || !strings.Contains(sys, "enable --now hsell-1-1.service") || !strings.Contains(sys, "enable --now hsell-1-2.service") {
+	if !strings.Contains(log, "iptables-restore") || !strings.Contains(sys, "start hsell-1-1.service") || !strings.Contains(sys, "start hsell-1-2.service") {
 		t.Fatalf("apply:\n%s\n--\n%s", log, sys)
 	}
 	rules, _ := os.ReadFile(filepath.Join(configDir, "customers.v4"))
@@ -251,7 +270,7 @@ func TestCustomersLifecycle(t *testing.T) {
 		t.Fatalf("cut: %d %v", code, m)
 	}
 	rules, _ = os.ReadFile(filepath.Join(configDir, "customers.v4"))
-	if !strings.Contains(string(rules), "--comment hsell-1-in -j DROP") || !strings.Contains(l.systemctl(), "disable --now hsell-1-1.service") {
+	if !strings.Contains(string(rules), "--comment hsell-1-in -j DROP") || !strings.Contains(l.systemctl(), "stop hsell-1-1.service") {
 		t.Fatalf("cut:\n%s\n--\n%s", rules, l.systemctl())
 	}
 	if strings.Contains(l.log(), "tc filter add") {
@@ -266,7 +285,7 @@ func TestCustomersLifecycle(t *testing.T) {
 	if code, m := custPost(t, `{"action":"resume","id":1}`); code != 200 {
 		t.Fatalf("resume: %d %v", code, m)
 	}
-	if !strings.Contains(l.systemctl(), "enable --now hsell-1-1.service") {
+	if !strings.Contains(l.systemctl(), "start hsell-1-1.service") {
 		t.Errorf("resume did not start the units:\n%s", l.systemctl())
 	}
 
@@ -373,7 +392,7 @@ func TestCustomersQuotaAndExpiry(t *testing.T) {
 	if c := custGet(t, 1); c.Cut != "quota" {
 		t.Fatalf("over quota: %+v", c)
 	}
-	if !strings.Contains(l.systemctl(), "disable --now hsell-1-1.service") {
+	if !strings.Contains(l.systemctl(), "stop hsell-1-1.service") {
 		t.Errorf("quota cut left the unit running:\n%s", l.systemctl())
 	}
 	// cut: usage stops counting
@@ -432,7 +451,7 @@ func TestCustomersChainFirst(t *testing.T) {
 	if code, m := custPost(t, `{"action":"create","name":"C","links":[{"ports":"443"}]}`); code != 200 {
 		t.Fatalf("create: %d %v", code, m)
 	}
-	if strings.Contains(l.systemctl(), "enable --now") {
+	if strings.Contains(l.systemctl(), "start hsell") {
 		t.Fatalf("a unit started without its counting chain:\n%s", l.systemctl())
 	}
 	if v := customersView(); !strings.Contains(fmt.Sprint(v["error"]), "iptables-restore") {
@@ -440,7 +459,7 @@ func TestCustomersChainFirst(t *testing.T) {
 	}
 	l.failRun = nil
 	customersTick(time.Now())
-	if !strings.Contains(l.systemctl(), "enable --now hsell-1-1.service") {
+	if !strings.Contains(l.systemctl(), "start hsell-1-1.service") {
 		t.Fatalf("not started once the chain loads:\n%s", l.systemctl())
 	}
 	// a later reload failure does not stop a running customer
@@ -460,7 +479,7 @@ func TestCustomersNoFrps(t *testing.T) {
 	if code, m := custPost(t, `{"action":"create","name":"N","links":[{"ports":"443"}]}`); code != 200 {
 		t.Fatalf("create: %d %v", code, m)
 	}
-	if strings.Contains(l.systemctl(), "enable --now") {
+	if strings.Contains(l.systemctl(), "start hsell") {
 		t.Errorf("started without frps:\n%s", l.systemctl())
 	}
 	if v := customersView(); !strings.Contains(fmt.Sprint(v["error"]), "frps is not installed") || v["frps_ok"] != false {
@@ -614,5 +633,123 @@ func TestCustomersFrpConfigsLoad(t *testing.T) {
 				t.Errorf("%s %s: %v\n%s\n%s", name, tr, err, out, conf)
 			}
 		}
+	}
+}
+
+func TestCustomersReviewFixes(t *testing.T) {
+	l := newCustLab(t)
+	withPro(t)
+	if code, m := custPost(t, `{"action":"create","name":"A","links":[{"ports":"443","ctrl_port":31000}]}`); code != 200 {
+		t.Fatalf("create: %d %v", code, m)
+	}
+	// a request's id/link_id cannot let a second customer take a sold port
+	if code, m := custPost(t, `{"action":"create","id":1,"link_id":1,"name":"B","links":[{"ports":"443"}]}`); code != 409 {
+		t.Errorf("create with id/link_id on a sold port: %d %v", code, m)
+	}
+	if code, m := custPost(t, `{"action":"link-add","id":1,"link_id":1,"link":{"ports":"443"}}`); code != 409 {
+		t.Errorf("link-add repeating a port: %d %v", code, m)
+	}
+	if code, m := custPost(t, `{"action":"update","id":1,"name":"A","address":"2001:db8::1"}`); code != 400 || !strings.Contains(fmt.Sprint(m["error"]), "IPv4") {
+		t.Errorf("an IPv6 address: %d %v", code, m)
+	}
+
+	// the frps plugin: tcp on sold ports only, udp only when sold, from loopback
+	c := custGet(t, 1)
+	conf, _ := os.ReadFile(custConfPath(1, 1))
+	key := custPluginKey(c.Links[0].Token)
+	if !strings.Contains(string(conf), `path = "/_hsplugin/`+key+`"`) || !strings.Contains(string(conf), fmt.Sprintf(`addr = "127.0.0.1:%d"`, cfg.Port)) {
+		t.Fatalf("frps config lacks the plugin:\n%s", conf)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /_hsplugin/{key}", handleCustomerPlugin)
+	plug := func(remote, k, typ string, port int) (int, map[string]any) {
+		body := fmt.Sprintf(`{"version":"0.1.0","op":"NewProxy","content":{"proxy_name":"x","proxy_type":%q,"remote_port":%d}}`, typ, port)
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/_hsplugin/"+k+"?op=NewProxy", strings.NewReader(body))
+		req.RemoteAddr = remote
+		mux.ServeHTTP(rr, req)
+		var m map[string]any
+		_ = json.Unmarshal(rr.Body.Bytes(), &m)
+		return rr.Code, m
+	}
+	for _, x := range []struct {
+		typ    string
+		port   int
+		reject bool
+	}{{"tcp", 443, false}, {"tcp", 80, true}, {"udp", 443, true}, {"stcp", 0, true}, {"sudp", 0, true}, {"xtcp", 0, true}, {"http", 0, true}} {
+		if code, m := plug("127.0.0.1:5000", key, x.typ, x.port); code != 200 || m["reject"] != x.reject {
+			t.Errorf("%s/%d: %d %v, want reject=%v", x.typ, x.port, code, m, x.reject)
+		}
+	}
+	if code, _ := plug("203.0.113.5:5000", key, "tcp", 443); code != 404 {
+		t.Errorf("a plugin call from outside: %d", code)
+	}
+	if code, _ := plug("127.0.0.1:5000", strings.Repeat("0", 32), "tcp", 443); code != 404 {
+		t.Errorf("a wrong key: %d", code)
+	}
+
+	// a panel restart bills what passed while it was down, nothing twice
+	l.save = chainSave(map[string]uint64{"hsell-1-in": 1000, "hsell-1-out": 2000})
+	customersTick(time.Now())
+	l.save = chainSave(map[string]uint64{"hsell-1-in": 5000, "hsell-1-out": 9000})
+	custs.Lock()
+	custs.loaded = false // the panel starts again: everything from disk
+	custs.Unlock()
+	custApplied.ipt, custApplied.running, custApplied.swept = "", nil, false
+	l.reset()
+	customersTick(time.Now())
+	if c := custGet(t, 1); c.UsedRx != 5000 || c.UsedTx != 9000 {
+		t.Errorf("after a restart: rx %d tx %d, want 5000 9000", c.UsedRx, c.UsedTx)
+	}
+	if strings.Contains(l.log(), "iptables-restore") {
+		t.Errorf("a restart reloaded an intact chain (its counters would be lost):\n%s", l.log())
+	}
+	// a flushed chain is noticed and rebuilt
+	l.save = strings.Replace(chainSave(nil), "-A HASHEM_CUST -p tcp -m tcp --dport 443", "-A HASHEM_CUST -p tcp -m tcp --dport 444", 1)
+	l.reset()
+	customersTick(time.Now())
+	if !strings.Contains(l.log(), "iptables-restore") {
+		t.Errorf("a changed chain was not rebuilt")
+	}
+
+	// sold ports are kept out of the ephemeral range, the kernel's list kept
+	if r, _ := os.ReadFile(custReserveSysctl); !strings.HasPrefix(string(r), "7000-7002,") || !strings.Contains(string(r), "31000") {
+		t.Errorf("reserved ports: %q", r)
+	}
+	if r, _ := os.ReadFile(custReservedPath()); !strings.Contains(string(r), "\n31000\n") && !strings.HasPrefix(string(r), "31000\n") {
+		t.Errorf("ports.reserved: %q", r)
+	}
+
+	// a unit no customer has is removed once at start
+	stray := filepath.Join(engineUnitDir, "hsell-9-1.service")
+	_ = os.WriteFile(stray, []byte("x"), 0o644)
+	custApplied.swept = false
+	l.reset()
+	customersTick(time.Now())
+	if _, err := os.Stat(stray); !os.IsNotExist(err) || !strings.Contains(l.systemctl(), "disable --now hsell-9-1.service") {
+		t.Errorf("stray unit: %v\n%s", err, l.systemctl())
+	}
+	if _, err := os.Stat(custUnitPath(1, 1)); err != nil {
+		t.Errorf("the sweep removed a real unit: %v", err)
+	}
+	if u, _ := os.ReadFile(custUnitPath(1, 1)); strings.Contains(string(u), "[Install]") {
+		t.Errorf("units must not start at boot before the panel:\n%s", u)
+	}
+
+	// a corrupt customers.json changes nothing
+	_ = os.WriteFile(customersPath(), []byte("{broken"), 0o600)
+	custs.Lock()
+	custs.loaded = false
+	custs.Unlock()
+	l.reset()
+	customersTick(time.Now())
+	if log := l.log() + l.systemctl(); strings.Contains(log, "-X HASHEM_CUST") || strings.Contains(log, "stop") || strings.Contains(log, "disable") {
+		t.Errorf("a corrupt file dropped rules or units:\n%s", log)
+	}
+	if code, m := custPost(t, `{"action":"cut","id":1}`); code != 500 || m["error_code"] != "E-CUST-06" {
+		t.Errorf("a change on a corrupt file: %d %v", code, m)
+	}
+	if b, _ := os.ReadFile(customersPath()); string(b) != "{broken" {
+		t.Errorf("the corrupt file was overwritten: %q", b)
 	}
 }
