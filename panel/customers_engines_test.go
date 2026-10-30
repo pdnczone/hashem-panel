@@ -221,29 +221,31 @@ func TestCustomersXrayKitMatches(t *testing.T) {
 	installer, _ := filepath.Abs("../tools/hashem-customer.sh")
 	c := customer{ID: 4, Name: "x", Token: strings.Repeat("a", 32)}
 	for i, preset := range custTransports[custEngineXray] {
-		for _, udp := range []bool{false, true} {
-			l := customerLink{ID: i + 1, Engine: custEngineXray, Transport: preset, CtrlPort: 31000 + i, Ports: []int{443, 2083}, UDP: udp, Token: strings.Repeat("b", 32)}
-			if err := custLinkSecrets(&l, nil, ""); err != nil {
-				t.Fatal(err)
-			}
-			kit := custKit(c, l, "203.0.113.7")
-			out, err := exec.Command("bash", installer, "config", kit).CombinedOutput()
-			if err != nil {
-				t.Fatalf("%s: installer: %v\n%s", preset, err, out)
-			}
-			var got any
-			if err := json.Unmarshal(out, &got); err != nil {
-				t.Fatalf("%s: installer output is not JSON: %v\n%s", preset, err, out)
-			}
-			_, manual, err := custClientConf(c, l, "203.0.113.7")
-			if err != nil {
-				t.Fatal(err)
-			}
-			var want any
-			_ = json.Unmarshal([]byte(manual), &want)
-			if !reflect.DeepEqual(got, want) {
-				g, _ := json.MarshalIndent(got, "", " ")
-				t.Errorf("%s udp=%v: the installer's config differs from the panel's:\ninstaller:\n%s\npanel:\n%s", preset, udp, g, manual)
+		for _, eng := range []string{custEngineXray, custEngineXrayDirect} {
+			for _, udp := range []bool{false, true} {
+				l := customerLink{ID: i + 1, Engine: eng, Transport: preset, CtrlPort: 31000 + i, Ports: []int{443, 2083}, UDP: udp, Token: strings.Repeat("b", 32), Remote: "198.51.100.9"}
+				if err := custLinkSecrets(&l, nil, ""); err != nil {
+					t.Fatal(err)
+				}
+				kit := custKit(c, l, "203.0.113.7")
+				out, err := exec.Command("bash", installer, "config", kit).CombinedOutput()
+				if err != nil {
+					t.Fatalf("%s: installer: %v\n%s", preset, err, out)
+				}
+				var got any
+				if err := json.Unmarshal(out, &got); err != nil {
+					t.Fatalf("%s: installer output is not JSON: %v\n%s", preset, err, out)
+				}
+				_, manual, err := custClientConf(c, l, "203.0.113.7")
+				if err != nil {
+					t.Fatal(err)
+				}
+				var want any
+				_ = json.Unmarshal([]byte(manual), &want)
+				if !reflect.DeepEqual(got, want) {
+					g, _ := json.MarshalIndent(got, "", " ")
+					t.Errorf("%s %s udp=%v: the installer's config differs from the panel's:\ninstaller:\n%s\npanel:\n%s", eng, preset, udp, g, manual)
+				}
 			}
 		}
 	}
@@ -324,4 +326,139 @@ func TestCustomersEngineConfigsLoad(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestCustomersDialEngines: Xray direct and Bagher, the links this server
+// dials (P3).
+func TestCustomersDialEngines(t *testing.T) {
+	newCustLab(t)
+	withPro(t)
+	oldPeer := custPeerIPs
+	custPeerIPs = func(h string) []string {
+		if h == "fo.example.org" {
+			return []string{"198.51.100.20"}
+		}
+		return oldPeer(h)
+	}
+	t.Cleanup(func() { custPeerIPs = oldPeer })
+	code, m := custPost(t, `{"action":"create","name":"dial","days":30,"rate_mbit":10,"address":"iran.example.com","links":[
+		{"name":"xd","engine":"xray-direct","transport":"reality","ports":"9443","remote":"198.51.100.9","ctrl_port":8443},
+		{"name":"bg","engine":"bagher","transport":"ssh","ports":"9444","udp":true,"remote":"fo.example.org","ctrl_port":31500}]}`)
+	if code != 200 {
+		t.Fatalf("create: %d %v", code, m)
+	}
+	c := custGet(t, 1)
+	xd, bg := c.Links[0], c.Links[1]
+
+	// claims: xray-direct's port is the foreign server's, Bagher's frps is local
+	idx := indexClaims(customerPortClaims())
+	if idx.owner("tcp", 8443, nil) != "" || idx.owner("tcp", 31500, nil) == "" {
+		t.Error("claims: xray-direct's tunnel port is not this server's; Bagher's frps port is")
+	}
+	// xray-direct: Iran dials the foreign server; the kit carries the private key
+	data, _ := os.ReadFile(custConfPath(1, 1, custEngineXrayDirect))
+	if !strings.Contains(string(data), `"address": "198.51.100.9"`) || strings.Contains(string(data), xd.Xray.Keys.PrivateKey) {
+		t.Errorf("xray-direct Iran config:\n%s", data)
+	}
+	_, body := custKitOf(t, 1, 1)
+	if !strings.Contains(body, "engine=xray-direct\n") || !strings.Contains(body, "pk="+xd.Xray.Keys.PrivateKey+"\n") {
+		t.Errorf("xray-direct kit:\n%s", body)
+	}
+
+	// Bagher: frps on 127.0.0.1 only; no unit before the reply code
+	frps, _ := os.ReadFile(custConfPath(1, 2, custEngineBagher))
+	if !strings.Contains(string(frps), `bindAddr = "127.0.0.1"`) || !strings.Contains(string(frps), "bindPort = 31500") {
+		t.Errorf("bagher frps:\n%s", frps)
+	}
+	if v := customersView()["customers"].([]custView)[0].Links[1]; !v.AwaitReply {
+		t.Error("a Bagher link without a reply code does not say it waits")
+	}
+	if strings.Contains(custLabSys(t), "start hsell-1-2.service") {
+		t.Error("the Bagher unit started before the reply code")
+	}
+	km, body := custKitOf(t, 1, 2)
+	if !strings.Contains(body, "engine=bagher\n") || !strings.Contains(body, "sshpub="+bg.SSHPub+"\n") || strings.Contains(body, "PRIVATE") {
+		t.Errorf("bagher kit:\n%s", body)
+	}
+	if !strings.Contains(fmt.Sprint(km["manual"]), `permitlisten="127.0.0.1:31500",permitopen="127.0.0.1:31500"`) {
+		t.Errorf("bagher manual setup lacks the locked-down key line:\n%v", km["manual"])
+	}
+	raw, _ := json.Marshal(customersView())
+	if strings.Contains(string(raw), "OPENSSH PRIVATE KEY") || strings.Contains(string(raw), bg.SSHPub) {
+		t.Error("the view carries the Bagher key")
+	}
+
+	// the installer's reply code, pasted back: the unit starts with the host key pinned
+	installer, _ := filepath.Abs("../tools/hashem-customer.sh")
+	hk := t.TempDir()
+	hostPub := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl root@fo"
+	_ = os.WriteFile(filepath.Join(hk, "ssh_host_ed25519_key.pub"), []byte(hostPub+"\n"), 0o644)
+	cmd := exec.Command("bash", installer, "reply", fmt.Sprint(km["kit"]))
+	cmd.Env = append(os.Environ(), "HASHEM_SSH_DIR="+hk, "HASHEM_SSH_PORT=2222")
+	reply, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("reply: %v %s", err, reply)
+	}
+	// another link's code is refused
+	code, m = custPost(t, fmt.Sprintf(`{"action":"link-reply","id":1,"link_id":1,"reply":%q}`, strings.TrimSpace(string(reply))))
+	if code == 200 {
+		t.Error("a reply code was taken by an Xray link")
+	}
+	code, m = custPost(t, fmt.Sprintf(`{"action":"link-reply","id":1,"link_id":2,"reply":%q}`, strings.TrimSpace(string(reply))))
+	if code != 200 {
+		t.Fatalf("link-reply: %d %v", code, m)
+	}
+	bg = custGet(t, 1).Links[1]
+	if bg.SSHPort != 2222 || bg.SSHUser != "hcust" || len(bg.HostKeys) != 1 || !strings.HasPrefix(hostPub, bg.HostKeys[0]) {
+		t.Errorf("reply: port %d user %q keys %v", bg.SSHPort, bg.SSHUser, bg.HostKeys)
+	}
+	known, _ := os.ReadFile(custCertPath(1, 2, ".known"))
+	if string(known) != "[fo.example.org]:2222 "+bg.HostKeys[0]+"\n" {
+		t.Errorf("known_hosts: %q", known)
+	}
+	unit, _ := os.ReadFile(custUnitPath(1, 2))
+	for _, want := range []string{custEngineBin("bagher") + " sell-bagher -frps " + custEngineBin("frp"), "-host fo.example.org -port 2222 -user hcust -frp-port 31500",
+		"-key " + custCertPath(1, 2, ".ssh"), "BindReadOnlyPaths=" + custConfPath(1, 2, "bagher") + " " + custCertPath(1, 2, ".ssh") + " " + custCertPath(1, 2, ".known")} {
+		if !strings.Contains(string(unit), want) {
+			t.Errorf("bagher unit lacks %q:\n%s", want, unit)
+		}
+	}
+	if !strings.Contains(custLabSys(t), "start hsell-1-2.service") {
+		t.Error("the Bagher unit did not start after the reply code")
+	}
+	if _, err := os.Stat(filepath.Join(custBinDir, "frps")); err != nil {
+		t.Error("no frps copy for the Bagher relay")
+	}
+	// a new address forgets the pinned keys
+	custPost(t, `{"action":"link-update","id":1,"link_id":2,"link":{"engine":"bagher","transport":"ssh","ports":"9444","remote":"198.51.100.30"}}`)
+	if l := custGet(t, 1).Links[1]; len(l.HostKeys) != 0 || l.SSHKey != bg.SSHKey {
+		t.Errorf("a new address: host keys %v, key kept %v", l.HostKeys, l.SSHKey == bg.SSHKey)
+	}
+
+	// the cap on data from the foreign servers: from their address and port
+	cmds := custTCArgs([]custIfc{{"eth0", []string{"192.0.2.10"}}}, []customer{custGet(t, 1)})
+	text := fmt.Sprint(cmds)
+	if !strings.Contains(text, "src 198.51.100.9/32 match ip sport 8443") || !strings.Contains(text, "src 198.51.100.30/32 match ip sport 22") {
+		t.Errorf("tc for dialing links:\n%s", text)
+	}
+	if strings.Contains(text, "dport 8443") {
+		t.Error("tc polices xray-direct's foreign port as a local one")
+	}
+
+	// a reply code that is not one
+	for _, bad := range []string{"hsr1.%%%", "hsk1.AAAA", "hsr1." + base64.RawURLEncoding.EncodeToString([]byte("v=1\nname=hsell-1-2\nport=22\nuser=root;x\nkey="+hostPub+"\n")),
+		"hsr1." + base64.RawURLEncoding.EncodeToString([]byte("v=1\nname=hsell-1-2\nport=22\nuser=hcust\nkey=ssh-ed25519 AAAA\n"))} {
+		if code, _ := custPost(t, fmt.Sprintf(`{"action":"link-reply","id":1,"link_id":2,"reply":%q}`, bad)); code == 200 {
+			t.Errorf("reply code %q was taken", bad)
+		}
+	}
+}
+
+func custLabSys(t *testing.T) string {
+	t.Helper()
+	l := custLabCurrent
+	if l == nil {
+		t.Fatal("no custLab")
+	}
+	return l.systemctl()
 }

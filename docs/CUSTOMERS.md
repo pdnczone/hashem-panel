@@ -19,7 +19,18 @@ services.
   - **Xray reverse** (Reality, XHTTP + Reality, gRPC + Reality, mKCP). The
     customer's server dials yours; the link's user may only open the reverse
     link, never use your server as a proxy.
-- One customer can mix engines: each foreign server has its own.
+  - **Xray direct** (the same presets). Your server dials the customer's
+    server, for when it can reach it and not the other way round. The
+    customer's server serves only its own 127.0.0.1 on the sold ports.
+  - **Bagher (SSH)**. Your server logs in to the customer's sshd with a key
+    of the link's own and runs FRP through that SSH connection. On the
+    customer's server the installer makes a user for it (`hcust`: no
+    password, no shell) whose key may only open the tunnel's port. The
+    installer then prints a **reply code** (sshd's port, the user and the
+    server's host keys); paste it on the link (**Reply code**). Your server
+    trusts exactly those host keys; until then the link waits.
+- One customer can mix engines: each foreign server has its own. For Xray
+  direct and Bagher give the foreign server's address.
 - **Volume:** only users' traffic is counted (the ports users connect to),
   in both directions, summed over all of the customer's foreign servers.
 - **Speed:** one cap for the whole customer, shared by all of its servers
@@ -97,4 +108,7 @@ from **Status page** on the customer's card or from the kit.
 - The Reality SNI must be a public domain: Reality hands every handshake
   it does not recognise to that site.
 - Every relay sees only its own config of the panel's directory.
+- For Xray direct and Bagher the download cap matches the data that comes
+  from the foreign server's address and port; a domain is resolved every
+  few minutes.
 - Errors are `E-CUST-01` to `E-CUST-06` (see [ERROR_CODES.md](ERROR_CODES.md)).

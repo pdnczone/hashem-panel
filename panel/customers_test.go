@@ -14,6 +14,9 @@ import (
 	"time"
 )
 
+// custLabCurrent is the last newCustLab (for helpers).
+var custLabCurrent *custLab
+
 // custLab is a customers environment with every host command stubbed.
 type custLab struct {
 	mu      sync.Mutex
@@ -54,6 +57,7 @@ func newCustLab(t *testing.T) *custLab {
 	t.Helper()
 	dir := registryEnv(t)
 	l := &custLab{}
+	custLabCurrent = l
 	oldUnit, oldBin, oldSrc, oldBH, oldXray := engineUnitDir, custBinDir, custFrpsSrc, custBackhaulSrc, custXraySrc
 	oldRun, oldSave, oldIf, oldAlert, oldBusy, oldSys := custRun, custSaveOut, custIfaces, custAlert, custPortBusy, runSystemctl
 	oldActive, oldLinked, oldLimRun, oldSysctl := custUnitsActive, custLinked, limitsRun, custReserveSysctl

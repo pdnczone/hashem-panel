@@ -117,6 +117,29 @@ status page (FA/EN, light/dark, Hashem design tokens).
 ### P3: Xray direct and Bagher (Bagher needs the customer to run a command
 that prints a reply code the seller pastes back).
 
+- Dialing links (`dials()`): this server connects to the link's `Remote`.
+  The users' side (chain, upload cap) is unchanged; the download cap
+  matches packets from Remote's IPv4 address(es) and port (resolved and
+  cached 5 min), and "connected" is an established connection to it.
+- Xray direct (engine `xray-direct`, presets reality, xhttp, grpc, kcp):
+  `buildXrayConfig` in direct mode; the control port is the foreign
+  server's (no claim here). The kit carries the Reality private key (the
+  foreign server serves it); the installer's config equals the panel's.
+- Bagher (engine `bagher`): an ed25519 key per link; frps (plugin as for
+  FRP) on 127.0.0.1 only; the unit runs `hashem-relay sell-bagher`, a copy
+  of the panel binary that runs frps and the SSH carrier (strict
+  known_hosts, nothing trusted on first use) and reads nothing but its
+  flags' files. The customer's installer makes `hcust` (no password,
+  `*` so sshd accepts it without PAM), adds
+  `command="/bin/false",restrict,port-forwarding,permitlisten=..,permitopen=..`
+  for the link's port and prints the reply code `hsr1.` (name, sshd port,
+  user, host keys); `link-reply` stores it and only then the unit starts.
+  A new Remote drops the pinned keys.
+- Lab: Xray direct Reality and Bagher over a real sshd, both with UDP: a
+  wrong reply code does not connect, the right one does; the link's key
+  cannot open another port, listen elsewhere or run a command on the
+  customer's server; one cap for both; billing; cut/resume; clean remove.
+
 ### P4: GRE wraps and Hashem-bundle scenarios (customer runs Hashem too).
 
 ### P5: reminders (Telegram, days left / 90 % used), history, CSV export,

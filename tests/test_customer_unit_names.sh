@@ -16,7 +16,8 @@ fail=0
 units=(hsell-1-1 hsell-12-3 hsell-250-9)
 cmdlines=("/usr/local/lib/hashem-sell/frps -c /etc/gre-panel/customers/12-3.toml"
     "/usr/local/lib/hashem-sell/backhaul -c /etc/gre-panel/customers/12-4.toml"
-    "/usr/local/lib/hashem-sell/xray run -c /etc/gre-panel/customers/12-5.json")
+    "/usr/local/lib/hashem-sell/xray run -c /etc/gre-panel/customers/12-5.json"
+    "/usr/local/lib/hashem-sell/hashem-relay sell-bagher -frps /usr/local/lib/hashem-sell/frps -conf /etc/gre-panel/customers/12-6.toml")
 
 # the uninstall-everything path (and customers_teardown itself) may match
 body="$(awk '/^uninstall_all_force\(\) \{/,/^}/ {next} /^customers_teardown\(\) \{/,/^}/ {next} {print}' "$SH")"
@@ -60,7 +61,7 @@ done < <(printf '%s\n' "$body" | grep -oE 'pkill (-9 )?-f "[^"]+"' | sed -E 's/^
 # 3. pkill/killall by process name: the customer binaries are frps, backhaul and xray
 while IFS= read -r p; do
     [[ -z "$p" ]] && continue
-    for name in frps backhaul xray; do
+    for name in frps backhaul xray hashem-relay; do
         if [[ "$name" =~ ^($p)$ ]]; then
             echo "FAIL: hashem.sh 'pkill/killall $p' (by name) would kill customer $name processes"
             fail=1

@@ -536,6 +536,8 @@ func main() {
 			os.Exit(tlsProxyCmd(os.Args[2:]))
 		case "bagher-carrier":
 			os.Exit(bagherCarrierCmd(os.Args[2:]))
+		case "sell-bagher":
+			os.Exit(custBagherRelayCmd(os.Args[2:]))
 		case "pathtest":
 			os.Exit(cliPathTest(os.Args[2:]))
 		case "cluster", "mesh":

@@ -11252,12 +11252,15 @@ const CUST_ENGINES = {
   frp: { label: 'FRP', tr: ['tcp', 'websocket', 'kcp', 'quic'] },
   backhaul: { label: 'Backhaul', tr: ['tcp', 'tcpmux', 'ws', 'wsmux', 'wss', 'wssmux'] },
   xray: { label: 'Xray reverse', tr: ['reality', 'xhttp', 'grpc', 'kcp'] },
+  'xray-direct': { label: 'Xray direct', tr: ['reality', 'xhttp', 'grpc', 'kcp'], dials: true },
+  bagher: { label: 'Bagher (SSH)', tr: ['ssh'], dials: true },
 };
 const CUST_TR_LABEL = { tcp: 'TCP', websocket: 'WebSocket', kcp: 'KCP', quic: 'QUIC', tcpmux: 'TCP mux', ws: 'WS', wsmux: 'WS mux',
   wss: 'WSS', wssmux: 'WSS mux', reality: 'Reality', xhttp: 'XHTTP + Reality', grpc: 'gRPC + Reality' };
-function custTrLabel(engine, t) { return engine === 'xray' && t === 'kcp' ? 'mKCP (UDP)' : (CUST_TR_LABEL[t] || t); }
+function custTrLabel(engine, t) { return (engine === 'xray' || engine === 'xray-direct') && t === 'kcp' ? 'mKCP (UDP)' : t === 'ssh' ? 'SSH' : (CUST_TR_LABEL[t] || t); }
 function custEngLabel(l) { const e = CUST_ENGINES[l.engine || 'frp']; return (e ? tr('', e.label) : l.engine) + ' · ' + custTrLabel(l.engine || 'frp', l.transport); }
 function custLinkDot(l, c) {
+  if (l.await_reply) return ['var(--wr)', tr('', 'Waiting for the customer\'s reply code')];
   if (c.cut || !l.active) return ['var(--mu)', tr('', 'Stopped')];
   // a UDP control channel (KCP, QUIC, mKCP) shows no session to watch
   if (l.udp_ctrl && !l.linked) return ['var(--ok)', tr('', 'Running')];
@@ -11275,6 +11278,7 @@ function custMap(c) {
         <span class="cs-state" style="--c:${col}">${esc(why)}</span></div>
       <div class="cs-link-acts">
         <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openCustKit(${c.id}, ${l.id})">${esc(tr('', 'Kit'))}</button>
+        ${l.engine === 'bagher' ? `<button type="button" class="hashem-btn ${l.await_reply ? 'hashem-btn-primary' : 'hashem-btn-ghost'} u-btn-30" onclick="openCustReply(${c.id}, ${l.id})">${esc(tr('', 'Reply code'))}</button>` : ''}
         <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openCustLink(${c.id}, ${l.id})" aria-label="${esc(tr('', 'Edit'))}">${esc(tr('', 'Edit'))}</button>
         ${links.length > 1 ? `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="custLinkRemove(${c.id}, ${l.id})">${esc(tr('', 'Remove'))}</button>` : ''}
       </div></div>`;
@@ -11437,7 +11441,9 @@ function openCustLink(id, lid) {
   const c = custFind(id);
   if (!c) return;
   const l = (c.links || []).find(x => x.id === lid) || { name: '', ports: [], udp: false, engine: 'frp', transport: 'tcp', ctrl_port: 0 };
-  const hint = l.engine === 'xray'
+  const hint = l.engine === 'bagher'
+    ? tr('', 'New ports or a new control port need the kit again on the foreign server; a new address needs a new reply code.')
+    : l.engine === 'xray' || l.engine === 'xray-direct'
     ? tr('', 'Any change to an Xray link (ports, SNI, transport, control port) needs the new kit on the foreign server.')
     : tr('', 'A new control port, engine or transport needs the kit again on the foreign server; new ports only need it if the server serves them.');
   const html = custLinkFields('cl', l) + (lid ? `<div class="qs-hint">${esc(hint)}</div>` : '');
@@ -11463,7 +11469,9 @@ function custEngineSync(p, engineChanged) {
   const eng = $(p + 'Eng').value, trSel = $(p + 'Tr');
   if (engineChanged) trSel.innerHTML = custTrOptions(eng, '');
   const t = trSel.value;
-  $(p + 'SniBox').classList.toggle('hidden', !(eng === 'xray' && t !== 'kcp'));
+  $(p + 'SniBox').classList.toggle('hidden', !((eng === 'xray' || eng === 'xray-direct') && t !== 'kcp'));
+  $(p + 'RemoteBox').classList.toggle('hidden', !(CUST_ENGINES[eng] || {}).dials);
+  $(p + 'CtrlLbl').textContent = eng === 'xray-direct' ? tr('', 'Port on the foreign server') : tr('', 'Control port');
   const udp = $(p + 'Udp'), noUdp = eng === 'backhaul' && t !== 'tcp';
   udp.disabled = noUdp;
   if (noUdp) udp.checked = false;
@@ -11482,14 +11490,18 @@ function custLinkFields(p, l) {
       <div class="xr-field"><label class="qs-label" for="${p}Tr">${esc(tr('', 'Transport'))}</label><select class="hashem-input" id="${p}Tr" onchange="custEngineSync('${p}', false)">${custTrOptions(eng, l.transport)}</select></div>
     </div>
     <div class="xr-fields">
-      <div class="xr-field"><label class="qs-label" for="${p}Ctrl">${esc(tr('', 'Control port'))}</label><input class="hashem-input lm-num" id="${p}Ctrl" type="number" min="1" max="65535" placeholder="${esc(tr('', 'Automatic'))}" value="${l.ctrl_port || ''}"></div>
-      <div class="xr-field${eng === 'xray' && l.transport !== 'kcp' ? '' : ' hidden'}" id="${p}SniBox"><label class="qs-label" for="${p}Sni">${esc(tr('', 'Reality SNI'))}</label><input class="hashem-input" id="${p}Sni" maxlength="253" placeholder="${esc(tr('', 'Automatic'))}" value="${esc(l.sni || '')}"></div>
+      <div class="xr-field"><label class="qs-label" for="${p}Ctrl" id="${p}CtrlLbl">${esc(eng === 'xray-direct' ? tr('', 'Port on the foreign server') : tr('', 'Control port'))}</label><input class="hashem-input lm-num" id="${p}Ctrl" type="number" min="1" max="65535" placeholder="${esc(tr('', 'Automatic'))}" value="${l.ctrl_port || ''}"></div>
+      <div class="xr-field${(eng === 'xray' || eng === 'xray-direct') && l.transport !== 'kcp' ? '' : ' hidden'}" id="${p}SniBox"><label class="qs-label" for="${p}Sni">${esc(tr('', 'Reality SNI'))}</label><input class="hashem-input" id="${p}Sni" maxlength="253" placeholder="${esc(tr('', 'Automatic'))}" value="${esc(l.sni || '')}"></div>
+    </div>
+    <div class="xr-fields${(CUST_ENGINES[eng] || {}).dials ? '' : ' hidden'}" id="${p}RemoteBox">
+      <div class="xr-field"><label class="qs-label" for="${p}Remote">${esc(tr('', 'Foreign server address'))}</label><input class="hashem-input lm-num" id="${p}Remote" maxlength="253" placeholder="203.0.113.5" value="${esc(l.remote || '')}">
+      <div class="qs-hint">${esc(tr('', 'This server connects to it: its IPv4 address or a domain.'))}</div></div>
     </div>
     <label class="xr-check"><input type="checkbox" id="${p}Udp"${l.udp && !noUdp ? ' checked' : ''}${noUdp ? ' disabled' : ''}> ${esc(tr('', 'UDP too (games, calls, QUIC)'))}</label>
     <div class="qs-hint${noUdp ? '' : ' hidden'}" id="${p}UdpHint">${esc(tr('', 'Backhaul carries UDP on the TCP transport only.'))}</div>`;
 }
 const custLinkRead = p => ({ name: $(p + 'Name').value, ports: $(p + 'Ports').value, engine: $(p + 'Eng').value, transport: $(p + 'Tr').value,
-  sni: $(p + 'Sni').value.trim(), ctrl_port: parseInt($(p + 'Ctrl').value, 10) || 0, udp: $(p + 'Udp').checked });
+  sni: $(p + 'Sni').value.trim(), remote: $(p + 'Remote').value.trim(), ctrl_port: parseInt($(p + 'Ctrl').value, 10) || 0, udp: $(p + 'Udp').checked });
 
 async function custLinkRemove(id, lid) {
   const c = custFind(id);
@@ -11517,13 +11529,28 @@ async function custAction(action, id) {
   } catch (e) { toastErr(tr('', 'Failed'), e.message); }
 }
 
+// a Bagher link: the customer's reply code (their sshd's port and host keys)
+function openCustReply(id, lid) {
+  if (!isProLicensed('customers')) { openBagherLicModal('customers'); return; }
+  const c = custFind(id);
+  const l = ((c && c.links) || []).find(x => x.id === lid) || {};
+  const html = `<p class="qs-hint">${esc(tr('', 'After the kit, the customer\'s installer prints a reply code (hsr1.…). Paste it here: this server then logs in to their server, trusting only the host keys in the code.'))}</p>
+    <textarea class="hashem-input lm-num" id="custReplyCode" rows="5" placeholder="hsr1.…" spellcheck="false"></textarea>`;
+  custModal(tr('', 'Reply code') + ' — ' + ((c && c.name) || '') + (l.name ? ' · ' + l.name : ''), html, tr('', 'Save'), async () => {
+    const d = await api('/api/customers', { action: 'link-reply', id, link_id: lid, reply: $('custReplyCode').value.trim() });
+    renderCustomers(d);
+    toastOk(tr('', 'Reply code saved'), (c && c.name) || '');
+  });
+}
+
 // ---- the kit: what the customer runs on a foreign server ----
 function custKitEngine(k) {
-  return { backhaul: 'Backhaul v0.7.2', xray: 'Xray-core v26.3.27' }[k.engine] || 'FRP v' + k.frp;
+  return { backhaul: 'Backhaul v0.7.2', xray: 'Xray-core v26.3.27', 'xray-direct': 'Xray-core v26.3.27' }[k.engine] || 'FRP v' + k.frp;
 }
 function custKitManualHint(k) {
   if (k.engine === 'backhaul') return tr('', 'For a foreign server that already runs Backhaul v0.7.2: run backhaul -c with this file.');
-  if (k.engine === 'xray') return tr('', 'For a foreign server that already runs Xray-core v26.3.27: run xray run -c with this file.');
+  if (k.engine === 'xray' || k.engine === 'xray-direct') return tr('', 'For a foreign server that already runs Xray-core v26.3.27: run xray run -c with this file.');
+  if (k.engine === 'bagher') return tr('', 'The steps in the file, then frpc v{v}. Without the installer, send the seller the reply code\'s parts by hand.').replace('{v}', k.frp);
   return tr('', 'For a foreign server that already runs frpc v{v}: run frpc -c with this file.').replace('{v}', k.frp);
 }
 async function openCustKit(id, lid) {

@@ -81,7 +81,7 @@ def tcp(port):
     while True:
         c, _ = s.accept()
         threading.Thread(target=serve, args=(c,), daemon=True).start()
-for p in range(9000, 9005):
+for p in range(9000, 9008):
     threading.Thread(target=udp, args=(p,), daemon=True).start()
     threading.Thread(target=tcp, args=(p,), daemon=True).start()
 threading.Event().wait()
@@ -143,7 +143,7 @@ r = {"up_mbit": up * 8 / 1e6 / max(t1 - t0, 1e-6) if up else 0, "down_mbit": dow
 print(json.dumps(r))
 PY
 ip netns exec $FO python3 "$TMP/sink.py" >/dev/null 2>&1 &
-for _ in $(seq 50); do ip netns exec $FO bash -c "exec 3<>/dev/tcp/127.0.0.1/9004" 2>/dev/null && break; sleep 0.1; done
+for _ in $(seq 50); do ip netns exec $FO bash -c "exec 3<>/dev/tcp/127.0.0.1/9007" 2>/dev/null && break; sleep 0.1; done
 BH=${CUST_LAB_BACKHAUL:-} XR=${CUST_LAB_XRAY:-}
 RUN='^TestCustomersLab$'
 if [[ -x "$BH" && -x "$XR" ]] && command -v openssl >/dev/null 2>&1; then
@@ -151,6 +151,21 @@ if [[ -x "$BH" && -x "$XR" ]] && command -v openssl >/dev/null 2>&1; then
     openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 -subj "/CN=lab.hashem.dev" \
         -addext "subjectAltName=DNS:lab.hashem.dev" -keyout "$TMP/site.key" -out "$TMP/site.crt" >/dev/null 2>&1
     ip netns exec $HUB python3 "$TMP/site.py" "$TMP/site.crt" "$TMP/site.key" >/dev/null 2>&1 &
+    # Xray direct: the foreign server serves Reality, borrowing the same site
+    ip netns exec $FO python3 "$TMP/site.py" "$TMP/site.crt" "$TMP/site.key" >/dev/null 2>&1 &
+    # Bagher: the hub's relay is a copy of the panel binary; the foreign server runs sshd
+    SSHD=$(command -v sshd || echo /usr/sbin/sshd)
+    if [[ -x $SSHD ]] && command -v ssh-keygen >/dev/null 2>&1; then
+        PANEL_BIN=${CUST_LAB_PANEL_BIN:-}
+        if [[ -z $PANEL_BIN ]] && command -v go >/dev/null 2>&1; then
+            (cd "$ROOT/panel" && go build -o "$TMP/gre-panel" .) && PANEL_BIN=$TMP/gre-panel
+        fi
+        if [[ -x $PANEL_BIN ]]; then
+            RUN='^TestCustomersLab(Engines|Dial)?$'
+            mkdir -p /run/sshd
+            export CUST_LAB_SSHD=$SSHD CUST_LAB_PANEL_BIN=$PANEL_BIN
+        fi
+    fi
 else
     echo "NOTE: CUST_LAB_BACKHAUL and CUST_LAB_XRAY not set: the Backhaul and Xray part is skipped"
 fi
@@ -162,7 +177,8 @@ if [[ -z $BIN ]]; then
     BIN=$TMP/customerslab.test
 fi
 (cd "$ROOT/panel" && ip netns exec $HUB env CUST_LAB_FRP_DIR="$FRP" CUST_LAB_NO_TC="${CUST_LAB_NO_TC:-}" CUST_LAB_FO_NS=$FO CUST_LAB_US_NS=$US \
-    CUST_LAB_BACKHAUL="$BH" CUST_LAB_XRAY="$XR" CUST_LAB_XRAY_TARGET=127.0.0.1:9443 \
+    CUST_LAB_BACKHAUL="$BH" CUST_LAB_XRAY="$XR" CUST_LAB_XRAY_TARGET=127.0.0.1:9443 CUST_LAB_FO_IP=10.23.0.2 \
+    CUST_LAB_SSHD="${CUST_LAB_SSHD:-}" CUST_LAB_PANEL_BIN="${CUST_LAB_PANEL_BIN:-}" \
     CUST_LAB_HUB_FO_IP=10.23.0.1 CUST_LAB_HUB_US_IP=10.24.0.1 \
     CUST_LAB_INSTALLER="$ROOT/tools/hashem-customer.sh" CUST_LAB_CLIENT="$TMP/client.py" \
     "$BIN" -test.run "$RUN" -test.v -test.timeout 20m >"$TMP/lab.log" 2>&1)
