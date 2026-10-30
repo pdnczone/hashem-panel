@@ -142,6 +142,37 @@ that prints a reply code the seller pastes back).
 
 ### P4: GRE wraps and Hashem-bundle scenarios (customer runs Hashem too).
 
+- GRE wrap, for FRP and Backhaul links (the foreign end dials in): the link
+  carries its foreign server's public IPv4 (`Remote`, pinned on save as for
+  dialing links) and gets a /30 from 10.231.0.0/16 (Iran .1, foreign .2;
+  never one in use on this server). The panel makes the GRE interface
+  (`hcg<cust>x<link>`, plain GRE, MTU 1380, remote = the pinned address)
+  before it starts the link and removes it with the link. The foreign end
+  dials the Iran inner address; the control port still listens on every
+  address (a Hashem foreign server falls back to the public address when
+  GRE is filtered).
+- On the GRE interface the Iran server accepts only the link's control
+  port (and replies): no panel, SSH or other customer's port over GRE, and
+  nothing is forwarded from or to it. The installer does the same on the
+  foreign end (replies only, nothing forwarded).
+- Billing and caps are unchanged: the users still come in on the public
+  ports; the control port's filters match the inner address too. Port 2048
+  is refused for every link (u32 reads GRE's protocol 0x0800 as a port).
+- Customer without Hashem: the kit carries `gre=1`, the Iran public IPv4
+  and both inner addresses; the installer adds a GRE unit next to the
+  tunnel (After/BindsTo), and the Backhaul fence allows the inner address.
+- Customer with Hashem: the installer, not a Hashem bundle. Its units
+  (`hcust-*`, `hcg*`) sit next to the customer's own Hashem tunnel without
+  touching it. A bundle would not work: Hashem's foreign setup replaces the
+  customer's own tunnel (`engine_retire_others`), writes frpc with
+  `tcpMux = false` by default (the sold frps runs with it on: the link
+  never logs in), and its Backhaul client needs Pro and has no fence (the
+  seller's server could make it connect anywhere in the customer's
+  network).
+- Lab: FRP and Backhaul over GRE with the installer (bytes exact, cap,
+  volume), nothing but the control port over GRE on either end (IPv6 off),
+  clean remove (no interface or rule left on either end).
+
 ### P5: reminders (Telegram, days left / 90 % used), history, CSV export,
 plan templates, bulk renew.
 

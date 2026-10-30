@@ -44,6 +44,7 @@ ip -n $HUB addr add 10.23.0.1/24 dev cs-hub-fo; ip -n $FO addr add 10.23.0.2/24 
 ip -n $HUB addr add 10.24.0.1/24 dev cs-hub-us; ip -n $US addr add 10.24.0.2/24 dev cs-us0
 for l in "$HUB cs-hub-fo" "$HUB cs-hub-us" "$HUB lo" "$FO cs-fo0" "$FO lo" "$US cs-us0" "$US lo"; do set -- $l; ip -n "$1" link set "$2" up; done
 ip -n $HUB route add default via 10.24.0.2 dev cs-hub-us   # the users' side: the cap polices here
+modprobe ip_gre 2>/dev/null || true  # the GRE lab (it adds its public-looking addresses itself)
 
 cat >"$TMP/sink.py" <<'PY'
 import socket, struct, threading
@@ -145,9 +146,9 @@ PY
 ip netns exec $FO python3 "$TMP/sink.py" >/dev/null 2>&1 &
 for _ in $(seq 50); do ip netns exec $FO bash -c "exec 3<>/dev/tcp/127.0.0.1/9007" 2>/dev/null && break; sleep 0.1; done
 BH=${CUST_LAB_BACKHAUL:-} XR=${CUST_LAB_XRAY:-}
-RUN='^TestCustomersLab$'
+RUN='^TestCustomersLab(GRE)?$'
 if [[ -x "$BH" && -x "$XR" ]] && command -v openssl >/dev/null 2>&1; then
-    RUN='^TestCustomersLab(Engines)?$'
+    RUN='^TestCustomersLab(Engines|GRE)?$'
     openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 -subj "/CN=lab.hashem.dev" \
         -addext "subjectAltName=DNS:lab.hashem.dev" -keyout "$TMP/site.key" -out "$TMP/site.crt" >/dev/null 2>&1
     ip netns exec $HUB python3 "$TMP/site.py" "$TMP/site.crt" "$TMP/site.key" >/dev/null 2>&1 &
@@ -161,7 +162,7 @@ if [[ -x "$BH" && -x "$XR" ]] && command -v openssl >/dev/null 2>&1; then
             (cd "$ROOT/panel" && go build -o "$TMP/gre-panel" .) && PANEL_BIN=$TMP/gre-panel
         fi
         if [[ -x $PANEL_BIN ]]; then
-            RUN='^TestCustomersLab(Engines|Dial)?$'
+            RUN='^TestCustomersLab(Engines|Dial|GRE)?$'
             mkdir -p /run/sshd
             export CUST_LAB_SSHD=$SSHD CUST_LAB_PANEL_BIN=$PANEL_BIN
         fi
@@ -179,7 +180,7 @@ fi
 (cd "$ROOT/panel" && ip netns exec $HUB env CUST_LAB_FRP_DIR="$FRP" CUST_LAB_NO_TC="${CUST_LAB_NO_TC:-}" CUST_LAB_FO_NS=$FO CUST_LAB_US_NS=$US \
     CUST_LAB_BACKHAUL="$BH" CUST_LAB_XRAY="$XR" CUST_LAB_XRAY_TARGET=127.0.0.1:9443 CUST_LAB_FO_IP=10.23.0.2 \
     CUST_LAB_SSHD="${CUST_LAB_SSHD:-}" CUST_LAB_PANEL_BIN="${CUST_LAB_PANEL_BIN:-}" \
-    CUST_LAB_HUB_FO_IP=10.23.0.1 CUST_LAB_HUB_US_IP=10.24.0.1 \
+    CUST_LAB_HUB_FO_IP=10.23.0.1 CUST_LAB_HUB_US_IP=10.24.0.1 CUST_LAB_HUB_GRE_IP=203.0.113.1 CUST_LAB_FO_GRE_IP=203.0.113.2 CUST_LAB_HUB_FO_IF=cs-hub-fo CUST_LAB_FO_IF=cs-fo0 \
     CUST_LAB_INSTALLER="$ROOT/tools/hashem-customer.sh" CUST_LAB_CLIENT="$TMP/client.py" \
     "$BIN" -test.run "$RUN" -test.v -test.timeout 20m >"$TMP/lab.log" 2>&1)
 rc=$?

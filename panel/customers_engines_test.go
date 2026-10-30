@@ -232,7 +232,7 @@ func TestCustomersXrayKitMatches(t *testing.T) {
 				if err := custLinkSecrets(&l, nil, ""); err != nil {
 					t.Fatal(err)
 				}
-				kit := custKit(c, l, "203.0.113.7")
+				kit := custKit(c, l, "203.0.113.7", "")
 				cmd := exec.Command("bash", installer, "config", kit)
 				cmd.Env = env
 				out, err := cmd.CombinedOutput()

@@ -198,6 +198,10 @@ type customerLink struct {
 	SSHPort  int      `json:"ssh_port,omitempty"`
 	SSHUser  string   `json:"ssh_user,omitempty"`
 	HostKeys []string `json:"host_keys,omitempty"`
+	// GRE: an FRP or Backhaul link inside a GRE tunnel to Remote (pinned
+	// as RemoteIP); GREInner is its /30 (this end .1, the foreign end .2).
+	GRE      bool   `json:"gre,omitempty"`
+	GREInner string `json:"gre_inner,omitempty"`
 }
 
 // dials: this server opens the link to the foreign server (Remote), so the
@@ -330,6 +334,8 @@ var custApplied = struct {
 	running  map[string]bool // unit -> started by the tick
 	swept    bool            // stray units and police actions removed once
 	reserved string          // the ports kept out of the ephemeral range
+	gre      string          // the GRE interfaces and chains loaded
+	greCheck time.Time
 }{}
 
 // Commands, swappable for tests.
@@ -1185,6 +1191,7 @@ func customersTick(now time.Time) {
 			custApplied.ipt, custApplied.tc, custApplied.tcIfs, custApplied.police, custApplied.cleaned = "", "", nil, nil, true
 			custSweepPolice() // nothing of ours may stay in the kernel
 		}
+		_ = custGRESync(nil, now) // only removes
 		if !custApplied.swept {
 			custApplied.swept = true
 			custSweepUnits(nil)
@@ -1326,6 +1333,10 @@ func customersTick(now time.Time) {
 		}
 	}
 
+	// before the units: a wrapped link's foreign end dials the inner address
+	if err := custGRESync(list, now); err != nil {
+		errs = append(errs, err.Error())
+	}
 	if err := custSyncUnits(list, chainOK); err != nil {
 		errs = append(errs, err.Error())
 	}
@@ -1633,7 +1644,8 @@ type custLinkInput struct {
 	Engine    string `json:"engine"` // "" = frp
 	Transport string `json:"transport"`
 	SNI       string `json:"sni"`    // xray: the site Reality borrows ("" = the default)
-	Remote    string `json:"remote"` // xray-direct, bagher: the foreign server's address
+	Remote    string `json:"remote"` // xray-direct, bagher, GRE: the foreign server's address
+	GRE       bool   `json:"gre"`    // frp, backhaul: inside a GRE tunnel to Remote
 	CtrlPort  int    `json:"ctrl_port"`
 	Ports     string `json:"ports"`
 	UDP       bool   `json:"udp"`
@@ -1659,7 +1671,16 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 	if l.Engine == custEngineBackhaul && l.UDP && l.Transport != "tcp" {
 		return l, fmt.Errorf("Backhaul carries UDP on the tcp transport only")
 	}
-	if l.dials() {
+	if in.GRE {
+		if l.Engine != custEngineFRP && l.Engine != custEngineBackhaul {
+			return l, fmt.Errorf("GRE wraps FRP and Backhaul links only")
+		}
+		l.GRE = true
+		if old != nil && old.GRE {
+			l.GREInner = old.GREInner // custGREAlloc gives a new link its /30
+		}
+	}
+	if l.dials() || l.GRE {
 		l.Remote = strings.TrimSpace(in.Remote)
 		if l.Remote == "" && old != nil {
 			l.Remote = old.Remote
@@ -1674,6 +1695,9 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 		}
 		if err != nil {
 			return l, fmt.Errorf("the foreign server's address: %v", err)
+		}
+		if l.GRE && !validPublicIP(ip, 4) {
+			return l, fmt.Errorf("the foreign server's address: GRE needs its public IPv4 address (%s is not)", ip)
 		}
 		l.RemoteIP = ip
 	}
@@ -1690,6 +1714,9 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 		}
 	}
 	l.Ports = parsePorts(in.Ports)
+	if hasInt(l.Ports, custGREPortBad) {
+		return l, fmt.Errorf("port %d is not sold: the speed cap's filters read GRE packets as port %d", custGREPortBad, custGREPortBad)
+	}
 	if len(l.Ports) > custMaxPorts {
 		return l, fmt.Errorf("at most %d ports per foreign server", custMaxPorts)
 	}
@@ -1729,7 +1756,7 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 	if l.CtrlPort == 0 {
 		for i := 0; i < 200 && l.CtrlPort == 0; i++ {
 			p := 20000 + rand.IntN(40000)
-			if hasInt(l.Ports, p) || (l.ctrlLocal() && (free("tcp", p, nil) != "" || (ctrlProto == "udp" && free("udp", p, nil) != ""))) {
+			if hasInt(l.Ports, p) || p == custGREPortBad || (l.ctrlLocal() && (free("tcp", p, nil) != "" || (ctrlProto == "udp" && free("udp", p, nil) != ""))) {
 				continue
 			}
 			l.CtrlPort = p
@@ -1743,6 +1770,9 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 		}
 		if hasInt(l.Ports, l.CtrlPort) {
 			return l, fmt.Errorf("control port %d is also a user port", l.CtrlPort)
+		}
+		if l.CtrlPort == custGREPortBad {
+			return l, fmt.Errorf("control port %d: the speed cap's filters read GRE packets as port %d", custGREPortBad, custGREPortBad)
 		}
 		for _, proto := range []string{"tcp", ctrlProto} {
 			if !l.ctrlLocal() {
@@ -2292,6 +2322,9 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 			claims = append(claims, custLinkClaims(nc, l)...)
 			nc.Links = append(nc.Links, l)
 		}
+		if err := custGREAlloc(custs.f.Customers, nc.ID, nc.Links); err != nil {
+			return fail("E-CUST-03", err)
+		}
 		custs.f.Customers = append(custs.f.Customers, nc)
 		created = nc.ID
 
@@ -2387,7 +2420,11 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 		if err != nil {
 			return fail("E-CUST-03", err)
 		}
-		c.Links = append(c.Links, l)
+		one := []customerLink{l}
+		if err := custGREAlloc(custs.f.Customers, c.ID, one); err != nil {
+			return fail("E-CUST-03", err)
+		}
+		c.Links = append(c.Links, one[0])
 
 	case "link-update":
 		if req.Link == nil {
@@ -2401,7 +2438,11 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 		if err != nil {
 			return fail("E-CUST-03", err)
 		}
-		*old = l
+		one := []customerLink{l}
+		if err := custGREAlloc(custs.f.Customers, c.ID, one); err != nil {
+			return fail("E-CUST-03", err)
+		}
+		*old = one[0]
 
 	case "link-reply":
 		l := c.link(req.LinkID)
@@ -2505,7 +2546,8 @@ func custLinkClaims(c customer, l customerLink) []portClaim {
 // and builds the config itself: a kit is data, never a config to run. FRP
 // kits stay version 1 (installers from before other engines read them);
 // Backhaul and Xray kits are version 2, which names the engine.
-func custKit(c customer, l customerLink, addr string) string {
+// gpub is this server's public IPv4, for a GRE link.
+func custKit(c customer, l customerLink, addr, gpub string) string {
 	udp := "0"
 	if l.UDP {
 		udp = "1"
@@ -2518,6 +2560,9 @@ func custKit(c customer, l customerLink, addr string) string {
 	if l.Engine != custEngineFRP {
 		v = "v=2"
 	}
+	if l.GRE {
+		v = "v=3" // an older installer refuses it (it would leave GRE out)
+	}
 	lines := []string{
 		v,
 		"name=" + custUnit(c.ID, l.ID),
@@ -2528,7 +2573,7 @@ func custKit(c customer, l customerLink, addr string) string {
 		"udp=" + udp,
 		"ports=" + strings.Join(ports, ","),
 	}
-	if l.Engine != custEngineFRP {
+	if v != "v=1" {
 		lines = append(lines, "engine="+l.Engine)
 	}
 	if (l.Engine == custEngineXray || l.Engine == custEngineXrayDirect) && l.Xray != nil {
@@ -2550,6 +2595,10 @@ func custKit(c customer, l customerLink, addr string) string {
 	}
 	if l.Engine == custEngineBagher {
 		lines = append(lines, "sshpub="+l.SSHPub)
+	}
+	if iran, foreign := l.greAddrs(); iran != "" {
+		// gpub: this server's public IPv4 (the GRE's remote on that end)
+		lines = append(lines, "gpub="+gpub, "gin="+iran, "gout="+foreign)
 	}
 	body := strings.Join(lines, "\n") + "\n"
 	return "hsk1." + base64.RawURLEncoding.EncodeToString([]byte(body))
@@ -2634,13 +2683,25 @@ func handleCustomersKit(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, "E-CUST-05", "this server's public address is unknown: set the customer's address (IP or domain)")
 		return
 	}
-	kit := custKit(c, l, addr)
+	confAddr, greNote, gpub := addr, "", ""
+	if iran, foreign := l.greAddrs(); iran != "" {
+		pub, err := custResolveRemote(addr)
+		if err != nil || !validPublicIP(pub, 4) {
+			writeAPIError(w, r, "E-CUST-05", "a GRE link needs this server's public IPv4 address: set the customer's address to it")
+			return
+		}
+		confAddr, gpub = iran, pub
+		greNote = fmt.Sprintf("# GRE first (as root; the installer does this and fences it):\n#   ip link add hcg%d type gre remote %s ttl 255\n#   ip addr add %s/30 dev hcg%d\n#   ip link set dev hcg%d mtu %d up\n# then the tunnel dials %s inside it.\n",
+			l.ID, pub, foreign, l.ID, l.ID, custGREMTU, iran)
+	}
+	kit := custKit(c, l, addr, gpub)
 	url := custInstallerURL()
-	manualName, manual, err := custClientConf(c, l, addr)
+	manualName, manual, err := custClientConf(c, l, confAddr)
 	if err != nil {
 		writeAPIError(w, r, "E-CUST-05", err.Error())
 		return
 	}
+	manual = greNote + manual
 	writeJSON(w, map[string]any{
 		"kit":         kit,
 		"oneliner":    fmt.Sprintf("curl -fsSL %s -o hashem-customer.sh && sudo bash hashem-customer.sh install %s", url, kit),

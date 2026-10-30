@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -832,4 +833,182 @@ func TestCustomersLabDial(t *testing.T) {
 	police := append([]int(nil), custApplied.police...)
 	r.post(`{"action":"remove","id":1}`)
 	r.checkClean(police, units...)
+}
+
+// TestCustomersLabGRE sells an FRP link inside GRE (P4) between the hub's
+// and the foreign server's public addresses (CUST_LAB_HUB_GRE_IP,
+// CUST_LAB_FO_GRE_IP): the panel makes the hub's end, the installer's
+// gre-up the foreign end, and frpc dials the inner address. It checks that
+// users reach the service, the link runs inside GRE, the cap and the billed
+// volume, that over GRE each end takes nothing but the tunnel (no other
+// port, no IPv6, nothing forwarded), a second GRE to the same server is
+// refused, and that remove leaves no interface or rule on either end.
+func TestCustomersLabGRE(t *testing.T) {
+	frpDir, hubPub, foPub := os.Getenv("CUST_LAB_FRP_DIR"), os.Getenv("CUST_LAB_HUB_GRE_IP"), os.Getenv("CUST_LAB_FO_GRE_IP")
+	if frpDir == "" || hubPub == "" || foPub == "" {
+		t.Skip("run tests/test_customers_lab.sh for the GRE lab")
+	}
+	if out, err := exec.Command("ip", "link", "add", "hcgprobe", "type", "gre", "remote", "192.0.2.99").CombinedOutput(); err != nil {
+		t.Skipf("this kernel makes no GRE interface: %v %s", err, out)
+	}
+	_ = exec.Command("ip", "link", "del", "hcgprobe").Run()
+	// public-looking addresses on the hub-foreign wire (a GRE link needs public ends)
+	hubIf, foIf0, foNS := os.Getenv("CUST_LAB_HUB_FO_IF"), os.Getenv("CUST_LAB_FO_IF"), os.Getenv("CUST_LAB_FO_NS")
+	for _, c := range [][]string{{"addr", "add", hubPub + "/24", "dev", hubIf}, {"-n", foNS, "addr", "add", foPub + "/24", "dev", foIf0}} {
+		if out, err := exec.Command("ip", c...).CombinedOutput(); err != nil {
+			t.Fatalf("ip %v: %v %s", c, err, out)
+		}
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("ip", "addr", "del", hubPub+"/24", "dev", hubIf).Run()
+		_ = exec.Command("ip", "-n", foNS, "addr", "del", foPub+"/24", "dev", foIf0).Run()
+	})
+	r := newCustLabRig(t)
+	rate := 20
+	if r.noTC {
+		rate = 0
+	}
+	r.post(fmt.Sprintf(`{"action":"create","name":"gre","days":30,"rate_mbit":%d,"address":%q,
+		"links":[{"name":"fo","ports":"9005","ctrl_port":7710,"gre":true,"remote":%q}]}`, rate, hubPub, foPub))
+	l := r.get(1).Links[0]
+	hubIn, foIn := l.greAddrs()
+	if hubIn == "" || !r.running("hsell-1-1.service") {
+		t.Fatalf("GRE link: %+v %v", l, customersView()["error"])
+	}
+	if out, err := runCmdTimeoutOut(5*time.Second, "ip", "-d", "-o", "addr", "show", "dev", "hcg1x1"); err != nil || !strings.Contains(string(out), hubIn+"/30") {
+		t.Fatalf("the hub's GRE: %v %s", err, out)
+	}
+	if v, _ := os.ReadFile("/proc/sys/net/ipv6/conf/hcg1x1/disable_ipv6"); strings.TrimSpace(string(v)) != "1" {
+		t.Errorf("IPv6 is on on the hub's GRE: %q", v)
+	}
+	// a second GRE link to the same foreign server is refused
+	rr := httptest.NewRecorder()
+	handleCustomersPost(rr, httptest.NewRequest("POST", "/api/customers",
+		strings.NewReader(fmt.Sprintf(`{"action":"link-add","id":1,"link":{"name":"x","ports":"9006","gre":true,"remote":%q}}`, foPub))))
+	if rr.Code == 200 || len(r.get(1).Links) != 1 {
+		t.Errorf("a second GRE to %s: %d %s", foPub, rr.Code, rr.Body.String())
+	}
+
+	// the foreign end: the installer's id file and gre-up, then frpc on the kit's config
+	kit, conf := r.kit(1, 1)
+	if !strings.Contains(conf, `serverAddr = "`+hubIn+`"`) {
+		t.Fatalf("the kit's frpc does not dial the inner address:\n%s", conf)
+	}
+	cconf := filepath.Join(r.dir, "gconf")
+	_ = os.MkdirAll(cconf, 0o700)
+	const unit = "hcust-lab-g-1"
+	id, err := exec.Command("bash", r.installer, "idfile", kit).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(cconf, unit+".id"), id, 0o600)
+	foIf := fmt.Sprintf("hcg%x", sha256.Sum256([]byte(unit)))[:11]
+	inFo := func(args ...string) ([]byte, error) {
+		return exec.Command("ip", append([]string{"netns", "exec", r.foNS, "env", "HASHEM_CUSTOMER_CONF_DIR=" + cconf}, args...)...).CombinedOutput()
+	}
+	if out, err := inFo("bash", r.installer, "gre-up", unit); err != nil {
+		t.Fatalf("gre-up: %v\n%s", err, out)
+	}
+	t.Cleanup(func() { _, _ = inFo("bash", r.installer, "gre-down", unit) })
+	if out, err := inFo("cat", "/proc/sys/net/ipv6/conf/"+foIf+"/disable_ipv6"); err != nil || strings.TrimSpace(string(out)) != "1" {
+		t.Errorf("IPv6 on the foreign GRE: %v %s", err, out)
+	}
+	p := filepath.Join(r.dir, "gfrpc.toml")
+	_ = os.WriteFile(p, []byte(conf), 0o600)
+	r.runForeign("gfrpc", filepath.Join(frpDir, "frpc"), "-c", p)
+	r.waitUp(9005, "over GRE", 40*time.Second, "gfrpc", "hsell-1-1.service")
+	if out, _ := runCmdTimeoutOut(5*time.Second, "ss", "-Htn", "state", "established", "( sport = :7710 )"); !strings.Contains(string(out), foIn+":") {
+		t.Errorf("the link does not run inside GRE (no session from %s):\n%s", foIn, out)
+	}
+
+	// the cap and the volume, as on the public path
+	m := r.xfer(9005, 0, 12e6)
+	t.Logf("capped download over GRE: %.1f Mbit/s (cap 20)", m["down_mbit"])
+	if !r.noTC && (m["down_mbit"] > 23 || m["down_mbit"] < 8) {
+		t.Errorf("download %.1f Mbit/s under a 20 Mbit/s cap", m["down_mbit"])
+	}
+	m = r.xfer(9005, 8e6, 0)
+	t.Logf("capped upload over GRE: %.1f Mbit/s (cap 20)", m["up_mbit"])
+	if !r.noTC && (m["up_mbit"] > 23 || m["up_mbit"] < 8) {
+		t.Errorf("upload %.1f Mbit/s under a 20 Mbit/s cap", m["up_mbit"])
+	}
+	r.checkBilled(1, 200000)
+
+	// over GRE the hub takes the control port only: a service on every
+	// address answers on the public address, not the inner one
+	ln, err := net.Listen("tcp", "0.0.0.0:7807")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	reach := func(host string, port int) bool {
+		_, err := inFo("timeout", "3", "bash", "-c", fmt.Sprintf("exec 3<>/dev/tcp/%s/%d", host, port))
+		return err == nil
+	}
+	if !reach(hubPub, 7807) {
+		t.Error("control: the hub's service is not reachable on its public address")
+	}
+	if reach(hubIn, 7807) {
+		t.Error("the foreign server reaches another port of the hub over GRE")
+	}
+	// the foreign end takes nothing new over GRE either
+	r.runForeign("glisten", "python3", "-c", "import socket,time\ns=socket.socket();s.setsockopt(1,2,1);s.bind(('0.0.0.0',7808));s.listen(8);time.sleep(900)")
+	time.Sleep(time.Second)
+	dial := func(addr string) bool {
+		c, err := net.DialTimeout("tcp", addr, 3*time.Second)
+		if err == nil {
+			_ = c.Close()
+		}
+		return err == nil
+	}
+	if !dial(net.JoinHostPort(foPub, "7808")) {
+		t.Error("control: the foreign service is not reachable on its public address")
+	}
+	if dial(net.JoinHostPort(foIn, "7808")) {
+		t.Error("the hub reaches a port of the foreign server over GRE")
+	}
+	// nothing is forwarded from GRE: the foreign server routes the users'
+	// network into the tunnel, with forwarding on in the hub
+	fwd, _ := os.ReadFile("/proc/sys/net/ipv4/ip_forward")
+	_ = os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1\n"), 0o644)
+	defer func() { _ = os.WriteFile("/proc/sys/net/ipv4/ip_forward", fwd, 0o644) }()
+	if out, err := inFo("ip", "route", "add", "10.24.0.2/32", "dev", foIf); err != nil {
+		t.Fatalf("route: %v %s", err, out)
+	}
+	_, _ = inFo("ping", "-c", "3", "-W", "1", "10.24.0.2")
+	out, _ := runCmdTimeoutOut(5*time.Second, "iptables", "-w", "5", "-L", custGREFwd, "-v", "-n", "-x")
+	if f := strings.Fields(strings.Join(strings.Split(string(out), "\n")[2:3], "")); len(f) == 0 || f[0] == "0" {
+		t.Errorf("nothing was dropped from GRE in FORWARD:\n%s", out)
+	}
+	_, _ = inFo("ip", "route", "del", "10.24.0.2/32", "dev", foIf)
+
+	// remove: no interface or rule left on either end
+	r.post(`{"action":"remove","id":1}`)
+	r.checkClean(nil, "hsell-1-1.service")
+	if _, err := runCmdTimeoutOut(5*time.Second, "ip", "link", "show", "hcg1x1"); err == nil {
+		t.Error("the hub's GRE survived remove")
+	}
+	for _, ch := range []string{custGREChain, custGREFwd} {
+		if out, err := runCmdTimeoutOut(5*time.Second, "iptables", "-w", "5", "-S", ch); err == nil {
+			t.Errorf("%s survived remove:\n%s", ch, out)
+		}
+	}
+	if out, err := inFo("bash", r.installer, "gre-down", unit); err != nil {
+		t.Errorf("gre-down: %v %s", err, out)
+	}
+	if _, err := inFo("ip", "link", "show", foIf); err == nil {
+		t.Error("the foreign GRE survived gre-down")
+	}
+	if out, _ := inFo("iptables", "-w", "5", "-S"); strings.Contains(string(out), foIf) {
+		t.Errorf("foreign GRE rules survived gre-down:\n%s", out)
+	}
 }
