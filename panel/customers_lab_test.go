@@ -902,7 +902,7 @@ func TestCustomersLabGRE(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = os.WriteFile(filepath.Join(cconf, unit+".id"), id, 0o600)
-	foIf := fmt.Sprintf("hcg%x", sha256.Sum256([]byte(unit)))[:11]
+	foIf := fmt.Sprintf("hcc%x", sha256.Sum256([]byte(unit)))[:11]
 	inFo := func(args ...string) ([]byte, error) {
 		return exec.Command("ip", append([]string{"netns", "exec", r.foNS, "env", "HASHEM_CUSTOMER_CONF_DIR=" + cconf}, args...)...).CombinedOutput()
 	}
@@ -910,6 +910,10 @@ func TestCustomersLabGRE(t *testing.T) {
 		t.Fatalf("gre-up: %v\n%s", err, out)
 	}
 	t.Cleanup(func() { _, _ = inFo("bash", r.installer, "gre-down", unit) })
+	// the minute check reads the real kernel's rules as gre-up made them
+	if out, err := inFo("bash", r.installer, "gre-check", unit); err != nil {
+		t.Errorf("gre-check right after gre-up: %v\n%s", err, out)
+	}
 	if out, err := inFo("cat", "/proc/sys/net/ipv6/conf/"+foIf+"/disable_ipv6"); err != nil || strings.TrimSpace(string(out)) != "1" {
 		t.Errorf("IPv6 on the foreign GRE: %v %s", err, out)
 	}
@@ -975,6 +979,40 @@ func TestCustomersLabGRE(t *testing.T) {
 	}
 	if dial(net.JoinHostPort(foIn, "7808")) {
 		t.Error("the hub reaches a port of the foreign server over GRE")
+	}
+	// nor from the tunnel's own port: a SYN from hubIn:7710 (made by hand:
+	// frps holds the port) passes the stateless raw fence but is no reply,
+	// so the stateful stage drops it
+	mangled := func() int64 {
+		out, _ := inFo("iptables", "-w", "5", "-t", "mangle", "-L", "PREROUTING", "-v", "-n", "-x")
+		for _, l := range strings.Split(string(out), "\n") {
+			if f := strings.Fields(l); len(f) > 6 && f[2] == "DROP" && f[5] == foIf {
+				n, _ := strconv.ParseInt(f[0], 10, 64)
+				return n
+			}
+		}
+		t.Fatalf("no stateful GRE drop on the foreign end:\n%s", out)
+		return 0
+	}
+	syn := `import socket,struct,sys
+s,d,sp,dp=sys.argv[1],sys.argv[2],int(sys.argv[3]),int(sys.argv[4])
+def ck(b):
+    if len(b)%2: b+=b"\\0"
+    t=sum(struct.unpack("!%dH"%(len(b)//2),b)); t=(t>>16)+(t&0xffff); t+=t>>16
+    return (~t)&0xffff
+tcp=struct.pack("!HHIIBBHHH",sp,dp,1,0,5<<4,2,65535,0,0)
+ph=socket.inet_aton(s)+socket.inet_aton(d)+struct.pack("!BBH",0,6,len(tcp))
+tcp=tcp[:16]+struct.pack("!H",ck(ph+tcp))+tcp[18:]
+r=socket.socket(socket.AF_INET,socket.SOCK_RAW,socket.IPPROTO_TCP)
+for _ in range(3): r.sendto(tcp,(d,0))
+`
+	m0 := mangled()
+	if out, err := exec.Command("python3", "-c", syn, hubIn, foIn, "7710", "7808").CombinedOutput(); err != nil {
+		t.Fatalf("raw SYN: %v %s", err, out)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if m1 := mangled(); m1 < m0+3 {
+		t.Errorf("a SYN from the control port to a foreign service was not dropped by the stateful stage: %d -> %d", m0, m1)
 	}
 	// nothing is forwarded from GRE: the foreign server routes the users'
 	// network into the tunnel, with forwarding on in the hub
@@ -1043,6 +1081,9 @@ func TestCustomersLabGRE(t *testing.T) {
 			_ = os.WriteFile(filepath.Join(cconf, unit+".id"), id, 0o600)
 			if out, err := inFo("bash", r.installer, "gre-up", unit); err != nil {
 				t.Fatalf("gre-up (Backhaul): %v\n%s", err, out)
+			}
+			if out, err := inFo("bash", r.installer, "gre-check", unit); err != nil {
+				t.Errorf("gre-check (Backhaul): %v\n%s", err, out)
 			}
 			cg := filepath.Join(r.dir, "gcg")
 			_ = os.MkdirAll(cg, 0o755)

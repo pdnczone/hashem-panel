@@ -133,7 +133,7 @@ func TestCustomersGRE(t *testing.T) {
 	lab.mu.Lock()
 	lab.greMoved = false
 	lab.mu.Unlock()
-	if l := lab.log(); !strings.Contains(l, "iptables -w 5 -t raw -D PREROUTING -j HASHEM_CUST_GRE") || !strings.Contains(l, "iptables -w 5 -t raw -I PREROUTING 1 -j HASHEM_CUST_GRE") {
+	if l := lab.log(); !strings.Contains(l, "iptables -w 5 -t raw -I PREROUTING 1 -j HASHEM_CUST_GRE\niptables -w 5 -t raw -S PREROUTING\niptables -w 5 -t raw -D PREROUTING 2") {
 		t.Errorf("a hook under another rule was not put back first:\n%s", l)
 	}
 	// the fence does not load: the interfaces go down
