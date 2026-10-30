@@ -163,20 +163,21 @@ var custTickMu sync.Mutex
 // custApplied is what is loaded in the kernel and systemd; only the tick
 // touches it.
 var custApplied = struct {
-	ipt, tc, tcIf string
-	tcCheck       time.Time
-	police        []int
-	cleaned       bool
-	running       map[string]bool // unit -> started by the tick
-	swept         bool            // stray units and police actions removed once
-	reserved      string          // the ports kept out of the ephemeral range
+	ipt, tc  string
+	tcIfs    []string
+	tcCheck  time.Time
+	police   []int
+	cleaned  bool
+	running  map[string]bool // unit -> started by the tick
+	swept    bool            // stray units and police actions removed once
+	reserved string          // the ports kept out of the ephemeral range
 }{}
 
 // Commands, swappable for tests.
 var (
 	custRun     = func(name string, args ...string) ([]byte, error) { return runCmdTimeout(10*time.Second, name, args...) }
 	custSaveOut = func() ([]byte, error) { return runCmdTimeoutOut(5*time.Second, "iptables-save", "-c", "-t", "filter") }
-	custIface   = primaryInterface
+	custIfaces  = func() []string { return custIfacesUp() }
 	custAlert   = sendCustomerAlert
 	// custPortBusy says whether something outside Hashem holds a port.
 	custPortBusy = func(proto string, port int) bool {
@@ -612,18 +613,28 @@ func custDropChain() {
 }
 
 // custTCArgs are the tc commands for the speed caps (Mbit/s by customer):
-// the two shared police actions per customer, then one filter per user port
-// and direction pointing at them. The burst is 500 ms at the rate (at least
-// 64 KB), as for the per-server limits.
-func custTCArgs(ifname string, list []customer) [][]string {
+// the two shared police actions per customer, then ingress filters on each
+// interface pointing at them. Both directions are policed where the bytes
+// enter this server, before the chain counts them, so a dropped packet is
+// never billed (an egress policer drops after OUTPUT counted the packet,
+// and the customer paid for every retransmission):
+//   - from the users: ingress to a user port (the "in" action);
+//   - to the users: ingress to the control port, the data the customer's
+//     frpc sends for its users (the "out" action); frps can only pass on
+//     what it was let receive.
+//
+// The burst is 500 ms at the rate (at least 64 KB), as for the per-server
+// limits.
+func custTCArgs(ifaces []string, list []customer) [][]string {
 	var cmds [][]string
 	for _, c := range list {
 		if c.RateMbit <= 0 || c.Cut != "" {
 			continue
 		}
-		var ports []int
+		var ports, ctrl []int
 		for _, l := range c.Links {
 			ports = append(ports, l.Ports...)
+			ctrl = append(ctrl, l.CtrlPort)
 		}
 		if len(ports) == 0 {
 			continue
@@ -638,17 +649,56 @@ func custTCArgs(ifname string, list []customer) [][]string {
 				"mtu", "65535", "conform-exceed", "drop/pass", "index", strconv.Itoa(custPoliceIndex(c.ID, out))})
 		}
 		sort.Ints(ports)
-		for _, p := range ports {
-			for _, d := range []struct {
-				hook, field string
-				out         bool
-			}{{"egress", "sport", true}, {"ingress", "dport", false}} {
-				cmds = append(cmds, []string{"filter", "add", "dev", ifname, d.hook, "pref", custTCPref, "protocol", "ip", "u32",
-					"match", "ip", d.field, strconv.Itoa(p), "0xffff", "action", "police", "index", strconv.Itoa(custPoliceIndex(c.ID, d.out))})
+		sort.Ints(ctrl)
+		filter := func(ifname string, port int, out bool) []string {
+			return []string{"filter", "add", "dev", ifname, "ingress", "pref", custTCPref, "protocol", "ip", "u32",
+				"match", "ip", "dport", strconv.Itoa(port), "0xffff", "action", "police", "index", strconv.Itoa(custPoliceIndex(c.ID, out))}
+		}
+		for _, ifname := range ifaces {
+			for _, p := range ports {
+				cmds = append(cmds, filter(ifname, p, false))
+			}
+			for _, p := range ctrl {
+				cmds = append(cmds, filter(ifname, p, true))
 			}
 		}
 	}
 	return cmds
+}
+
+// custIfacesUp are the interfaces the caps go on: every one that is not down
+// (users and the customer's foreign servers may come in on any of them).
+var custIfacesUp = func() []string {
+	var out []string
+	ents, _ := os.ReadDir("/sys/class/net")
+	for _, e := range ents {
+		n := e.Name()
+		if n == "lo" {
+			continue
+		}
+		st, _ := os.ReadFile(filepath.Join("/sys/class/net", n, "operstate"))
+		if strings.TrimSpace(string(st)) == "down" {
+			continue
+		}
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// custMissing lists the interfaces in old that are not in now.
+func custMissing(old, now []string) []string {
+	var out []string
+	for _, o := range old {
+		found := false
+		for _, n := range now {
+			found = found || n == o
+		}
+		if !found {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 // custTCPolice lists the police indexes custTCArgs creates.
@@ -663,8 +713,8 @@ func custTCPolice(cmds [][]string) []int {
 	return out
 }
 
-func custTCClear(ifname string, police []int) {
-	if ifname != "" {
+func custTCClear(ifaces []string, police []int) {
+	for _, ifname := range ifaces {
 		for _, dir := range []string{"egress", "ingress"} {
 			for _, pref := range []string{custTCPref, custTCPref6} {
 				_, _ = custRun("tc", "filter", "del", "dev", ifname, dir, "pref", pref)
@@ -676,21 +726,23 @@ func custTCClear(ifname string, police []int) {
 	}
 }
 
-func custTCApply(ifname string, cmds [][]string) error {
-	custTCClear(ifname, custApplied.police)
+func custTCApply(ifaces []string, cmds [][]string) error {
+	custTCClear(ifaces, custApplied.police)
 	custApplied.police = nil
 	if len(cmds) == 0 {
 		return nil
 	}
-	if out, err := custRun("tc", "qdisc", "show", "dev", ifname); err != nil || !strings.Contains(string(out), "clsact") {
-		if out, err := custRun("tc", "qdisc", "add", "dev", ifname, "clsact"); err != nil {
-			return fmt.Errorf("tc qdisc add clsact: %s", strings.TrimSpace(string(out)))
+	for _, ifname := range ifaces {
+		if out, err := custRun("tc", "qdisc", "show", "dev", ifname); err != nil || !strings.Contains(string(out), "clsact") {
+			if out, err := custRun("tc", "qdisc", "add", "dev", ifname, "clsact"); err != nil {
+				return fmt.Errorf("tc qdisc add clsact on %s: %s", ifname, strings.TrimSpace(string(out)))
+			}
 		}
 	}
 	custApplied.police = custTCPolice(cmds)
 	for _, c := range cmds {
 		if out, err := custRun("tc", c...); err != nil {
-			custTCClear(ifname, custApplied.police)
+			custTCClear(ifaces, custApplied.police)
 			custApplied.police = nil
 			return fmt.Errorf("tc %s: %s", strings.Join(c[:4], " "), strings.TrimSpace(string(out)))
 		}
@@ -736,11 +788,9 @@ func customersTick(now time.Time) {
 	if n == 0 {
 		if custApplied.ipt != "" || !custApplied.cleaned {
 			custDropChain()
-			custTCClear(custApplied.tcIf, custApplied.police)
-			if ifn := custIface(); ifn != custApplied.tcIf {
-				custTCClear(ifn, nil)
-			}
-			custApplied.ipt, custApplied.tc, custApplied.tcIf, custApplied.police, custApplied.cleaned = "", "", "", nil, true
+			custTCClear(custApplied.tcIfs, custApplied.police)
+			custTCClear(custIfaces(), nil)
+			custApplied.ipt, custApplied.tc, custApplied.tcIfs, custApplied.police, custApplied.cleaned = "", "", nil, nil, true
 		}
 		if !custApplied.swept {
 			custApplied.swept = true
@@ -842,31 +892,39 @@ func customersTick(now time.Time) {
 	}
 	custReservePorts()
 
-	ifname := custIface()
-	if ifname == "" {
+	ifaces := custIfaces()
+	if len(ifaces) == 0 {
 		for _, c := range list {
 			if c.RateMbit > 0 && c.Cut == "" {
-				errs = append(errs, "no default-route interface: speed caps not applied")
+				errs = append(errs, "no network interface: speed caps not applied")
 				break
 			}
 		}
 	} else {
-		cmds := custTCArgs(ifname, list)
+		cmds := custTCArgs(ifaces, list)
 		sig := fmt.Sprint(cmds)
-		if ifname != custApplied.tcIf && custApplied.tcIf != "" {
-			custTCClear(custApplied.tcIf, custApplied.police)
-			custApplied.police, custApplied.tc = nil, ""
+		if gone := custMissing(custApplied.tcIfs, ifaces); len(gone) > 0 {
+			custTCClear(gone, nil)
 		}
 		check := now.Sub(custApplied.tcCheck) > time.Minute
 		if check {
 			custApplied.tcCheck = now
 		}
-		if sig != custApplied.tc || ifname != custApplied.tcIf || (check && tcFiltersPresent(ifname, custTCPref, custTCPref6) != custTCFilters(cmds)) {
-			if err := custTCApply(ifname, cmds); err != nil {
+		present := func() int {
+			n := 0
+			for _, ifn := range ifaces {
+				if c := tcFiltersPresent(ifn, custTCPref, custTCPref6); c > 0 {
+					n += c
+				}
+			}
+			return n
+		}
+		if sig != custApplied.tc || (check && present() != custTCFilters(cmds)) {
+			if err := custTCApply(ifaces, cmds); err != nil {
 				errs = append(errs, err.Error())
 				custApplied.tc = ""
 			} else {
-				custApplied.tc, custApplied.tcIf = sig, ifname
+				custApplied.tc, custApplied.tcIfs = sig, ifaces
 			}
 		}
 	}
