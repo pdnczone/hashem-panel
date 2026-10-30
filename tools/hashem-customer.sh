@@ -406,7 +406,7 @@ conf_ext() { if [[ "$K_ENGINE" == xray || "$K_ENGINE" == xray-direct ]]; then ec
 # it to 127.0.0.1 at the tunnel's port. The keys file is root's, outside the
 # user's home: the user cannot change it.
 SSH_USER="${HASHEM_CUSTOMER_SSH_USER:-hcust}"
-SSH_HOME="/var/lib/hashem-customer/$SSH_USER"
+SSH_HOME="${HASHEM_CUSTOMER_SSH_HOME:-/var/lib/hashem-customer/$SSH_USER}"
 KEYS_FILE="${HASHEM_CUSTOMER_AUTH_KEYS:-/etc/ssh/hashem-$SSH_USER.keys}"
 SSHD_DROPIN="${HASHEM_SSHD_DROPIN:-/etc/ssh/sshd_config.d/hashem-customer.conf}"
 

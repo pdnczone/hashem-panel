@@ -231,7 +231,7 @@ printf '#!/bin/sh\n[ "$1" = "-v" ] && echo 0.71.0\n' > "$T/lib/hc/frpc"; chmod +
 cat > "$T/bin/getent" <<EOF
 #!/bin/sh
 case "\$1" in
-  passwd) [ "\$2" = hcust ] && grep -q "^useradd" "$T/calls.log" && echo "hcust:x:998:998::\${GETENT_HOME:-/var/lib/hashem-customer/hcust}:\${GETENT_SHELL:-/usr/sbin/nologin}" ;;
+  passwd) [ "\$2" = hcust ] && grep -q "^useradd" "$T/calls.log" && echo "hcust:x:998:998::$T/var/hcust:\${GETENT_SHELL:-/usr/sbin/nologin}" ;;
   *) echo "203.0.113.7     STREAM 203.0.113.7" ;;
 esac
 EOF
@@ -251,7 +251,7 @@ fi
 EOF
 chmod +x "$T/bin/sshd"
 mkdir -p "$T/sshd.d"
-export HASHEM_SSHD_DROPIN="$T/sshd.d/hashem-customer.conf" HASHEM_CUSTOMER_AUTH_KEYS="$T/hcust.keys"
+export HASHEM_CUSTOMER_SSH_HOME="$T/var/hcust" HASHEM_SSHD_DROPIN="$T/sshd.d/hashem-customer.conf" HASHEM_CUSTOMER_AUTH_KEYS="$T/hcust.keys"
 echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl root@fo" > "$T/sshd/ssh_host_ed25519_key.pub"
 export HASHEM_SSH_DIR="$T/sshd"
 BG=$'v=2\nengine=bagher\nname=hsell-5-1\nserver=203.0.113.7\nport=31500\ntransport=ssh\ntoken=BbCdEfGhIjKlMnOpQrStUvWxYz012345\nudp=1\nports=443\nsshpub=AAAAC3NzaC1lZDI1NTE5AAAAIEu8Pp9xvOHGCZnNqY2UtFzrW1PZ3Zp6YyUq9o3gJmJk\n'
@@ -267,7 +267,7 @@ AK="$T/hcust.keys"
 [[ "$(cat "$AK" 2>/dev/null)" == "command=\"/bin/false\",restrict,port-forwarding,permitlisten=\"127.0.0.1:31500\",permitopen=\"127.0.0.1:31500\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEu8Pp9xvOHGCZnNqY2UtFzrW1PZ3Zp6YyUq9o3gJmJk $U" ]] \
     || F "bagher authorized_keys: $(cat "$AK" 2>&1)"
 [[ "$(stat -c %a "$AK" 2>/dev/null)" == 644 ]] || F "the keys file is not 0644 (root's)"
-grep -q "useradd --system --create-home --home-dir /var/lib/hashem-customer/hcust" "$T/calls.log" || F "bagher user: $(cat "$T/calls.log")"
+grep -q "useradd --system --create-home --home-dir $T/var/hcust" "$T/calls.log" || F "bagher user: $(cat "$T/calls.log")"
 for want in "Match User hcust" "AuthorizedKeysFile $AK" "AllowTcpForwarding remote" "AllowStreamLocalForwarding no" "PermitOpen none" "ForceCommand /bin/false"; do
     grep -qF -- "$want" "$HASHEM_SSHD_DROPIN" || F "sshd rules lack $want: $(cat "$HASHEM_SSHD_DROPIN" 2>&1)"
 done
