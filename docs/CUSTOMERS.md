@@ -117,6 +117,25 @@ control port still answers on your public address too.
   it. (A Hashem setup bundle would replace that tunnel, and Hashem's frpc
   runs with `tcpMux` off by default, which a sold link does not accept.)
 
+## Day to day
+
+- **Reminders.** With alerts on (Settings, Alerts: Telegram and the rest),
+  the panel tells you when a customer has used 90 % of the volume, and 3
+  days and 1 day before a plan ends, each once a period (a renewal starts a
+  new one). Nothing goes to the customer: forward it if you want.
+- **History.** Each customer's card has a History button: when it was
+  created, plan changes, renewals, cuts (and why), resumes, usage resets,
+  reminders and foreign servers added or removed (the last 100), and the
+  usage of the periods that ended (the last 24).
+- **Plan templates.** Save the plans you sell often (name, days, volume,
+  speed) and pick one in the new-customer wizard or when renewing.
+- **Renew several.** Tick customers (those ending within 7 days or ended
+  are ticked already) and renew them all by N days at once; if one cannot
+  be renewed, none is.
+- **Export CSV.** Every customer in one file (plan, status, days left,
+  usage, foreign servers and ports), for a spreadsheet. Cells that would
+  start a formula get a leading `'`.
+
 ## The status page
 
 Every customer has a private page, `http://<your server>:<panel port>/_hs/<token>`,

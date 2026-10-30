@@ -1199,6 +1199,11 @@ html[dir="rtl"] .ht-wires { transform: scaleX(-1); }
 .cs-link-acts { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
 .cs-empty { display: grid; justify-items: start; gap: 8px; padding: 18px; border: 1px dashed var(--ln2); border-radius: var(--r-md); margin-top: 12px; }
 .cs-empty b { color: var(--tx); font-size: var(--fs-h4); }
+/* P5: saved plans, renew several */
+.cs-tpl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 0; border-bottom: 1px solid var(--ln); }
+.cs-tpl > span { color: var(--mu); flex: 1; }
+.cs-bulk { display: grid; gap: 4px; max-height: 260px; overflow-y: auto; margin: 8px 0 12px; }
+.cs-bulk small { color: var(--mu); }
 .cs-modal { width: min(94vw, 640px); }
 .cs-srvs { display: grid; gap: 10px; }
 .cs-srv { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--ln); border-radius: var(--r-md); background: var(--s2); min-width: 0; }

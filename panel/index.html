@@ -3110,7 +3110,12 @@
               <span class="tc-title u-fs-18 u-fw-700">Customers</span> <span class="eng-pro hidden" id="custPro" data-no-i18n>PRO</span>
               <div class="qs-hint u-mt-4">Sell tunnels: each customer brings foreign servers, you set the plan (days, volume, speed), and their users connect to this server. A tunnel is cut when its plan ends or its volume is used up.</div>
             </div>
-            <button type="button" class="hashem-btn hashem-btn-primary u-btn-30" onclick="openCustWizard()">New customer</button>
+            <div class="lm-acts">
+              <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openCustTemplates()">Plan templates</button>
+              <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openCustBulkRenew()">Renew several</button>
+              <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="custExport()">Export CSV</button>
+              <button type="button" class="hashem-btn hashem-btn-primary u-btn-30" onclick="openCustWizard()">New customer</button>
+            </div>
           </div>
           <div class="cs-sum" id="custSummary"></div>
           <div class="xr-err hidden" id="custErr" role="alert"></div>
