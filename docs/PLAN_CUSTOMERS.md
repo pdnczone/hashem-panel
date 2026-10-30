@@ -102,6 +102,13 @@ status page (FA/EN, light/dark, Hashem design tokens).
   values (Xray's foreign end equals `buildXrayConfig`'s, tested), pins the
   sha256 of each release, and replaces a link's old tunnel by its token
   (`<unit>.id`), also across an engine change.
+- Review fixes: Backhaul listens on 0.0.0.0 only (IPv6 users would be
+  unbilled), `skip_optz`; the customer's Backhaul client is fenced
+  (iptables chain on its cgroup: the seller's control port, 127.0.0.1 on
+  the sold ports, DNS; the rest rejected), since a Backhaul server picks
+  the client's targets; unit names carry a hash of the seller's address;
+  the Reality SNI must be a public domain; relay units see only their own
+  files of the panel's config dir; UDP-control links show "running".
 - Lab: one customer with Backhaul tcp+UDP, Backhaul wssmux, Xray Reality
   (+UDP) and Xray mKCP links on the real binaries: reach, one cap shared by
   two links at once, billed volume, the Xray user is no proxy into the

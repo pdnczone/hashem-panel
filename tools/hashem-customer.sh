@@ -110,13 +110,15 @@ kit_decode() {
 valid_port() { [[ "$1" =~ ^[0-9]{1,5}$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 )); }
 
 # unit_name: one per seller server and sold link (the kit's name), so
-# tunnels bought from two sellers never share a name, and a new kit for the
-# same link (another control port) replaces the old tunnel.
+# tunnels bought from two sellers never share a name (the hash of the exact
+# address keeps a.b.c and a-b-c, or two long names, apart), and a new kit
+# for the same link (another control port) replaces the old tunnel.
 unit_name() {
-    local s
+    local s h
     s=$(printf '%s' "$K_SERVER" | tr -c 'A-Za-z0-9' '-' | tr -s '-' | cut -c1-40)
     s=${s%-}
-    echo "hcust-${s#-}-${K_NAME#hsell-}"
+    h=$(printf '%s' "$K_SERVER" | sha256sum | cut -c1-6)
+    echo "hcust-${s#-}-${h}-${K_NAME#hsell-}"
 }
 
 # confirm: the kit decides which local ports become public on the seller's
@@ -126,6 +128,7 @@ confirm() {
     local protos=TCP
     [[ "$K_UDP" == 1 ]] && protos="TCP and UDP"
     say "This tunnel publishes ${protos} port(s) ${K_PORTS//,/, } of this server on ${K_SERVER}."
+    [[ "$K_ENGINE" != backhaul ]] || say "Backhaul lets the seller's server choose what this server connects to: a firewall fence keeps the tunnel to ${K_SERVER}:${K_PORT} and 127.0.0.1 on these ports."
     if command -v ss >/dev/null 2>&1; then
         for p in ${K_PORTS//,/ }; do
             if ss -Hltn "sport = :$p" 2>/dev/null | awk '{print $4}' | grep -qE '^(127\.|\[::1\]|::1)'; then
@@ -170,7 +173,7 @@ backhaul_config() {
     fi
     printf 'transport = "%s"\ntoken = "%s"\n' "$K_TRANSPORT" "$K_TOKEN"
     printf 'connection_pool = 8\nnodelay = true\nretry_interval = 3\nkeepalive_period = 75\n'
-    printf 'sniffer = false\nweb_port = 0\nsniffer_log = ""\nlog_level = "info"\n'
+    printf 'sniffer = false\nweb_port = 0\nsniffer_log = ""\nlog_level = "info"\nskip_optz = true\n'
 }
 
 # xray_stream: the link's streamSettings on this (dialing) end, as the
@@ -264,7 +267,7 @@ install_frpc() {
 fetch_pinned() {
     local url=$1 want=$2 out=$3 local_copy=${4:-} got
     if [[ -n "$local_copy" ]]; then
-        cp "$local_copy" "$out"
+        cp "$local_copy" "$out" || die "cannot read $local_copy"
     else
         command -v curl >/dev/null 2>&1 || die "curl is needed: apt-get install -y curl"
         curl -fsSL --retry 3 --connect-timeout 15 -o "$out" "$url" \
@@ -347,6 +350,13 @@ unit_exec() {
     esac
 }
 
+# unit_guard UNIT: the Backhaul fence's ExecStartPre/ExecStopPost ("+": as
+# root outside the sandbox, still in the unit's cgroup).
+unit_guard() {
+    [[ "$K_ENGINE" == backhaul ]] || return 0
+    printf 'ExecStartPre=+/bin/bash %s/hashem-customer.sh guard %s\nExecStopPost=+/bin/bash %s/hashem-customer.sh unguard %s\n' "$BIN_DIR" "$1" "$BIN_DIR" "$1"
+}
+
 # connected UNIT: the tunnel reached the seller's server.
 connected() {
     case "$K_ENGINE" in
@@ -354,6 +364,115 @@ connected() {
         *) [[ "$K_TRANSPORT" == kcp ]] && return 0  # mKCP: UDP, no session to see
            ss -Htn state established "( dport = :${K_PORT} )" 2>/dev/null | grep -q . ;;
     esac
+}
+
+# ---- the Backhaul fence ----
+# A Backhaul server sends its client the address to connect to for each
+# user ("443=10.0.0.5:22" would reach this server's network). FRP and Xray
+# decide that on this end; for Backhaul a firewall chain on the tunnel's
+# cgroup allows only the seller's control port, 127.0.0.1 on the sold ports
+# and the system's DNS servers, and rejects the rest. The unit adds it
+# before each start (guard) and removes it after each stop (unguard).
+
+# id_file: what the token dedupe and the fence read later (<unit>.id).
+id_file() {
+    printf 'token=%s\nengine=%s\nserver=%s\nport=%s\nports=%s\nudp=%s\n' "$K_TOKEN" "$K_ENGINE" "$K_SERVER" "$K_PORT" "$K_PORTS" "$K_UDP"
+}
+
+guard_chain() { printf 'HC%s' "$(printf '%s' "$1" | sha256sum | cut -c1-10)"; }
+
+guard_unit_ok() { [[ "$1" =~ ^hcust-[A-Za-z0-9-]{1,90}$ ]] || die "bad tunnel name: $1"; }
+
+# guard_read UNIT: K_SERVER K_PORT K_PORTS K_UDP from <unit>.id, checked again.
+guard_read() {
+    local line key val
+    K_SERVER="" K_PORT="" K_PORTS="" K_UDP=""
+    [[ -f "$CONF_DIR/$1.id" ]] || die "no $CONF_DIR/$1.id: install the tunnel again"
+    while IFS= read -r line; do
+        key=${line%%=*} val=${line#*=}
+        case "$key" in
+            server) K_SERVER=$val ;; port) K_PORT=$val ;; ports) K_PORTS=$val ;; udp) K_UDP=$val ;;
+        esac
+    done < "$CONF_DIR/$1.id"
+    [[ "$K_SERVER" =~ ^[A-Za-z0-9]([A-Za-z0-9.:-]{0,251}[A-Za-z0-9])?$ ]] || die "$1.id: bad server"
+    valid_port "$K_PORT" || die "$1.id: bad port"
+    [[ "$K_PORTS" =~ ^[0-9]{1,5}(,[0-9]{1,5}){0,63}$ ]] || die "$1.id: bad ports"
+    [[ "$K_UDP" =~ ^[01]$ ]] || die "$1.id: bad udp"
+}
+
+guard_supported() {
+    command -v iptables >/dev/null 2>&1 || return 1
+    iptables -m cgroup -h 2>/dev/null | grep -q -- '--path' || return 1
+    if command -v ip6tables >/dev/null 2>&1; then
+        ip6tables -m cgroup -h 2>/dev/null | grep -q -- '--path' || return 1
+    fi
+    [[ -n "$(guard_cgroup)" ]]
+}
+
+# guard_cgroup: this process's cgroup v2 path (the unit's, in ExecStartPre).
+guard_cgroup() {
+    if [[ -n "${HASHEM_CUSTOMER_CGROUP:-}" ]]; then echo "$HASHEM_CUSTOMER_CGROUP"; return; fi
+    awk -F: '$1 == "0" && $3 != "/" { print $3; exit }' /proc/self/cgroup 2>/dev/null
+}
+
+cmd_unguard() {
+    local unit=$1 chain ipt rule args
+    guard_unit_ok "$unit"
+    chain=$(guard_chain "$unit")
+    for ipt in iptables ip6tables; do
+        command -v "$ipt" >/dev/null 2>&1 || continue
+        while IFS= read -r rule; do
+            [[ -n "$rule" ]] || continue
+            read -ra args <<< "${rule/-A OUTPUT/-D OUTPUT}"  # the hook's own words, as -S prints them
+            "$ipt" -w 5 "${args[@]}" >/dev/null 2>&1 || true
+        done < <("$ipt" -w 5 -S OUTPUT 2>/dev/null | grep -E -- "^-A OUTPUT .* -j ${chain}\$" || true)
+        "$ipt" -w 5 -F "$chain" >/dev/null 2>&1 || true
+        "$ipt" -w 5 -X "$chain" >/dev/null 2>&1 || true
+    done
+}
+
+cmd_guard() {
+    local unit=$1 chain cg ipt ip p ns fam ips v4="" v6=""
+    guard_unit_ok "$unit"
+    guard_read "$unit"
+    chain=$(guard_chain "$unit")
+    cg=$(guard_cgroup)
+    [[ -n "$cg" ]] || die "no cgroup v2 path for the Backhaul fence: not started"
+    command -v iptables >/dev/null 2>&1 || die "iptables is needed for the Backhaul fence: not started"
+    ips=$(getent ahosts "$K_SERVER" 2>/dev/null | awk '{print $1}' | sort -u)
+    [[ -n "$ips" ]] || die "cannot resolve ${K_SERVER}: not started (it is retried)"
+    for ip in $ips; do
+        if [[ "$ip" == *:* ]]; then v6="$v6 $ip"; else v4="$v4 $ip"; fi
+    done
+    cmd_unguard "$unit"
+    for ipt in iptables ip6tables; do
+        if ! command -v "$ipt" >/dev/null 2>&1; then
+            [[ "$ipt" == ip6tables ]] && continue
+            die "$ipt is missing"
+        fi
+        fam=$v4
+        [[ "$ipt" == ip6tables ]] && fam=$v6
+        "$ipt" -w 5 -N "$chain" || die "$ipt: cannot make the fence chain"
+        if [[ "$ipt" == iptables ]]; then
+            for p in ${K_PORTS//,/ }; do
+                "$ipt" -w 5 -A "$chain" -o lo -d 127.0.0.1 -p tcp --dport "$p" -j RETURN
+                [[ "$K_UDP" == 1 ]] && "$ipt" -w 5 -A "$chain" -o lo -d 127.0.0.1 -p udp --dport "$p" -j RETURN
+            done
+        fi
+        for ip in $fam; do
+            "$ipt" -w 5 -A "$chain" -d "$ip" -p tcp --dport "$K_PORT" -j RETURN
+        done
+        # the resolvers in resolv.conf, for a seller's address that is a name
+        # shellcheck disable=SC2013  # one address per line, no spaces
+        for ns in $(awk '$1 == "nameserver" { print $2 }' "${HASHEM_RESOLV_CONF:-/etc/resolv.conf}" 2>/dev/null); do
+            if [[ ( "$ns" == *:* && "$ipt" == ip6tables ) || ( "$ns" != *:* && "$ipt" == iptables ) ]] && [[ "$ns" =~ ^[0-9A-Fa-f.:]+$ ]]; then
+                "$ipt" -w 5 -A "$chain" -d "$ns" -p udp --dport 53 -j RETURN
+                "$ipt" -w 5 -A "$chain" -d "$ns" -p tcp --dport 53 -j RETURN
+            fi
+        done
+        "$ipt" -w 5 -A "$chain" -j REJECT
+        "$ipt" -w 5 -I OUTPUT 1 -m cgroup --path "$cg" -j "$chain" || die "$ipt: cannot hook the fence (cgroup match): not started"
+    done
 }
 
 need_root() { [[ $(id -u) -eq 0 ]] || die "run it as root (sudo bash $0 $*)"; }
@@ -364,9 +483,14 @@ cmd_install() {
     kit_decode "$1"
     local unit conf p f u missing=""
     unit=$(unit_name)
+    if [[ "$K_ENGINE" == backhaul ]] && ! guard_supported; then
+        die "this server cannot fence a Backhaul tunnel (it needs iptables with the cgroup match and cgroup v2): nothing was changed. Ask the seller for an FRP or Xray link instead."
+    fi
+    [[ -f "$0" ]] || die "run the downloaded file (bash hashem-customer.sh ...), not a pipe"
     confirm
     conf="$CONF_DIR/${unit}.$(conf_ext)"
     install_engine
+    install -m 0755 "$0" "$BIN_DIR/hashem-customer.sh.new" && mv -f "$BIN_DIR/hashem-customer.sh.new" "$BIN_DIR/hashem-customer.sh"
     # an older tunnel for this same link goes: the seller moved its control
     # port or address, or changed the engine. Same link = same token (never
     # shared between links): in <unit>.id, or in an FRP config from before.
@@ -386,7 +510,7 @@ cmd_install() {
     done
     mkdir -p "$CONF_DIR"
     chmod 700 "$CONF_DIR"
-    (umask 077 && engine_config > "$conf.new" && echo "token=${K_TOKEN}" > "$CONF_DIR/${unit}.id")
+    (umask 077 && engine_config > "$conf.new" && id_file > "$CONF_DIR/${unit}.id")
     mv -f "$conf.new" "$conf"
     cat > "$UNIT_DIR/${unit}.service" <<EOF
 [Unit]
@@ -396,6 +520,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+$(unit_guard "$unit")
 $(unit_exec "$conf")
 Restart=always
 RestartSec=3
@@ -405,6 +530,12 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 CapabilityBoundingSet=
 
 [Install]
@@ -446,6 +577,7 @@ cmd_remove() {
         u=${u%.service}
         [[ "$what" == all || "$what" == "$u" ]] || continue
         systemctl disable --now "${u}.service" >/dev/null 2>&1 || true
+        cmd_unguard "$u" 2>/dev/null || true
         rm -f "$f" "$CONF_DIR/${u}".{toml,json,id}
         say "Removed $u"
         n=$((n + 1))
@@ -481,5 +613,8 @@ case "${1:-}" in
     config) [[ $# -eq 2 ]] || die "usage: $0 config hsk1.XXXX"; kit_decode "$2"; engine_config ;;
     remove) cmd_remove "${2:-}" ;;
     status) cmd_status ;;
+    guard) [[ $# -eq 2 ]] || die "usage: $0 guard UNIT"; need_root guard; cmd_guard "$2" ;;
+    unguard) [[ $# -eq 2 ]] || die "usage: $0 unguard UNIT"; need_root unguard; cmd_unguard "$2" ;;
+    idfile) [[ $# -eq 2 ]] || die "usage: $0 idfile hsk1.XXXX"; kit_decode "$2"; id_file ;;
     *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

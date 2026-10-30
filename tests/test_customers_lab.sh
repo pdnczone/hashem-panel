@@ -171,7 +171,8 @@ grep -E "customers_lab_test.go|^(--- |ok|FAIL|PASS)" "$TMP/lab.log"
 [[ -n ${GITHUB_ACTIONS:-} && $rc -eq 0 ]] && grep -E "customers_lab_test.go:[0-9]+:" "$TMP/lab.log" | sed 's/^ *//; s/^/::notice title=customers lab::/'
 if [[ $rc -ne 0 ]]; then
     tail -60 "$TMP/lab.log"
-    [[ -n ${GITHUB_ACTIONS:-} ]] && grep -E "customers_lab_test.go:[0-9]+:" "$TMP/lab.log" | head -5 | sed 's/^ *//; s/^/::error title=customers lab::/'
+    # the tail of the log in one annotation (the job log may not be readable)
+    [[ -n ${GITHUB_ACTIONS:-} ]] && echo "::error title=customers lab::$(grep -vE '^=== (RUN|PAUSE|CONT)' "$TMP/lab.log" | tail -45 | cut -c1-300 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
     echo "FAIL: test_customers_lab"
     exit 1
 fi

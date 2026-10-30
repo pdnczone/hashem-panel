@@ -83,7 +83,18 @@ from **Status page** on the customer's card or from the kit.
   engine once (FRP or Backhaul), or install Xray-core from the Xray menu.
   The panel runs its own copy in `/usr/local/lib/hashem-sell`, so updating
   or rebuilding your own tunnels never stops customers.
-- With Backhaul your server decides what the customer's client connects
-  to (127.0.0.1 on the sold ports); the customer trusts the seller with
-  that, as with any Backhaul tunnel.
+- A Backhaul server tells its client where to connect for each user. On
+  the customer's server the installer fences the Backhaul client with a
+  firewall chain on its own cgroup: only your control port, 127.0.0.1 on
+  the sold ports and the system's DNS servers; everything else is
+  rejected. This needs iptables with the cgroup match (any current
+  distribution); without it a Backhaul kit is refused and FRP or Xray is
+  the way.
+- Backhaul's token crosses the network as is on tcp, tcpmux, ws and wsmux,
+  and wss/wssmux use a self-signed certificate the client does not check.
+  On a path you do not trust, sell FRP or Xray (Reality checks your
+  server's key).
+- The Reality SNI must be a public domain: Reality hands every handshake
+  it does not recognise to that site.
+- Every relay sees only its own config of the panel's directory.
 - Errors are `E-CUST-01` to `E-CUST-06` (see [ERROR_CODES.md](ERROR_CODES.md)).

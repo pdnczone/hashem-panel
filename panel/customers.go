@@ -431,13 +431,16 @@ func custServerConf(cid int, l customerLink) (string, error) {
 
 // custBackhaulConf is a link's Backhaul server (v0.7.2 schema). The server
 // alone lists the ports: a client cannot open others. Each forwards to the
-// same port on the foreign server's 127.0.0.1, like FRP's localIP.
+// same port on the foreign server's 127.0.0.1, like FRP's localIP, and
+// listens on IPv4 only: the chain and the caps count IPv4 (a bare "443"
+// would take IPv6 users too, unbilled).
 func custBackhaulConf(cid int, l customerLink) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Hashem: sold tunnel. Written by the panel; edits are overwritten.\n[server]\n")
 	fmt.Fprintf(&b, "bind_addr = \"0.0.0.0:%d\"\ntransport = %q\ntoken = %q\n", l.CtrlPort, l.Transport, l.Token)
 	b.WriteString("keepalive_period = 75\nnodelay = true\nheartbeat = 40\nchannel_size = 2048\n")
-	b.WriteString("sniffer = false\nweb_port = 0\nsniffer_log = \"\"\nlog_level = \"warn\"\n")
+	// skip_optz: Backhaul leaves the server's sysctls alone
+	b.WriteString("sniffer = false\nweb_port = 0\nsniffer_log = \"\"\nlog_level = \"warn\"\nskip_optz = true\n")
 	if l.UDP {
 		b.WriteString("accept_udp = true\n")
 	}
@@ -450,7 +453,7 @@ func custBackhaulConf(cid int, l customerLink) string {
 		if i == len(l.Ports)-1 {
 			sep = ""
 		}
-		fmt.Fprintf(&b, "  \"%d=127.0.0.1:%d\"%s\n", p, p, sep)
+		fmt.Fprintf(&b, "  \"0.0.0.0:%d=127.0.0.1:%d\"%s\n", p, p, sep)
 	}
 	b.WriteString("]\n")
 	return b.String()
@@ -548,6 +551,19 @@ func custUnitExec(cid int, l customerLink) (env, exec string) {
 // that counts it is loaded (also after a reboot).
 func custUnitFile(cid int, l customerLink) string {
 	env, exec := custUnitExec(cid, l)
+	// the relay sees only its own files of the panel's config dir (not the
+	// other customers' secrets), and no SSH host keys
+	var ro []string
+	for _, f := range custLinkFiles(cid, l.ID) {
+		if f == custConfPath(cid, l.ID, l.Engine) || (l.Engine == custEngineBackhaul && (strings.HasSuffix(f, ".crt") || strings.HasSuffix(f, ".key")) &&
+			(l.Transport == "wss" || l.Transport == "wssmux")) {
+			ro = append(ro, f)
+		}
+	}
+	families := "AF_INET AF_INET6 AF_UNIX"
+	if l.Engine == custEngineXray {
+		families += " AF_NETLINK"
+	}
 	return fmt.Sprintf(`[Unit]
 Description=Hashem sold tunnel: customer %d, link %d (%s)
 After=network-online.target
@@ -569,9 +585,12 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictNamespaces=true
 LockPersonality=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictAddressFamilies=%s
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-`, cid, l.ID, l.Engine, env, exec)
+TemporaryFileSystem=%s:ro
+BindReadOnlyPaths=%s
+InaccessiblePaths=-/etc/ssh
+`, cid, l.ID, l.Engine, env, exec, families, configDir, strings.Join(ro, " "))
 }
 
 // custWriteFile writes path when its content differs; it says whether it did.
@@ -1558,6 +1577,26 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 	return l, nil
 }
 
+// custPublicName: a dotted public domain. Reality hands every handshake it
+// does not recognise to SNI:443, so a name such as localhost or a LAN name
+// would open this server's own services to anyone.
+func custPublicName(n string) bool {
+	if !validXrayName(n, false) || net.ParseIP(n) != nil || !strings.Contains(n, ".") {
+		return false
+	}
+	labels := strings.Split(n, ".")
+	tld := labels[len(labels)-1]
+	if len(tld) < 2 || strings.Trim(tld, "abcdefghijklmnopqrstuvwxyz") != "" {
+		return false
+	}
+	for _, bad := range []string{"localhost", "local", "internal", "lan", "home", "corp", "intranet", "arpa", "test", "invalid", "example"} {
+		if tld == bad {
+			return false
+		}
+	}
+	return labels[0] != "localhost"
+}
+
 // custLinkSecrets fills an Xray link's keys and profile, or a Backhaul wss
 // link's certificate. A link that keeps its engine and transport keeps its
 // secrets, so the customer's installed kit stays valid.
@@ -1566,8 +1605,8 @@ func custLinkSecrets(l *customerLink, old *customerLink, sni string) error {
 	switch l.Engine {
 	case custEngineXray:
 		sni = strings.ToLower(strings.TrimSpace(sni))
-		if sni != "" && (!validXrayName(sni, false) || net.ParseIP(sni) != nil) {
-			return fmt.Errorf("SNI: a domain name")
+		if sni != "" && !custPublicName(sni) {
+			return fmt.Errorf("SNI: a public domain name (Reality relays strangers' handshakes to it)")
 		}
 		var x XrayLink
 		if same && old.Xray != nil {
@@ -1621,6 +1660,9 @@ type custLinkView struct {
 	Unit   string `json:"unit"`
 	Active bool   `json:"active"`
 	Linked bool   `json:"linked"` // the foreign server holds a session on the control port
+	// UDPCtrl: the control channel is UDP (KCP, QUIC, mKCP): no session to
+	// see, "linked" stays false while the relay runs
+	UDPCtrl bool `json:"udp_ctrl,omitempty"`
 }
 
 type custView struct {
@@ -1731,6 +1773,7 @@ func customersView() map[string]any {
 			}
 			lv.Active = active[lv.Unit+".service"]
 			lv.Linked = lv.Active && linked[l.CtrlPort]
+			lv.UDPCtrl = l.ctrlUDP()
 			v.Links = append(v.Links, lv)
 		}
 		v.customer.Links = nil
@@ -2147,7 +2190,7 @@ func custClientConf(c customer, l customerLink, addr string) (name, text string,
 		fmt.Fprintf(&b, "# Hashem: tunnel to %s (%s, link %d)\n[client]\n", addr, custUnit(c.ID, l.ID), l.ID)
 		fmt.Fprintf(&b, "remote_addr = \"%s\"\ntransport = %q\ntoken = %q\n", net.JoinHostPort(addr, strconv.Itoa(l.CtrlPort)), l.Transport, l.Token)
 		b.WriteString("connection_pool = 8\nnodelay = true\nretry_interval = 3\nkeepalive_period = 75\n")
-		b.WriteString("sniffer = false\nweb_port = 0\nsniffer_log = \"\"\nlog_level = \"info\"\n")
+		b.WriteString("sniffer = false\nweb_port = 0\nsniffer_log = \"\"\nlog_level = \"info\"\nskip_optz = true\n")
 		return "client.toml", b.String(), nil
 	case custEngineXray:
 		x, err := custXrayForeign(l, addr)
@@ -2340,6 +2383,8 @@ func custPublicView(c customer, sp [2]float64, now time.Time) custPublic {
 		st := "down"
 		if c.Cut == "" && linked[l.CtrlPort] {
 			st = "up"
+		} else if c.Cut == "" && l.ctrlUDP() {
+			st = "running" // a UDP control channel: no session to see
 		}
 		p.Links = append(p.Links, st)
 	}

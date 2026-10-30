@@ -48,14 +48,19 @@ func TestCustomersEngines(t *testing.T) {
 	// Backhaul: the server lists the ports, to the foreign 127.0.0.1
 	bh, _ := os.ReadFile(custConfPath(1, 1, custEngineBackhaul))
 	for _, want := range []string{`bind_addr = "0.0.0.0:31000"`, `transport = "tcp"`, `token = "` + c.Links[0].Token + `"`,
-		"accept_udp = true", `"8443=127.0.0.1:8443"`, "web_port = 0", "sniffer = false"} {
+		"accept_udp = true", `"0.0.0.0:8443=127.0.0.1:8443"`, "skip_optz = true", "web_port = 0", "sniffer = false"} {
 		if !strings.Contains(string(bh), want) {
 			t.Errorf("backhaul server lacks %q:\n%s", want, bh)
 		}
 	}
 	unit, _ := os.ReadFile(custUnitPath(1, 1))
-	if !strings.Contains(string(unit), "ExecStart="+custEngineBin("backhaul")+" -c "+custConfPath(1, 1, "backhaul")) {
-		t.Errorf("backhaul unit:\n%s", unit)
+	if !strings.Contains(string(unit), "ExecStart="+custEngineBin("backhaul")+" -c "+custConfPath(1, 1, "backhaul")) ||
+		!strings.Contains(string(unit), "TemporaryFileSystem="+configDir+":ro\nBindReadOnlyPaths="+custConfPath(1, 1, "backhaul")+"\n") ||
+		strings.Contains(string(unit), "AF_NETLINK") {
+		t.Errorf("backhaul unit: its own config only, no netlink:\n%s", unit)
+	}
+	if unit2, _ := os.ReadFile(custUnitPath(1, 2)); !strings.Contains(string(unit2), "BindReadOnlyPaths="+custConfPath(1, 2, "backhaul")+" "+custCertPath(1, 2, ".crt")+" "+custCertPath(1, 2, ".key")+"\n") {
+		t.Errorf("wss unit: its certificate and key readable:\n%s", unit2)
 	}
 	// wss: the certificate next to the config, the key private
 	bhs, _ := os.ReadFile(custConfPath(1, 2, custEngineBackhaul))
@@ -186,6 +191,9 @@ func TestCustomersEngineValidation(t *testing.T) {
 		{`{"engine":"xray","transport":"websocket","ports":"443"}`, "xray transport"},
 		{`{"engine":"xray","transport":"reality","ports":"443","sni":"1.2.3.4"}`, "SNI"},
 		{`{"engine":"xray","transport":"reality","ports":"443","sni":"a\"b"}`, "SNI"},
+		{`{"engine":"xray","transport":"reality","ports":"443","sni":"localhost"}`, "SNI"},
+		{`{"engine":"xray","transport":"reality","ports":"443","sni":"nas.lan"}`, "SNI"},
+		{`{"engine":"xray","transport":"reality","ports":"443","sni":"router"}`, "SNI"},
 		{`{"engine":"xray","transport":"reality","ports":"443","ctrl_port":443}`, "also a user port"},
 	} {
 		code, m := custPost(t, `{"action":"create","name":"v","links":[`+tc.link+`]}`)
@@ -300,10 +308,16 @@ func TestCustomersEngineConfigsLoad(t *testing.T) {
 				if err := cmd.Start(); err != nil {
 					t.Fatal(err)
 				}
-				time.Sleep(700 * time.Millisecond)
-				exited := cmd.ProcessState != nil
-				_ = cmd.Process.Kill()
-				_ = cmd.Wait()
+				done := make(chan struct{})
+				go func() { _ = cmd.Wait(); close(done) }()
+				exited := false
+				select {
+				case <-done:
+					exited = true // Backhaul refused the config
+				case <-time.After(1500 * time.Millisecond):
+					_ = cmd.Process.Kill()
+					<-done
+				}
 				if exited || strings.Contains(strings.ToLower(buf.String()), "fatal") || strings.Contains(buf.String(), "not properly set") {
 					t.Errorf("backhaul %s %s:\n%s", name, tr, buf.String())
 				}

@@ -11254,11 +11254,13 @@ const CUST_ENGINES = {
   xray: { label: 'Xray reverse', tr: ['reality', 'xhttp', 'grpc', 'kcp'] },
 };
 const CUST_TR_LABEL = { tcp: 'TCP', websocket: 'WebSocket', kcp: 'KCP', quic: 'QUIC', tcpmux: 'TCP mux', ws: 'WS', wsmux: 'WS mux',
-  wss: 'WSS (TLS)', wssmux: 'WSS mux (TLS)', reality: 'Reality', xhttp: 'XHTTP + Reality', grpc: 'gRPC + Reality' };
+  wss: 'WSS', wssmux: 'WSS mux', reality: 'Reality', xhttp: 'XHTTP + Reality', grpc: 'gRPC + Reality' };
 function custTrLabel(engine, t) { return engine === 'xray' && t === 'kcp' ? 'mKCP (UDP)' : (CUST_TR_LABEL[t] || t); }
 function custEngLabel(l) { const e = CUST_ENGINES[l.engine || 'frp']; return (e ? tr('', e.label) : l.engine) + ' · ' + custTrLabel(l.engine || 'frp', l.transport); }
 function custLinkDot(l, c) {
   if (c.cut || !l.active) return ['var(--mu)', tr('', 'Stopped')];
+  // a UDP control channel (KCP, QUIC, mKCP) shows no session to watch
+  if (l.udp_ctrl && !l.linked) return ['var(--ok)', tr('', 'Running')];
   return l.linked ? ['var(--ok)', tr('', 'Connected')] : ['var(--wr)', tr('', 'Waiting for the foreign server')];
 }
 // custMap: this server on the left, a wire per foreign server with its state.
@@ -11435,7 +11437,10 @@ function openCustLink(id, lid) {
   const c = custFind(id);
   if (!c) return;
   const l = (c.links || []).find(x => x.id === lid) || { name: '', ports: [], udp: false, engine: 'frp', transport: 'tcp', ctrl_port: 0 };
-  const html = custLinkFields('cl', l) + (lid ? `<div class="qs-hint">${esc(tr('', 'A new control port, engine or transport needs the kit again on the foreign server; new ports only need it if the server serves them.'))}</div>` : '');
+  const hint = l.engine === 'xray'
+    ? tr('', 'Any change to an Xray link (ports, SNI, transport, control port) needs the new kit on the foreign server.')
+    : tr('', 'A new control port, engine or transport needs the kit again on the foreign server; new ports only need it if the server serves them.');
+  const html = custLinkFields('cl', l) + (lid ? `<div class="qs-hint">${esc(hint)}</div>` : '');
   custModal((lid ? tr('', 'Edit foreign server') : tr('', 'Add foreign server')) + ' — ' + c.name, html, lid ? tr('', 'Save') : tr('', 'Add'), async () => {
     const body = { action: lid ? 'link-update' : 'link-add', id, link_id: lid, link: custLinkRead('cl') };
     const d = await api('/api/customers', body);
