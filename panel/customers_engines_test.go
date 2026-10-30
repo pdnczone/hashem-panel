@@ -429,6 +429,25 @@ func TestCustomersDialEngines(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(custBinDir, "frps")); err != nil {
 		t.Error("no frps copy for the Bagher relay")
 	}
+	// Bagher's frps asks the plugin like FRP's does
+	plug := func(port int, typ string) string {
+		req := httptest.NewRequest("POST", "/_hsplugin/"+custPluginKey(bg.Token), strings.NewReader(fmt.Sprintf(`{"op":"NewProxy","content":{"proxy_type":%q,"remote_port":%d}}`, typ, port)))
+		req.RemoteAddr = "127.0.0.1:5000"
+		req.SetPathValue("key", custPluginKey(bg.Token))
+		rr := httptest.NewRecorder()
+		handleCustomerPlugin(rr, req)
+		return fmt.Sprint(rr.Code, " ", rr.Body.String())
+	}
+	if got := plug(9444, "tcp"); !strings.Contains(got, `"reject":false`) {
+		t.Errorf("the plugin refused a Bagher link's sold port: %s", got)
+	}
+	if got := plug(9445, "tcp"); !strings.Contains(got, `"reject":true`) {
+		t.Errorf("the plugin let a Bagher link open an unsold port: %s", got)
+	}
+	if got := plug(9443, "stcp"); !strings.Contains(got, `"reject":true`) {
+		t.Errorf("the plugin let a Bagher link open stcp: %s", got)
+	}
+
 	// a new address forgets the pinned keys
 	custPost(t, `{"action":"link-update","id":1,"link_id":2,"link":{"engine":"bagher","transport":"ssh","ports":"9444","remote":"198.51.100.30"}}`)
 	if l := custGet(t, 1).Links[1]; len(l.HostKeys) != 0 || l.SSHKey != bg.SSHKey {
