@@ -2664,7 +2664,8 @@ func handleCustomerPlugin(w http.ResponseWriter, r *http.Request) {
 	custLoadLocked()
 	for _, c := range custs.f.Customers {
 		for _, l := range c.Links {
-			if l.Engine == custEngineFRP && subtle.ConstantTimeCompare([]byte(custPluginKey(l.Token)), []byte(key)) == 1 {
+			// the frps of FRP and of Bagher links asks
+			if (l.Engine == custEngineFRP || l.Engine == custEngineBagher) && subtle.ConstantTimeCompare([]byte(custPluginKey(l.Token)), []byte(key)) == 1 {
 				ll := l
 				link = &ll
 			}
