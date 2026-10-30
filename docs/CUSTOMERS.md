@@ -92,14 +92,25 @@ makes the GRE interface on your server (`hcg<customer>x<link>`, a /30 from
 the other end; the customer's tunnel then dials your inner address. The
 control port still answers on your public address too.
 
-- Over GRE your server takes only the link's control port (and ping): not
-  the panel, SSH or another customer's port. IPv6 is off on the interface
-  and nothing is forwarded from or to it. The installer fences the
-  customer's end the same way (only replies to its own connections).
-- One GRE link per foreign server: a second plain GRE between the same two
-  addresses is refused by the kernel on both ends.
-- Billing and the speed cap work as for any link. Port 2048 cannot be sold
-  (the cap's filters would read GRE packets as that port).
+- Over GRE your server takes only the link's control port from the
+  customer's inner address to yours (and ICMP between the two): not the
+  panel, SSH, your public address or another customer's port. The fence is
+  in the raw table (`HASHEM_CUST_GRE`, first in PREROUTING, checked every
+  10 s), so no ACCEPT rule added later can open it; if it cannot be put in
+  place the GRE goes down. IPv6 is off on the interface, reverse-path
+  filtering is strict and nothing is forwarded from or to it. The installer
+  fences the customer's end the same way (only the tunnel's replies and
+  ICMP from your inner address), checks it every minute, and refuses a /30
+  that overlaps the customer's own networks.
+- One GRE link per foreign server, and none to a server your own Hashem
+  tunnels already use GRE with: a second plain GRE between the same two
+  addresses gets no packets.
+- Set the customer's address to your server's IP (not a domain) when that
+  IP is on one of its interfaces: the GRE then leaves from it.
+- Billing and the speed cap work as for any link. Ports 2048 and 34525
+  cannot be sold (the cap's filters would read GRE packets as those
+  ports). Hashem's carrier switch (FOU, WSS, 6to4, 4in6) leaves the
+  customers' GRE alone.
 - A customer who runs Hashem on the foreign server uses the installer too:
   its units sit next to the customer's own Hashem tunnel without touching
   it. (A Hashem setup bundle would replace that tunnel, and Hashem's frpc

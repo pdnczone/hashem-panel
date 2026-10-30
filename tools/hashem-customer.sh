@@ -18,7 +18,7 @@
 # downloads that engine from its official release (sha256 checked) to
 # /usr/local/lib/hashem-customer, writes its config to /etc/hashem-customer
 # and runs one systemd unit per tunnel (a GRE kit adds a fenced GRE unit,
-# hcustgre-*: over it this server takes only its own connections' replies).
+# hcustgre-*: over it this server takes only the tunnel's replies).
 # The kit is data: every value is checked and the config is written here,
 # never taken from the kit. Your services keep running on this server; users
 # reach them on the same ports on the seller's Iran server. No Hashem panel
@@ -298,7 +298,7 @@ confirm() {
     say "This tunnel publishes ${protos} port(s) ${K_PORTS//,/, } of this server on ${K_SERVER}."
     [[ "$K_ENGINE" != xray-direct ]] || say "The seller's server connects to port ${K_PORT} of this server: let it through your firewall."
     [[ "$K_ENGINE" != bagher ]] || say "The seller's server logs in to this server's sshd as the user ${SSH_USER} (made for it: no password, no shell), which may only listen on the tunnel's port ${K_PORT} on 127.0.0.1 (sshd's rules for it are in ${SSHD_DROPIN})."
-    [[ -z "$K_GPUB" ]] || say "The tunnel runs inside a GRE tunnel to ${K_GPUB} (interface $(gre_if "$(unit_name)"), ${K_GOUT}/30): over it this server takes only its own connections' replies and ping."
+    [[ -z "$K_GPUB" ]] || say "The tunnel runs inside a GRE tunnel to ${K_GPUB} (interface $(gre_if "$(unit_name)"), ${K_GOUT}/30): over it this server takes only the tunnel's replies and ICMP from ${K_GIN}."
     [[ "$K_ENGINE" != backhaul ]] || say "Backhaul lets the seller's server choose what this server connects to: a firewall fence keeps the tunnel to ${K_SERVER}:${K_PORT} and 127.0.0.1 on these ports."
     if command -v ss >/dev/null 2>&1; then
         for p in ${K_PORTS//,/ }; do
@@ -723,7 +723,7 @@ connected() {
 
 # id_file: what the token dedupe and the fence read later (<unit>.id).
 id_file() {
-    printf 'token=%s\nengine=%s\nserver=%s\nport=%s\nports=%s\nudp=%s\n' "$K_TOKEN" "$K_ENGINE" "$K_SERVER" "$K_PORT" "$K_PORTS" "$K_UDP"
+    printf 'token=%s\nengine=%s\nserver=%s\nport=%s\nports=%s\nudp=%s\ntransport=%s\n' "$K_TOKEN" "$K_ENGINE" "$K_SERVER" "$K_PORT" "$K_PORTS" "$K_UDP" "$K_TRANSPORT"
     [[ -z "$K_GPUB" ]] || printf 'gpub=%s\ngin=%s\ngout=%s\n' "$K_GPUB" "$K_GIN" "$K_GOUT"
 }
 
@@ -734,20 +734,24 @@ guard_unit_ok() { [[ "$1" =~ ^hcust-[A-Za-z0-9-]{1,90}$ ]] || die "bad tunnel na
 # guard_read UNIT: K_SERVER K_PORT K_PORTS K_UDP from <unit>.id, checked again.
 guard_read() {
     local line key val
-    K_SERVER="" K_PORT="" K_PORTS="" K_UDP="" K_GPUB="" K_GIN="" K_GOUT=""
+    K_SERVER="" K_PORT="" K_PORTS="" K_UDP="" K_GPUB="" K_GIN="" K_GOUT="" K_ENGINE="" K_TRANSPORT=""
     [[ -f "$CONF_DIR/$1.id" ]] || die "no $CONF_DIR/$1.id: install the tunnel again"
     while IFS= read -r line; do
         key=${line%%=*} val=${line#*=}
         case "$key" in
             server) K_SERVER=$val ;; port) K_PORT=$val ;; ports) K_PORTS=$val ;; udp) K_UDP=$val ;;
             gpub) K_GPUB=$val ;; gin) K_GIN=$val ;; gout) K_GOUT=$val ;;
+            engine) K_ENGINE=$val ;; transport) K_TRANSPORT=$val ;;
         esac
     done < "$CONF_DIR/$1.id"
     [[ "$K_SERVER" =~ ^[A-Za-z0-9]([A-Za-z0-9.:-]{0,251}[A-Za-z0-9])?$ ]] || die "$1.id: bad server"
     valid_port "$K_PORT" || die "$1.id: bad port"
     [[ "$K_PORTS" =~ ^[0-9]{1,5}(,[0-9]{1,5}){0,63}$ ]] || die "$1.id: bad ports"
     [[ "$K_UDP" =~ ^[01]$ ]] || die "$1.id: bad udp"
+    [[ -z "$K_ENGINE" || "$K_ENGINE" =~ ^(frp|backhaul|xray|xray-direct|bagher)$ ]] || die "$1.id: bad engine"
+    [[ "$K_TRANSPORT" =~ ^[a-z]{0,10}$ ]] || die "$1.id: bad transport"
     if [[ -n "$K_GPUB$K_GIN$K_GOUT" ]]; then
+        [[ "$K_ENGINE" =~ ^(frp|backhaul)$ ]] || die "$1.id: GRE wraps FRP and Backhaul only"
         [[ "$K_GPUB" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] && public_addr "$K_GPUB" || die "$1.id: bad GRE address"
         gre_valid_pair "$K_GIN" "$K_GOUT" || die "$1.id: bad GRE inner addresses"
     fi
@@ -819,6 +823,9 @@ cmd_guard() {
         for ip in $fam; do
             "$ipt" -w 5 -A "$chain" -d "$ip" -p tcp --dport "$K_PORT" -j RETURN
         done
+        # inside GRE the tunnel's packets leave again as GRE (they keep the
+        # socket, so this fence sees them): to the seller's address only
+        [[ -n "$K_GPUB" && "$ipt" == iptables ]] && "$ipt" -w 5 -A "$chain" -d "$K_GPUB" -p gre -j RETURN
         # the resolvers in resolv.conf, for a seller's address that is a name
         # shellcheck disable=SC2013  # one address per line, no spaces
         for ns in $(awk '$1 == "nameserver" { print $2 }' "${HASHEM_RESOLV_CONF:-/etc/resolv.conf}" 2>/dev/null); do
@@ -836,62 +843,139 @@ cmd_guard() {
 # A GRE kit wraps the tunnel in plain GRE to the seller's public IPv4 (as
 # the seller's end: no key, MTU 1380); the tunnel dials the seller's inner
 # address. Its own unit (hcustgre-*, which the tunnel unit requires) makes
-# the interface and its fence: over GRE this server takes only the replies
-# of its own connections (and ping), nothing is forwarded from or to it,
-# and IPv6 is off on it.
+# the interface and its fence, in raw PREROUTING (before any filter rule
+# could accept): over GRE this server takes only the seller's inner address
+# from the tunnel's control port (the replies to the tunnel) and ICMP;
+# nothing is forwarded from or to it, IPv6 is off on it, and reverse-path
+# filtering is strict. A timer checks the fence every minute and makes the
+# GRE again when something removed or outranked it.
 
+GRE_CHECK=hashem-customer-gre
 gre_unit() { echo "hcustgre-${1#hcust-}"; }
 gre_if() { printf 'hcg%s' "$(printf '%s' "$1" | sha256sum | cut -c1-8)"; }
 gre_chain() { printf 'HG%s' "$(printf '%s' "$1" | sha256sum | cut -c1-10)"; }
 
-# gre_hooks IF CHAIN: the rules that hang the fence off the built-in chains
-# (one per line: the command, then its words after -I/-D).
+# gre_hooks IF CHAIN: the rules that hang the fence off the built-in chains,
+# one per line: command, table, chain, the rule's words.
 gre_hooks() {
-    printf 'iptables INPUT -i %s -j %s\n' "$1" "$2"
-    printf 'iptables FORWARD -i %s -j DROP\niptables FORWARD -o %s -j DROP\n' "$1" "$1"
-    printf 'ip6tables INPUT -i %s -j DROP\nip6tables FORWARD -i %s -j DROP\nip6tables FORWARD -o %s -j DROP\n' "$1" "$1" "$1"
+    printf 'iptables raw PREROUTING -i %s -j %s\n' "$1" "$2"
+    printf 'iptables filter FORWARD -i %s -j DROP\niptables filter FORWARD -o %s -j DROP\n' "$1" "$1"
+    printf 'ip6tables filter INPUT -i %s -j DROP\nip6tables filter FORWARD -i %s -j DROP\nip6tables filter FORWARD -o %s -j DROP\n' "$1" "$1" "$1"
+}
+
+# gre_overlap: the /30 of K_GIN is free on this server (no address in it,
+# no route but the default one covering any of it).
+gre_overlap() {
+    local net dst a b bits mask
+    net=$(( $(gre_u "$K_GIN") & ~3 ))
+    while read -r dst _; do
+        [[ "$dst" == default ]] && continue
+        bits=${dst#*/}; [[ "$dst" == */* ]] || bits=32
+        a=$(gre_u "${dst%/*}") || continue
+        (( bits >= 0 && bits <= 32 )) || continue
+        b=$(( bits < 30 ? bits : 30 ))
+        mask=$(( b == 0 ? 0 : (0xffffffff << (32 - b)) & 0xffffffff ))
+        (( (a & mask) == (net & mask) )) && return 0
+    done < <(ip -4 route show table all 2>/dev/null | awk '$1 !~ /^(broadcast|local|unreachable|prohibit|blackhole|multicast)$/ { print $1 }'
+             ip -4 -o addr show 2>/dev/null | awk '{ print $4 }')
+    return 1
 }
 
 cmd_gre_down() {
-    local unit=$1 ifn chain ipt rest
+    local unit=$1 ifn chain ipt tbl ch rest
     guard_unit_ok "$unit"
     ifn=$(gre_if "$unit") chain=$(gre_chain "$unit")
     ip link del dev "$ifn" >/dev/null 2>&1 || true
-    while read -r ipt rest; do
+    while read -r ipt tbl ch rest; do
         command -v "$ipt" >/dev/null 2>&1 || continue
         # shellcheck disable=SC2086  # the hook's words (a crash between two -I may have left two)
-        for _ in 1 2 3; do "$ipt" -w 5 -D $rest >/dev/null 2>&1 || break; done
+        for _ in 1 2 3; do "$ipt" -w 5 -t "$tbl" -D "$ch" $rest >/dev/null 2>&1 || break; done
     done < <(gre_hooks "$ifn" "$chain")
-    iptables -w 5 -F "$chain" >/dev/null 2>&1 || true
-    iptables -w 5 -X "$chain" >/dev/null 2>&1 || true
+    for tbl in raw filter; do
+        iptables -w 5 -t "$tbl" -F "$chain" >/dev/null 2>&1 || true
+        iptables -w 5 -t "$tbl" -X "$chain" >/dev/null 2>&1 || true
+    done
 }
 
 cmd_gre_up() {
-    local unit=$1 ifn chain ipt rest
+    local unit=$1 ifn chain ipt tbl ch rest p6
     guard_unit_ok "$unit"
     guard_read "$unit"
     [[ -n "$K_GPUB" ]] || die "$unit is not a GRE tunnel"
     command -v iptables >/dev/null 2>&1 || die "iptables is needed for the GRE fence: not started"
     ifn=$(gre_if "$unit") chain=$(gre_chain "$unit")
     cmd_gre_down "$unit"
+    gre_overlap && die "${K_GIN}/30 is already used on this server (an address or a route): ask the seller to save the link again for another one"
     modprobe ip_gre >/dev/null 2>&1 || true
     ip link add "$ifn" type gre remote "$K_GPUB" ttl 255 || die "cannot make the GRE interface to ${K_GPUB}"
-    echo 1 > "/proc/sys/net/ipv6/conf/$ifn/disable_ipv6" 2>/dev/null || true
-    # the fence before the interface comes up
-    iptables -w 5 -N "$chain" || die "iptables: cannot make the GRE fence"
-    iptables -w 5 -A "$chain" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-    iptables -w 5 -A "$chain" -p icmp --icmp-type echo-request -j RETURN
-    iptables -w 5 -A "$chain" -j DROP
-    while read -r ipt rest; do
+    p6=/proc/sys/net/ipv6/conf/$ifn/disable_ipv6
+    if [[ -e "$p6" ]]; then
+        echo 1 > "$p6" 2>/dev/null || true
+        [[ "$(cat "$p6" 2>/dev/null)" == 1 ]] || { cmd_gre_down "$unit"; die "cannot turn IPv6 off on ${ifn}: not started"; }
+    fi
+    echo 1 > "/proc/sys/net/ipv4/conf/$ifn/rp_filter" 2>/dev/null || true
+    # the fence before the interface comes up: from the seller's inner
+    # address only the tunnel's replies (its control port) and ICMP
+    iptables -w 5 -t raw -N "$chain" || { cmd_gre_down "$unit"; die "iptables: cannot make the GRE fence"; }
+    iptables -w 5 -t raw -A "$chain" -s "$K_GIN" -d "$K_GOUT" -p tcp --sport "$K_PORT" -j RETURN
+    if [[ "$K_ENGINE" == frp && "$K_TRANSPORT" =~ ^(kcp|quic)$ ]]; then
+        iptables -w 5 -t raw -A "$chain" -s "$K_GIN" -d "$K_GOUT" -p udp --sport "$K_PORT" -j RETURN
+    fi
+    iptables -w 5 -t raw -A "$chain" -s "$K_GIN" -d "$K_GOUT" -p icmp -j RETURN
+    iptables -w 5 -t raw -A "$chain" -j DROP
+    while read -r ipt tbl ch rest; do
         if ! command -v "$ipt" >/dev/null 2>&1; then
             [[ "$ipt" == ip6tables ]] && continue
-            die "$ipt is missing"
+            cmd_gre_down "$unit"; die "$ipt is missing"
         fi
         # shellcheck disable=SC2086  # the hook's words
-        "$ipt" -w 5 -I $rest || [[ "$ipt" == ip6tables ]] || die "$ipt: cannot hook the GRE fence"
+        "$ipt" -w 5 -t "$tbl" -I "$ch" 1 $rest || [[ "$ipt" == ip6tables && -n "${p6:-}" && -e "$p6" ]] || { cmd_gre_down "$unit"; die "$ipt: cannot hook the GRE fence"; }
     done < <(gre_hooks "$ifn" "$chain")
-    ip addr add "${K_GOUT}/30" dev "$ifn" || die "cannot address ${ifn}"
-    ip link set dev "$ifn" mtu 1380 up || die "cannot bring ${ifn} up"
+    ip addr add "${K_GOUT}/30" dev "$ifn" || { cmd_gre_down "$unit"; die "cannot address ${ifn}"; }
+    ip link set dev "$ifn" mtu 1380 up || { cmd_gre_down "$unit"; die "cannot bring ${ifn} up"; }
+}
+
+# gre_fenced UNIT: the GRE is up and fenced: its raw hook comes before every
+# rule but other tunnels' GRE hooks, the fence ends in DROP, the forward
+# drops are there and IPv6 is off.
+gre_fenced() {
+    local unit=$1 ifn chain line p6
+    ifn=$(gre_if "$unit") chain=$(gre_chain "$unit")
+    ip link show dev "$ifn" 2>/dev/null | grep -q ',UP' || return 1
+    iptables -w 5 -t raw -S "$chain" 2>/dev/null | tail -n1 | grep -qx -- "-A $chain -j DROP" || return 1
+    while read -r line; do
+        [[ "$line" == "-A PREROUTING -i $ifn -j $chain" ]] && break
+        [[ "$line" =~ ^-A\ PREROUTING\ -i\ hcg[0-9a-f]{8}\ -j\ HG[0-9a-f]{10}$ ]] || return 1
+    done < <(iptables -w 5 -t raw -S PREROUTING 2>/dev/null | grep '^-A ')
+    [[ "$line" == "-A PREROUTING -i $ifn -j $chain" ]] || return 1
+    iptables -w 5 -C FORWARD -i "$ifn" -j DROP >/dev/null 2>&1 && iptables -w 5 -C FORWARD -o "$ifn" -j DROP >/dev/null 2>&1 || return 1
+    p6=/proc/sys/net/ipv6/conf/$ifn/disable_ipv6
+    [[ ! -e "$p6" || "$(cat "$p6" 2>/dev/null)" == 1 ]]
+}
+
+# cmd_gre_check_all: every running GRE fenced, or made again (gre-up takes
+# it down first: on a failure it stays down).
+cmd_gre_check_all() {
+    local f g u
+    for f in "$UNIT_DIR"/hcustgre-*.service; do
+        [[ -e "$f" ]] || continue
+        g=${f##*/}; g=${g%.service}
+        u="hcust-${g#hcustgre-}"
+        guard_unit_ok "$u"
+        systemctl is-active --quiet "$g.service" 2>/dev/null || continue
+        gre_fenced "$u" && continue
+        echo "[!] $u: the GRE fence was changed: making it again" >&2
+        ( cmd_gre_up "$u" ) || echo "[!] $u: the GRE stays down" >&2
+    done
+}
+
+# gre_timer: the minute check, once a GRE tunnel needs it.
+gre_timer() {
+    [[ -e "$UNIT_DIR/$GRE_CHECK.timer" ]] && return 0
+    printf '[Unit]\nDescription=Hashem: GRE tunnels keep their fence\n\n[Service]\nType=oneshot\nExecStart=/bin/bash %s/hashem-customer.sh gre-check-all\n' "$BIN_DIR" > "$UNIT_DIR/$GRE_CHECK.service"
+    printf '[Unit]\nDescription=Hashem: GRE tunnels keep their fence\n\n[Timer]\nOnBootSec=1min\nOnUnitActiveSec=1min\n\n[Install]\nWantedBy=timers.target\n' > "$UNIT_DIR/$GRE_CHECK.timer"
+    systemctl daemon-reload
+    systemctl enable --now "$GRE_CHECK.timer" >/dev/null 2>&1 || true
 }
 
 # gre_unit_file UNIT: the GRE's own unit.
@@ -943,7 +1027,8 @@ cmd_install() {
     fi
     if [[ -n "$K_GPUB" ]]; then
         command -v ip >/dev/null 2>&1 && command -v iptables >/dev/null 2>&1 || die "a GRE tunnel needs ip and iptables: nothing was changed"
-        iptables -m conntrack -h >/dev/null 2>&1 || die "a GRE tunnel needs iptables' conntrack match: nothing was changed"
+        iptables -t raw -S PREROUTING >/dev/null 2>&1 || die "a GRE tunnel needs iptables' raw table: nothing was changed"
+        gre_overlap && die "${K_GIN}/30 is already used on this server (an address or a route): ask the seller to save the link again for another one. Nothing was changed."
     fi
     [[ -f "$0" ]] || die "run the downloaded file (bash hashem-customer.sh ...), not a pipe"
     confirm
@@ -1023,6 +1108,7 @@ EOF
     systemctl daemon-reload
     [[ "$K_ENGINE" != xray-direct || "$K_TRANSPORT" == kcp ]] || retarget_timer
     if [[ -n "$K_GPUB" ]]; then
+        gre_timer
         systemctl enable "$(gre_unit "$unit").service" >/dev/null 2>&1
         systemctl restart "$(gre_unit "$unit").service" || die "the GRE to ${K_GPUB} did not come up: journalctl -u $(gre_unit "$unit")"
     fi
@@ -1078,8 +1164,8 @@ cmd_remove() {
     systemctl daemon-reload >/dev/null 2>&1 || true
     (( n > 0 )) || die "no tunnel named $what"
     if ! compgen -G "$UNIT_DIR/hcust-*.service" >/dev/null; then
-        systemctl disable --now "$RETARGET.timer" >/dev/null 2>&1 || true
-        rm -f "$UNIT_DIR/$RETARGET".{service,timer}
+        systemctl disable --now "$RETARGET.timer" "$GRE_CHECK.timer" >/dev/null 2>&1 || true
+        rm -f "$UNIT_DIR/$RETARGET".{service,timer} "$UNIT_DIR/$GRE_CHECK".{service,timer}
         systemctl daemon-reload >/dev/null 2>&1 || true
         rm -rf "$BIN_DIR"
         rmdir "$CONF_DIR" 2>/dev/null || true
@@ -1116,6 +1202,7 @@ case "${1:-}" in
     sshdrules) sshd_rules ;;
     gre-up) [[ $# -eq 2 ]] || die "usage: $0 gre-up UNIT"; need_root gre-up; cmd_gre_up "$2" ;;
     gre-down) [[ $# -eq 2 ]] || die "usage: $0 gre-down UNIT"; need_root gre-down; cmd_gre_down "$2" ;;
+    gre-check-all) need_root gre-check-all; cmd_gre_check_all ;;
     retarget) [[ $# -eq 2 && "$2" =~ ^hcust-[A-Za-z0-9-]{1,80}$ ]] || die "usage: $0 retarget UNIT"; need_root retarget; cmd_retarget "$2" >/dev/null ;;
     retarget-all) need_root retarget-all; cmd_retarget_all ;;
     authline) [[ $# -eq 2 ]] || die "usage: $0 authline hsk1.XXXX"; kit_decode "$2"; [[ "$K_ENGINE" == bagher ]] || die "not a Bagher kit"; bagher_auth_line "$(unit_name)" ;;

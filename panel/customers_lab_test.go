@@ -917,7 +917,7 @@ func TestCustomersLabGRE(t *testing.T) {
 	_ = os.WriteFile(p, []byte(conf), 0o600)
 	r.runForeign("gfrpc", filepath.Join(frpDir, "frpc"), "-c", p)
 	r.waitUp(9005, "over GRE", 40*time.Second, "gfrpc", "hsell-1-1.service")
-	if out, _ := runCmdTimeoutOut(5*time.Second, "ss", "-Htn", "state", "established", "( sport = :7710 )"); !strings.Contains(string(out), foIn+":") {
+	if out, _ := runCmdTimeoutOut(5*time.Second, "ss", "-Htn", "state", "established", "( sport = :7710 )"); !strings.Contains(string(out), " "+foIn+":") && !strings.Contains(string(out), "[::ffff:"+foIn+"]:") {
 		t.Errorf("the link does not run inside GRE (no session from %s):\n%s", foIn, out)
 	}
 
@@ -984,12 +984,83 @@ func TestCustomersLabGRE(t *testing.T) {
 	if out, err := inFo("ip", "route", "add", "10.24.0.2/32", "dev", foIf); err != nil {
 		t.Fatalf("route: %v %s", err, out)
 	}
-	_, _ = inFo("ping", "-c", "3", "-W", "1", "10.24.0.2")
-	out, _ := runCmdTimeoutOut(5*time.Second, "iptables", "-w", "5", "-L", custGREFwd, "-v", "-n", "-x")
-	if f := strings.Fields(strings.Join(strings.Split(string(out), "\n")[2:3], "")); len(f) == 0 || f[0] == "0" {
-		t.Errorf("nothing was dropped from GRE in FORWARD:\n%s", out)
+	// the fence's last rule (DROP) counts what came in over GRE and was
+	// not the tunnel
+	dropped := func() int64 {
+		out, _ := runCmdTimeoutOut(5*time.Second, "iptables", "-w", "5", "-t", "raw", "-L", custGREChain, "-v", "-n", "-x")
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		f := strings.Fields(lines[len(lines)-1])
+		if len(f) < 3 || f[2] != "DROP" {
+			t.Fatalf("the fence does not end in DROP:\n%s", out)
+		}
+		n, _ := strconv.ParseInt(f[0], 10, 64)
+		return n
+	}
+	before := dropped()
+	if _, err := inFo("ping", "-c", "3", "-W", "1", "10.24.0.2"); err == nil {
+		t.Error("the foreign server reached the users' network through the hub over GRE")
+	}
+	if after := dropped(); after < before+3 {
+		t.Errorf("the pings to the users' network were not dropped at the fence: %d -> %d", before, after)
+	}
+	if _, err := runCmdTimeoutOut(5*time.Second, "iptables", "-w", "5", "-C", custGREFwd, "-o", custGREWild, "-j", "DROP"); err != nil {
+		t.Error("nothing keeps the hub from forwarding into GRE")
 	}
 	_, _ = inFo("ip", "route", "del", "10.24.0.2/32", "dev", foIf)
+
+	// steady state against the real kernel: the minute check finds the
+	// fence and the interface as made (iptables -S prints the rules as the
+	// panel wrote them): nothing is loaded or made again
+	oldRun := custRun
+	var ran []string
+	var ranMu sync.Mutex
+	custRun = func(name string, args ...string) ([]byte, error) {
+		ranMu.Lock()
+		ran = append(ran, name+" "+strings.Join(args, " "))
+		ranMu.Unlock()
+		return oldRun(name, args...)
+	}
+	custApplied.greCheck = time.Time{}
+	customersTick(time.Now())
+	custRun = oldRun
+	if j := strings.Join(ran, "\n"); strings.Contains(j, "customers-gre.v4") || strings.Contains(j, "ip link add") || !strings.Contains(j, "-S "+custGREChain) {
+		t.Errorf("the minute check changed a GRE that was as made:\n%s", j)
+	}
+
+	// Backhaul inside GRE, under the installer's fence (the tunnel's own GRE
+	// packets pass it; nothing else does)
+	if bh := os.Getenv("CUST_LAB_BACKHAUL"); bh != "" {
+		if fs, _ := os.ReadFile("/proc/filesystems"); strings.Contains(string(fs), "cgroup2") {
+			r.post(fmt.Sprintf(`{"action":"link-update","id":1,"link_id":1,"link":{"name":"fo","engine":"backhaul","transport":"tcp","ports":"9005","ctrl_port":7711,"gre":true,"remote":%q}}`, foPub))
+			kit, conf := r.kit(1, 1)
+			if !strings.Contains(conf, `remote_addr = "`+hubIn+`:7711"`) {
+				t.Fatalf("the Backhaul kit does not dial the inner address:\n%s", conf)
+			}
+			id, err := exec.Command("bash", r.installer, "idfile", kit).Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = os.WriteFile(filepath.Join(cconf, unit+".id"), id, 0o600)
+			if out, err := inFo("bash", r.installer, "gre-up", unit); err != nil {
+				t.Fatalf("gre-up (Backhaul): %v\n%s", err, out)
+			}
+			cg := filepath.Join(r.dir, "gcg")
+			_ = os.MkdirAll(cg, 0o755)
+			t.Cleanup(func() {
+				_ = exec.Command("ip", "netns", "exec", r.foNS, "sh", "-c", "mount -t cgroup2 none "+cg+" && rmdir "+cg+"/hcust-lab; umount "+cg).Run()
+			})
+			bp := filepath.Join(r.dir, "gbh.toml")
+			_ = os.WriteFile(bp, []byte(conf), 0o600)
+			r.runForeign("gbh", "env", "HASHEM_CUSTOMER_CONF_DIR="+cconf, "bash", "-c",
+				`mount -t cgroup2 none `+cg+` && mkdir -p `+cg+`/hcust-lab && echo $$ > `+cg+`/hcust-lab/cgroup.procs && `+
+					`bash "$1" guard `+unit+` && exec "$2" -c "$3"`, "fence", r.installer, bh, bp)
+			r.waitUp(9005, "Backhaul over GRE, fenced", 60*time.Second, "gbh", "hsell-1-1.service")
+			r.xfer(9005, 2e6, 2e6)
+			r.checkBilled(1, 300000)
+		} else {
+			t.Log("no cgroup v2 here: the Backhaul over GRE part is skipped")
+		}
+	}
 
 	// remove: no interface or rule left on either end
 	r.post(`{"action":"remove","id":1}`)

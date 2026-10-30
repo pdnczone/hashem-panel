@@ -26,12 +26,15 @@ import (
 )
 
 const (
-	custGREChain   = "HASHEM_CUST_GRE"  // INPUT: the control ports, then DROP
-	custGREFwd     = "HASHEM_CUST_GREF" // FORWARD: nothing from or to hcg*
-	custGREWild    = "hcg+"
-	custGREMTU     = 1380
-	custGREPortBad = 2048 // u32 reads GRE's protocol type (0x0800) as a port
+	custGREChain = "HASHEM_CUST_GRE"  // raw PREROUTING: the control ports, then DROP
+	custGREFwd   = "HASHEM_CUST_GREF" // FORWARD: nothing from or to hcg*
+	custGREWild  = "hcg+"
+	custGREMTU   = 1380
 )
+
+// custGREPortsBad are never sold: the cap's u32 filters read a GRE packet's
+// protocol type (IPv4 0x0800, IPv6 0x86dd) as its destination port.
+var custGREPortsBad = []int{2048, 34525}
 
 // custGRENet is the pool the /30s come from.
 var custGRENet = netip4("10.231.0.0", 16)
@@ -66,7 +69,7 @@ func custGREName(cid, lid int) string { return fmt.Sprintf("hcg%dx%d", cid, lid)
 // end (.2) of its /30.
 func (l customerLink) greAddrs() (iran, foreign string) {
 	b := ip4u(net.ParseIP(l.GREInner))
-	if !l.GRE || b == 0 {
+	if !l.GRE || !custGREValidInner(l.GREInner) {
 		return "", ""
 	}
 	return u4ip(b + 1), u4ip(b + 2)
@@ -144,6 +147,11 @@ func custGREAlloc(all []customer, cid int, links []customerLink) error {
 			used[ip4u(net.ParseIP(l.GREInner))] = true
 		}
 	}
+	for _, r := range custOwnGRERemotes() {
+		if _, ok := remote[r]; !ok {
+			remote[r] = "this server's own GRE tunnel"
+		}
+	}
 	for i, l := range links {
 		if !l.GRE {
 			continue
@@ -186,48 +194,105 @@ func custGREAlloc(all []customer, cid int, links []customerLink) error {
 	return nil
 }
 
-// custGREWant are the GRE interfaces list needs: name -> "remote inner".
-func custGREWant(list []customer) map[string]string {
-	want := map[string]string{}
+// custGREIf is what a link's interface must be.
+type custGREIf struct{ remote, local, inner string }
+
+// custOwnGRERemotes are the remotes of this server's other GRE interfaces
+// (Hashem's own tunnels): a link's GRE to the same address would never get
+// a packet (theirs has a local address: the kernel prefers it). Swappable.
+var custOwnGRERemotes = func() []string {
+	out, err := custRun("ip", "-d", "-o", "link", "show", "type", "gre")
+	if err != nil {
+		return nil
+	}
+	var rs []string
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 || custGRENameRe.MatchString(strings.TrimSuffix(strings.SplitN(f[1], "@", 2)[0], ":")) {
+			continue
+		}
+		for i := 0; i+1 < len(f); i++ {
+			if f[i] == "remote" && net.ParseIP(f[i+1]) != nil {
+				rs = append(rs, f[i+1])
+			}
+		}
+	}
+	return rs
+}
+
+// custGREWant are the GRE interfaces list needs.
+func custGREWant(list []customer) map[string]custGREIf {
+	want := map[string]custGREIf{}
 	for _, c := range list {
+		local := custGRELocal(c)
 		for _, l := range c.Links {
 			if iran, _ := l.greAddrs(); iran != "" && l.RemoteIP != "" {
-				want[custGREName(c.ID, l.ID)] = l.RemoteIP + " " + iran
+				want[custGREName(c.ID, l.ID)] = custGREIf{l.RemoteIP, local, iran}
 			}
 		}
 	}
 	return want
 }
 
-// custGRERules is the GRE chains as iptables-restore input ("" when no
-// link is wrapped).
+// custGRELocal is the GRE's local address for c: the IPv4 address its kit
+// gives the customer (gpub) when it is one of this server's, so the outer
+// packets leave from the address the customer's end expects (the kernel
+// would pick by route on a server with several). "" otherwise: behind 1:1
+// NAT the public address is not a local one.
+func custGRELocal(c customer) string {
+	a := c.Address
+	if a == "" {
+		a = custDefaultAddress()
+	}
+	if ip := net.ParseIP(a); ip != nil && ip.To4() != nil && custIsLocalAddr(ip.To4().String()) {
+		return ip.To4().String()
+	}
+	return ""
+}
+
+// custIsLocalAddr: addr is on one of this server's interfaces. Swappable.
+var custIsLocalAddr = func(addr string) bool {
+	addrs, _ := net.InterfaceAddrs()
+	for _, a := range addrs {
+		if ipn, ok := a.(*net.IPNet); ok && ipn.IP.String() == addr {
+			return true
+		}
+	}
+	return false
+}
+
+// custGRERules is the GRE fence as iptables-restore input ("" when no link
+// is wrapped): in raw PREROUTING (before any filter rule can accept), each
+// link's interface takes only its foreign end's inner address to this
+// end's on the control port, and ICMP between the two; the rest of hcg+
+// is dropped. In filter FORWARD nothing goes from or to hcg+.
 func custGRERules(list []customer) string {
 	var accept []string
 	for _, c := range list {
 		for _, l := range c.Links {
-			if iran, _ := l.greAddrs(); iran == "" {
+			iran, foreign := l.greAddrs()
+			if iran == "" {
 				continue
 			}
-			ifn := custGREName(c.ID, l.ID)
-			accept = append(accept, fmt.Sprintf("-A %s -i %s -p tcp -m tcp --dport %d -j RETURN", custGREChain, ifn, l.CtrlPort))
+			m := fmt.Sprintf("-A %s -s %s/32 -d %s/32 -i %s", custGREChain, foreign, iran, custGREName(c.ID, l.ID))
+			accept = append(accept, fmt.Sprintf("%s -p tcp -m tcp --dport %d -j RETURN", m, l.CtrlPort))
 			if l.ctrlUDP() {
-				accept = append(accept, fmt.Sprintf("-A %s -i %s -p udp -m udp --dport %d -j RETURN", custGREChain, ifn, l.CtrlPort))
+				accept = append(accept, fmt.Sprintf("%s -p udp -m udp --dport %d -j RETURN", m, l.CtrlPort))
 			}
+			accept = append(accept, m+" -p icmp -j RETURN")
 		}
 	}
 	if len(accept) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "*filter\n:%s - [0:0]\n:%s - [0:0]\n-F %s\n-F %s\n", custGREChain, custGREFwd, custGREChain, custGREFwd)
+	fmt.Fprintf(&b, "*raw\n:%s - [0:0]\n-F %s\n", custGREChain, custGREChain)
 	for _, a := range accept {
 		b.WriteString(a + "\n")
 	}
-	fmt.Fprintf(&b, "-A %s -i %s -p icmp -m icmp --icmp-type 8 -j RETURN\n", custGREChain, custGREWild)
-	fmt.Fprintf(&b, "-A %s -i %s -p icmp -m icmp --icmp-type 3 -j RETURN\n", custGREChain, custGREWild)
-	fmt.Fprintf(&b, "-A %s -i %s -j DROP\n", custGREChain, custGREWild)
-	fmt.Fprintf(&b, "-A %s -i %s -j DROP\n-A %s -o %s -j DROP\n", custGREFwd, custGREWild, custGREFwd, custGREWild)
-	b.WriteString("COMMIT\n")
+	fmt.Fprintf(&b, "-A %s -i %s -j DROP\nCOMMIT\n", custGREChain, custGREWild)
+	fmt.Fprintf(&b, "*filter\n:%s - [0:0]\n-F %s\n", custGREFwd, custGREFwd)
+	fmt.Fprintf(&b, "-A %s -i %s -j DROP\n-A %s -o %s -j DROP\nCOMMIT\n", custGREFwd, custGREWild, custGREFwd, custGREWild)
 	return b.String()
 }
 
@@ -242,18 +307,48 @@ func custGRERuleLines(rules string) []string {
 	return out
 }
 
-// custGREHooks: chain -> the built-in chain it hangs off.
-var custGREHooks = [][2]string{{"INPUT", custGREChain}, {"FORWARD", custGREFwd}}
+// custGREHooks: table, built-in chain, the fence chain hung first in it.
+var custGREHooks = [][3]string{{"raw", "PREROUTING", custGREChain}, {"filter", "FORWARD", custGREFwd}}
 
 // custGRE6Rules: no IPv6 from or through a GRE interface (it is off there
 // too; this holds if something turns it on).
 var custGRE6Rules = [][]string{{"INPUT", "-i", custGREWild, "-j", "DROP"}, {"FORWARD", "-i", custGREWild, "-j", "DROP"}, {"FORWARD", "-o", custGREWild, "-j", "DROP"}}
 
-// custGREChainOK: the kernel's chains are rules, rule for rule, and hooked.
+// custGREHooksFirst: each fence chain is the first rule of its built-in
+// chain (a later "-I ... 1 -j ACCEPT" would otherwise open the GRE) and the
+// IPv6 drops are in place.
+func custGREHooksFirst() bool {
+	for _, h := range custGREHooks {
+		out, err := custRun("iptables", "-w", "5", "-t", h[0], "-S", h[1])
+		if err != nil {
+			return false
+		}
+		first := ""
+		for _, l := range strings.Split(string(out), "\n") {
+			if l = strings.TrimSpace(l); strings.HasPrefix(l, "-A ") {
+				first = l
+				break
+			}
+		}
+		if first != "-A "+h[1]+" -j "+h[2] {
+			return false
+		}
+	}
+	if _, err := custRun("ip6tables", "-w", "5", "-S", "INPUT"); err == nil {
+		for _, r := range custGRE6Rules {
+			if _, err := custRun("ip6tables", append([]string{"-w", "5", "-C"}, r...)...); err != nil {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// custGREChainOK: the kernel's fence is rules, rule for rule, hooked first.
 func custGREChainOK(rules string) bool {
 	var got []string
-	for _, ch := range []string{custGREChain, custGREFwd} {
-		out, err := custRun("iptables", "-w", "5", "-S", ch)
+	for _, h := range custGREHooks {
+		out, err := custRun("iptables", "-w", "5", "-t", h[0], "-S", h[2])
 		if err != nil {
 			return false
 		}
@@ -263,15 +358,7 @@ func custGREChainOK(rules string) bool {
 			}
 		}
 	}
-	if strings.Join(got, "\n") != strings.Join(custGRERuleLines(rules), "\n") {
-		return false
-	}
-	for _, h := range custGREHooks {
-		if _, err := custRun("iptables", "-w", "5", "-C", h[0], "-j", h[1]); err != nil {
-			return false
-		}
-	}
-	return true
+	return strings.Join(got, "\n") == strings.Join(custGRERuleLines(rules), "\n") && custGREHooksFirst()
 }
 
 func custGRELoadChain(rules string) error {
@@ -283,11 +370,19 @@ func custGRELoadChain(rules string) error {
 	if out, err := custRun("iptables-restore", "-w", "5", "-n", f); err != nil {
 		return fmt.Errorf("iptables-restore (GRE): %s", strings.TrimSpace(string(out)))
 	}
+	return custGREHook()
+}
+
+// custGREHook puts each hook first (removing it wherever else it is).
+func custGREHook() error {
 	for _, h := range custGREHooks {
-		if _, err := custRun("iptables", "-w", "5", "-C", h[0], "-j", h[1]); err != nil {
-			if out, err := custRun("iptables", "-w", "5", "-I", h[0], "1", "-j", h[1]); err != nil {
-				return fmt.Errorf("iptables -I %s: %s", h[0], strings.TrimSpace(string(out)))
+		for i := 0; i < 4; i++ {
+			if _, err := custRun("iptables", "-w", "5", "-t", h[0], "-D", h[1], "-j", h[2]); err != nil {
+				break
 			}
+		}
+		if out, err := custRun("iptables", "-w", "5", "-t", h[0], "-I", h[1], "1", "-j", h[2]); err != nil {
+			return fmt.Errorf("iptables -t %s -I %s: %s", h[0], h[1], strings.TrimSpace(string(out)))
 		}
 	}
 	if _, err := custRun("ip6tables", "-w", "5", "-S", "INPUT"); err == nil {
@@ -304,12 +399,18 @@ func custGRELoadChain(rules string) error {
 
 func custGREDropChain() {
 	for _, h := range custGREHooks {
-		_, _ = custRun("iptables", "-w", "5", "-D", h[0], "-j", h[1])
+		for i := 0; i < 4; i++ {
+			if _, err := custRun("iptables", "-w", "5", "-t", h[0], "-D", h[1], "-j", h[2]); err != nil {
+				break
+			}
+		}
+		_, _ = custRun("iptables", "-w", "5", "-t", h[0], "-F", h[2])
+		_, _ = custRun("iptables", "-w", "5", "-t", h[0], "-X", h[2])
 	}
-	for _, ch := range []string{custGREChain, custGREFwd} {
-		_, _ = custRun("iptables", "-w", "5", "-F", ch)
-		_, _ = custRun("iptables", "-w", "5", "-X", ch)
-	}
+	// a fence from before it moved to raw
+	_, _ = custRun("iptables", "-w", "5", "-D", "INPUT", "-j", custGREChain)
+	_, _ = custRun("iptables", "-w", "5", "-F", custGREChain)
+	_, _ = custRun("iptables", "-w", "5", "-X", custGREChain)
 	for _, r := range custGRE6Rules {
 		_, _ = custRun("ip6tables", append([]string{"-w", "5", "-D"}, r...)...)
 	}
@@ -327,36 +428,46 @@ var custGREIfacesNow = func() []string {
 	return out
 }
 
-// custGREIfaceOK: the interface is a GRE to remote, up, with inner/30 on it.
-func custGREIfaceOK(name, remote, inner string) bool {
+// custGREIfaceOK: the interface is a plain GRE (no FOU/GUE encapsulation,
+// which Hashem's carrier switch could put on it) from local to remote, up,
+// with inner/30 on it.
+func custGREIfaceOK(name string, w custGREIf) bool {
 	out, err := custRun("ip", "-d", "-o", "link", "show", "dev", name)
 	if err != nil {
 		return false
 	}
-	f := strings.Fields(string(out))
-	ok := false
+	s := string(out)
+	f := strings.Fields(s)
+	remote, local := false, w.local == ""
 	for i := 0; i+1 < len(f); i++ {
-		if f[i] == "remote" && f[i+1] == remote {
-			ok = true
+		switch {
+		case f[i] == "remote" && f[i+1] == w.remote:
+			remote = true
+		case f[i] == "local" && f[i+1] == w.local:
+			local = true
 		}
 	}
-	if !ok || !strings.Contains(string(out), ",UP") {
+	if !remote || !local || !strings.Contains(s, " link/gre ") || !strings.Contains(s, ",UP") || strings.Contains(s, "encap fou") || strings.Contains(s, "encap gue") {
 		return false
 	}
 	out, err = custRun("ip", "-o", "-4", "addr", "show", "dev", name)
-	return err == nil && strings.Contains(string(out), " "+inner+"/30 ")
+	return err == nil && strings.Contains(string(out), " "+w.inner+"/30 ")
 }
 
 // custGREMake (re)makes a link's interface: plain GRE (the installer's end
-// has no key either), IPv6 off before it comes up.
-func custGREMake(name, remote, inner string) error {
+// has no key either), hardened before it comes up.
+func custGREMake(name string, w custGREIf) error {
 	_, _ = custRun("ip", "link", "del", "dev", name)
-	if out, err := custRun("ip", "link", "add", name, "type", "gre", "remote", remote, "ttl", "255"); err != nil {
-		return fmt.Errorf("GRE %s to %s: %s", name, remote, strings.TrimSpace(string(out)))
+	args := []string{"link", "add", name, "type", "gre", "remote", w.remote}
+	if w.local != "" {
+		args = append(args, "local", w.local)
 	}
-	custGRENoIPv6(name)
+	if out, err := custRun("ip", append(args, "ttl", "255")...); err != nil {
+		return fmt.Errorf("GRE %s to %s: %s", name, w.remote, strings.TrimSpace(string(out)))
+	}
+	custGREHarden(name)
 	steps := [][]string{
-		{"ip", "addr", "add", inner + "/30", "dev", name},
+		{"ip", "addr", "add", w.inner + "/30", "dev", name},
 		{"ip", "link", "set", "dev", name, "mtu", strconv.Itoa(custGREMTU), "up"},
 	}
 	for _, s := range steps {
@@ -368,30 +479,50 @@ func custGREMake(name, remote, inner string) error {
 	return nil
 }
 
-// custGRENoIPv6 turns IPv6 off on an interface (no link-local address).
-var custGRENoIPv6 = func(name string) {
+// custGREHarden: IPv6 off on the interface (no link-local address) and
+// strict reverse-path filtering (only the /30's peer comes in on it).
+var custGREHarden = func(name string) {
 	_ = os.WriteFile(filepath.Join("/proc/sys/net/ipv6/conf", name, "disable_ipv6"), []byte("1\n"), 0o644)
+	_ = os.WriteFile(filepath.Join("/proc/sys/net/ipv4/conf", name, "rp_filter"), []byte("1\n"), 0o644)
 }
 
-// custGRESync makes the interfaces and the chains list needs and removes
-// the rest. The interfaces are checked against the kernel when the wanted
-// set changes and once a minute.
-func custGRESync(list []customer, now time.Time) error {
+// custGREDown takes the interfaces down (the fence could not be put in
+// place: no GRE without it).
+func custGREDown(names []string) {
+	for _, n := range names {
+		_, _ = custRun("ip", "link", "set", "dev", n, "down")
+	}
+}
+
+// custGRESync makes the interfaces and the fence list needs and removes the
+// rest. The fence's hooks are checked every tick (they must stay first);
+// the rest against the kernel when the wanted set changes and once a
+// minute. made: an interface was (re)made (its caps must be loaded again).
+func custGRESync(list []customer, now time.Time) (made bool, err error) {
 	want := custGREWant(list)
 	rules := custGRERules(list)
 	sig := fmt.Sprint(want) + rules
 	check := now.Sub(custApplied.greCheck) > time.Minute
+	names := make([]string, 0, len(want))
+	for n := range want {
+		names = append(names, n)
+	}
+	sort.Strings(names)
 	if sig == custApplied.gre && (!check || rules == "") {
-		return nil
+		if rules == "" || custGREHooksFirst() {
+			return false, nil
+		}
+		check = true // a hook moved or went: the full check below
 	}
 	custApplied.greCheck = now
-	var errs []string
-	// the chain first: an interface never exists without its fence
+	// the fence first: an interface never runs without it
 	if rules == "" {
 		custGREDropChain()
 	} else if !custGREChainOK(rules) {
 		if err := custGRELoadChain(rules); err != nil {
-			errs = append(errs, err.Error())
+			custGREDown(names)
+			custApplied.gre = ""
+			return false, err
 		}
 	}
 	for _, name := range custGREIfacesNow() {
@@ -399,27 +530,21 @@ func custGRESync(list []customer, now time.Time) error {
 			_, _ = custRun("ip", "link", "del", "dev", name)
 		}
 	}
-	names := make([]string, 0, len(want))
-	for n := range want {
-		names = append(names, n)
-	}
-	sort.Strings(names)
+	var errs []string
 	for _, name := range names {
-		if len(errs) > 0 {
-			break // no interface without its fence
-		}
-		remote, inner, _ := strings.Cut(want[name], " ")
-		if custGREIfaceOK(name, remote, inner) {
+		if custGREIfaceOK(name, want[name]) {
+			custGREHarden(name)
 			continue
 		}
-		if err := custGREMake(name, remote, inner); err != nil {
-			errs = append(errs, err.Error())
+		made = true
+		if err := custGREMake(name, want[name]); err != nil {
+			errs = append(errs, err.Error()) // only this link: the others go on
 		}
 	}
 	if len(errs) > 0 {
 		custApplied.gre = ""
-		return fmt.Errorf("%s", strings.Join(errs, "; "))
+		return made, fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
 	custApplied.gre = sig
-	return nil
+	return made, nil
 }

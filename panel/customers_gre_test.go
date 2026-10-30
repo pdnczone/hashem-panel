@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,19 +41,25 @@ func TestCustomersGRE(t *testing.T) {
 		`{"name":"x","engine":"frp","transport":"tcp","ports":"9443","gre":true}`,
 		`{"name":"x","engine":"frp","transport":"tcp","ports":"9443, 2048"}`,
 		`{"name":"x","engine":"frp","transport":"tcp","ports":"9443","ctrl_port":2048}`,
+		`{"name":"x","engine":"frp","transport":"tcp","ports":"34525"}`,
+		// Hashem's own GRE tunnel goes to that address
+		`{"name":"x","engine":"frp","transport":"tcp","ports":"9443","gre":true,"remote":"198.51.100.99"}`,
 	} {
 		if code, m := custPost(t, `{"action":"create","name":"bad","days":30,"address":"iran.example.com","links":[`+bad+`]}`); code == 200 {
 			t.Errorf("accepted %s: %v", bad, m)
 		}
 	}
 
-	code, m := custPost(t, `{"action":"create","name":"gre","days":30,"rate_mbit":10,"address":"iran.example.com","links":[
+	code, m := custPost(t, `{"action":"create","name":"gre","days":30,"rate_mbit":10,"address":"203.0.113.1","links":[
 		{"name":"f","engine":"frp","transport":"kcp","ports":"9443","gre":true,"remote":"fo.example.org","ctrl_port":31700},
 		{"name":"b","engine":"backhaul","transport":"tcp","ports":"9444","gre":true,"remote":"198.51.100.31","ctrl_port":31701},
 		{"name":"p","engine":"frp","transport":"tcp","ports":"9445","ctrl_port":31702}]}`)
 	if code != 200 {
 		t.Fatalf("create: %d %v", code, m)
 	}
+	lab.mu.Lock()
+	lab.failRun = nil
+	lab.mu.Unlock()
 	c := custGet(t, 1)
 	f, b, p := c.Links[0], c.Links[1], c.Links[2]
 	if !f.GRE || f.RemoteIP != "198.51.100.30" || !custGREValidInner(f.GREInner) || !custGREValidInner(b.GREInner) || f.GREInner == b.GREInner {
@@ -74,10 +81,12 @@ func TestCustomersGRE(t *testing.T) {
 	// the fence: each link's control port (kcp: udp too) on its interface, then DROP; nothing forwarded
 	log := lab.log()
 	rules, _ := os.ReadFile(filepath.Join(configDir, "customers-gre.v4"))
+	bi, bo := b.greAddrs()
+	m1 := "-A HASHEM_CUST_GRE -s " + fo + "/32 -d " + fi + "/32 -i hcg1x1"
 	for _, want := range []string{
-		"-A HASHEM_CUST_GRE -i hcg1x1 -p tcp -m tcp --dport 31700 -j RETURN",
-		"-A HASHEM_CUST_GRE -i hcg1x1 -p udp -m udp --dport 31700 -j RETURN",
-		"-A HASHEM_CUST_GRE -i hcg1x2 -p tcp -m tcp --dport 31701 -j RETURN",
+		"*raw", m1 + " -p tcp -m tcp --dport 31700 -j RETURN",
+		m1 + " -p udp -m udp --dport 31700 -j RETURN", m1 + " -p icmp -j RETURN",
+		"-A HASHEM_CUST_GRE -s " + bo + "/32 -d " + bi + "/32 -i hcg1x2 -p tcp -m tcp --dport 31701 -j RETURN",
 		"-A HASHEM_CUST_GRE -i hcg+ -j DROP",
 		"-A HASHEM_CUST_GREF -i hcg+ -j DROP", "-A HASHEM_CUST_GREF -o hcg+ -j DROP",
 	} {
@@ -89,12 +98,12 @@ func TestCustomersGRE(t *testing.T) {
 		t.Errorf("GRE fence opens more than the control ports:\n%s", rules)
 	}
 	for _, want := range []string{
-		"ip link add hcg1x1 type gre remote 198.51.100.30 ttl 255",
+		"ip link add hcg1x1 type gre remote 198.51.100.30 local 203.0.113.1 ttl 255",
 		"ip addr add " + fi + "/30 dev hcg1x1",
 		fmt.Sprintf("ip link set dev hcg1x1 mtu %d up", custGREMTU),
-		"ip link add hcg1x2 type gre remote 198.51.100.31 ttl 255",
-		"iptables -w 5 -I INPUT 1 -j HASHEM_CUST_GRE",
-		"iptables -w 5 -I FORWARD 1 -j HASHEM_CUST_GREF",
+		"ip link add hcg1x2 type gre remote 198.51.100.31 local 203.0.113.1 ttl 255",
+		"iptables -w 5 -t raw -I PREROUTING 1 -j HASHEM_CUST_GRE",
+		"iptables -w 5 -t filter -I FORWARD 1 -j HASHEM_CUST_GREF",
 		"ip6tables -w 5 -I INPUT 1 -i hcg+ -j DROP",
 	} {
 		if !strings.Contains(log, want) {
@@ -108,10 +117,46 @@ func TestCustomersGRE(t *testing.T) {
 		t.Error("a plain link got a GRE interface")
 	}
 
+	// steady state: the hooks are checked every tick, nothing is reloaded
+	// or remade; a rule put above a hook moves it back first
+	lab.mu.Lock()
+	lab.cmds = nil
+	lab.mu.Unlock()
+	customersTick(time.Now())
+	if l := lab.log(); strings.Contains(l, "customers-gre.v4") || strings.Contains(l, "ip link add") || !strings.Contains(l, "-t raw -S PREROUTING") {
+		t.Errorf("steady state:\n%s", l)
+	}
+	lab.mu.Lock()
+	lab.cmds, lab.greMoved = nil, true
+	lab.mu.Unlock()
+	customersTick(time.Now())
+	lab.mu.Lock()
+	lab.greMoved = false
+	lab.mu.Unlock()
+	if l := lab.log(); !strings.Contains(l, "iptables -w 5 -t raw -D PREROUTING -j HASHEM_CUST_GRE") || !strings.Contains(l, "iptables -w 5 -t raw -I PREROUTING 1 -j HASHEM_CUST_GRE") {
+		t.Errorf("a hook under another rule was not put back first:\n%s", l)
+	}
+	// the fence does not load: the interfaces go down
+	lab.mu.Lock()
+	lab.cmds, lab.greMoved = nil, true
+	lab.failRun = func(cmd string) bool {
+		return strings.Contains(cmd, "customers-gre.v4") || strings.Contains(cmd, "-I PREROUTING")
+	}
+	lab.mu.Unlock()
+	custApplied.gre = ""
+	customersTick(time.Now())
+	lab.mu.Lock()
+	lab.greMoved, lab.failRun = false, nil
+	lab.mu.Unlock()
+	if l := lab.log(); !strings.Contains(l, "ip link set dev hcg1x1 down") || !strings.Contains(l, "ip link set dev hcg1x2 down") {
+		t.Errorf("no fence, yet the GRE stayed up:\n%s", l)
+	}
+	customersTick(time.Now())
+
 	// the kit: version 3, this server's IPv4, both inner addresses; the
 	// manual config dials the inner address
 	km, body := custKitOf(t, 1, 1)
-	for _, want := range []string{"v=3\n", "gpub=203.0.113.1\n", "gin=" + fi + "\n", "gout=" + fo + "\n", "server=iran.example.com\n"} {
+	for _, want := range []string{"v=3\n", "gpub=203.0.113.1\n", "gin=" + fi + "\n", "gout=" + fo + "\n", "server=203.0.113.1\n"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("GRE kit lacks %q:\n%s", want, body)
 		}
@@ -122,6 +167,17 @@ func TestCustomersGRE(t *testing.T) {
 	if _, body := custKitOf(t, 1, 3); strings.Contains(body, "gpub=") || !strings.HasPrefix(body, "v=1\n") {
 		t.Errorf("a plain link's kit:\n%s", body)
 	}
+
+	// a domain for this server's own address: the GRE could leave from another
+	if code, m := custPost(t, `{"action":"update","id":1,"name":"gre","days":30,"rate_mbit":10,"address":"iran.example.com"}`); code != 200 {
+		t.Fatalf("update: %d %v", code, m)
+	}
+	rr := httptest.NewRecorder()
+	handleCustomersKit(rr, httptest.NewRequest("GET", "/api/customers/kit?id=1&link=1", nil))
+	if rr.Code == 200 || !strings.Contains(rr.Body.String(), "203.0.113.1") {
+		t.Errorf("a GRE kit for a domain naming a local address: %d %s", rr.Code, rr.Body.String())
+	}
+	custPost(t, `{"action":"update","id":1,"name":"gre","days":30,"rate_mbit":10,"address":"203.0.113.1"}`)
 
 	// the installer reads the panel's GRE kit
 	installer, _ := filepath.Abs("../tools/hashem-customer.sh")
@@ -151,7 +207,7 @@ func TestCustomersGRE(t *testing.T) {
 		}
 	}
 	log = lab.log()
-	for _, want := range []string{"ip link del dev hcg1x1", "ip link del dev hcg1x2", "iptables -w 5 -D FORWARD -j HASHEM_CUST_GREF", "iptables -w 5 -X HASHEM_CUST_GRE", "ip6tables -w 5 -D INPUT -i hcg+ -j DROP"} {
+	for _, want := range []string{"ip link del dev hcg1x1", "ip link del dev hcg1x2", "iptables -w 5 -t filter -D FORWARD -j HASHEM_CUST_GREF", "iptables -w 5 -t raw -X HASHEM_CUST_GRE", "ip6tables -w 5 -D INPUT -i hcg+ -j DROP"} {
 		if !strings.Contains(log, want) {
 			t.Errorf("out of GRE: missing %q in:\n%s", want, log)
 		}
