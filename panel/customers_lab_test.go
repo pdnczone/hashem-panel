@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -41,7 +43,17 @@ func TestCustomersLab(t *testing.T) {
 	dir := t.TempDir()
 	oldDir, oldUnit, oldBin, oldSrc, oldRunner, oldSys, oldPort := configDir, engineUnitDir, custBinDir, custFrpsSrc, runner, runSystemctl, cfg.Port
 	configDir, engineUnitDir, custBinDir, custFrpsSrc = dir, filepath.Join(dir, "systemd"), filepath.Join(dir, "sell"), filepath.Join(frpDirEnv, "frps")
-	cfg.Port = 2096
+	// the panel's own port: frps asks it about every proxy (/_hsplugin)
+	plugMux := http.NewServeMux()
+	plugMux.HandleFunc("POST /_hsplugin/{key}", handleCustomerPlugin)
+	plugLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plugSrv := &http.Server{Handler: plugMux}
+	go func() { _ = plugSrv.Serve(plugLn) }()
+	t.Cleanup(func() { _ = plugSrv.Close() })
+	cfg.Port = plugLn.Addr().(*net.TCPAddr).Port
 	runner = execRunner // the real iptables and tc of this namespace
 	_ = os.MkdirAll(engineUnitDir, 0o755)
 
@@ -81,10 +93,12 @@ func TestCustomersLab(t *testing.T) {
 		pmMu.Lock()
 		defer pmMu.Unlock()
 		switch {
-		case len(args) == 3 && args[0] == "enable" && args[1] == "--now":
-			if procs[args[2]] == nil {
-				return start(args[2])
+		case len(args) == 2 && args[0] == "start":
+			if procs[args[1]] == nil {
+				return start(args[1])
 			}
+		case len(args) == 2 && args[0] == "stop":
+			stop(args[1])
 		case len(args) == 3 && args[0] == "disable" && args[1] == "--now":
 			stop(args[2])
 		case len(args) == 2 && args[0] == "restart":
@@ -195,6 +209,32 @@ func TestCustomersLab(t *testing.T) {
 		t.Fatalf("%s: users cannot reach the service: %v\nfrpc:\n%s\nfrps:\n%s", what, err, fl, sl)
 	}
 	waitUp("first connection", 40*time.Second)
+
+	// the customer's token cannot open proxies that bypass billing: stcp
+	// (traffic over the control port) and a port that was not sold
+	tok := get().Links[0].Token
+	rogue := fmt.Sprintf("serverAddr = %q\nserverPort = 7700\nauth.token = %q\nloginFailExit = false\n"+
+		"\n[[proxies]]\nname = \"bypass\"\ntype = \"stcp\"\nsecretKey = \"x\"\nlocalIP = \"127.0.0.1\"\nlocalPort = 9000\n"+
+		"\n[[proxies]]\nname = \"extra\"\ntype = \"tcp\"\nlocalIP = \"127.0.0.1\"\nlocalPort = 9000\nremotePort = 9001\n", hubFo, tok)
+	rogueConf := filepath.Join(dir, "rogue.toml")
+	_ = os.WriteFile(rogueConf, []byte(rogue), 0o600)
+	rc := exec.Command("ip", "netns", "exec", foNS, filepath.Join(frpDirEnv, "frpc"), "-c", rogueConf)
+	rlog := filepath.Join(dir, "rogue.log")
+	rf, _ := os.Create(rlog)
+	rc.Stdout, rc.Stderr = rf, rf
+	if err := rc.Start(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(6 * time.Second)
+	_ = rc.Process.Kill()
+	_ = rc.Wait()
+	rl, _ := os.ReadFile(rlog)
+	if !strings.Contains(string(rl), "only tcp and udp proxies are allowed") {
+		t.Errorf("an stcp proxy was not refused:\n%s", rl)
+	}
+	if !strings.Contains(string(rl), "port 9001 is not part of this tunnel") && !strings.Contains(string(rl), "port not allowed") {
+		t.Errorf("a proxy on an unsold port was not refused:\n%s", rl)
+	}
 	if _, err := user("udp"); err != nil {
 		t.Errorf("UDP through the sold tunnel: %v", err)
 	}

@@ -61,7 +61,7 @@ if bash "$SH" config "hsk1.%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%" >/dev/null 2>&1; then
 
 # install: config (0600), unit, started; installing again updates the same unit
 out=$(bash "$SH" install "$KIT" 2>&1) || F "install: $out"
-U=hcust-203-0-113-7-31000
+U=hcust-203-0-113-7-3-1
 [[ -f "$T/sd/$U.service" ]] || F "no unit $U ($(ls "$T/sd"))"
 [[ -f "$T/conf/$U.toml" ]] || F "no config"
 [[ "$(stat -c %a "$T/conf/$U.toml" 2>/dev/null)" == 600 ]] || F "config is not 0600"
@@ -71,6 +71,19 @@ grep -q "Connected" <<< "$out" || F "no success message: $out"
 bash "$SH" install "$KIT" >/dev/null 2>&1 || F "install again"
 [[ $(ls "$T/sd" | wc -l) -eq 1 ]] || F "a second install made another unit: $(ls "$T/sd")"
 bash "$SH" status | grep -q "^$U" || F "status does not list $U"
+grep -q "publishes TCP and UDP port(s) 443, 2083" <<< "$out" || F "install does not say which ports it publishes: $out"
+grep -q '^\[Install\]' "$T/sd/$U.service" || F "the customer unit does not start at boot"
+# a new kit for the same link (the seller moved the control port) replaces the tunnel
+KIT2=$(mkkit "${GOOD/port=31000/port=31555}")
+bash "$SH" install "$KIT2" >/dev/null 2>&1 || F "install the moved kit"
+[[ $(ls "$T/sd" | wc -l) -eq 1 ]] || F "the moved kit left the old tunnel: $(ls "$T/sd")"
+grep -q "serverPort = 31555" "$T/conf/$U.toml" || F "the moved kit did not update the config"
+# a damaged download is refused and nothing is left behind
+rm -f "$T/lib/hc/frpc"
+printf 'not frp' > "$T/fake.tgz"
+if out=$(HASHEM_FRP_TARBALL="$T/fake.tgz" bash "$SH" install "$KIT" 2>&1); then F "a bad FRP archive was accepted"; fi
+grep -q "does not match its checksum" <<< "$out" || F "bad archive message: $out"
+printf '#!/bin/sh\n[ "$1" = "-v" ] && echo 0.71.0\n' > "$T/lib/hc/frpc"; chmod +x "$T/lib/hc/frpc"
 
 # remove: by name, unknown names refused, the frpc copy goes with the last tunnel
 if bash "$SH" remove 'hcust-x;rm -rf /' >/dev/null 2>&1; then F "a hostile remove name was accepted"; fi

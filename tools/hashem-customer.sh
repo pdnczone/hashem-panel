@@ -5,6 +5,7 @@
 # your foreign servers. On that server run:
 #
 #   sudo bash hashem-customer.sh install hsk1.XXXX   # set up or update the tunnel
+#                                          (--yes: no question, for scripts)
 #   sudo bash hashem-customer.sh status              # every tunnel and its state
 #   sudo bash hashem-customer.sh remove NAME|all     # take tunnels away
 #   bash hashem-customer.sh config hsk1.XXXX         # print the frpc config only
@@ -65,13 +66,38 @@ kit_decode() {
 
 valid_port() { [[ "$1" =~ ^[0-9]{1,5}$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 )); }
 
-# unit_name: one per seller server and control port, so tunnels bought from
-# two sellers never share a name; installing the same kit again updates it.
+# unit_name: one per seller server and sold link (the kit's name), so
+# tunnels bought from two sellers never share a name, and a new kit for the
+# same link (another control port) replaces the old tunnel.
 unit_name() {
     local s
     s=$(printf '%s' "$K_SERVER" | tr -c 'A-Za-z0-9' '-' | tr -s '-' | cut -c1-40)
     s=${s%-}
-    echo "hcust-${s#-}-${K_PORT}"
+    echo "hcust-${s#-}-${K_NAME#hsell-}"
+}
+
+# confirm: the kit decides which local ports become public on the seller's
+# server. Say which, warn about services bound to this server only, and ask.
+confirm() {
+    local p ans local_only=""
+    local protos=TCP
+    [[ "$K_UDP" == 1 ]] && protos="TCP and UDP"
+    say "This tunnel publishes ${protos} port(s) ${K_PORTS//,/, } of this server on ${K_SERVER}."
+    if command -v ss >/dev/null 2>&1; then
+        for p in ${K_PORTS//,/ }; do
+            if ss -Hltn "sport = :$p" 2>/dev/null | awk '{print $4}' | grep -qE '^(127\.|\[::1\]|::1)'; then
+                if ! ss -Hltn "sport = :$p" 2>/dev/null | awk '{print $4}' | grep -qvE '^(127\.|\[::1\]|::1)'; then
+                    local_only="$local_only $p"
+                fi
+            fi
+        done
+    fi
+    [[ -z "$local_only" ]] || echo "[!] Port(s)${local_only} are open on this server only (127.0.0.1): the tunnel makes them reachable from the internet." >&2
+    [[ "$ASSUME_YES" == 1 ]] && return 0
+    if [[ -r /dev/tty ]] && { : < /dev/tty; } 2>/dev/null; then
+        read -r -p "Continue? (y/N): " ans < /dev/tty || ans=""
+        [[ "$ans" =~ ^[Yy]$ ]] || die "aborted: nothing was changed"
+    fi
 }
 
 frpc_config() {
@@ -109,7 +135,6 @@ install_frpc() {
     arch=$(frp_arch)
     eval "want=\${FRP_SHA256_${arch}}"
     tmp=$(mktemp -d)
-    trap 'rm -rf "$tmp"' RETURN
     tgz="$tmp/frp.tgz"
     if [[ -n "${HASHEM_FRP_TARBALL:-}" ]]; then
         cp "$HASHEM_FRP_TARBALL" "$tgz"
@@ -121,11 +146,12 @@ install_frpc() {
             || die "cannot download FRP from GitHub: check this server's internet access"
     fi
     got=$(sha256sum "$tgz" | awk '{print $1}')
-    [[ "$got" == "$want" ]] || die "the FRP download does not match its checksum (got $got): not installed"
-    tar -xzf "$tgz" -C "$tmp" --strip-components=1 "frp_${FRP_VERSION}_linux_${arch}/frpc" || die "cannot unpack FRP"
+    [[ "$got" == "$want" ]] || { rm -rf "$tmp"; die "the FRP download does not match its checksum (got $got): not installed"; }
+    tar -xzf "$tgz" -C "$tmp" --strip-components=1 "frp_${FRP_VERSION}_linux_${arch}/frpc" || { rm -rf "$tmp"; die "cannot unpack FRP"; }
     mkdir -p "$BIN_DIR"
     install -m 0755 "$tmp/frpc" "$BIN_DIR/frpc.new"
     mv -f "$BIN_DIR/frpc.new" "$BIN_DIR/frpc"
+    rm -rf "$tmp"
 }
 
 need_root() { [[ $(id -u) -eq 0 ]] || die "run it as root (sudo bash $0 $*)"; }
@@ -134,8 +160,16 @@ cmd_install() {
     need_root install
     command -v systemctl >/dev/null 2>&1 || die "systemd is needed"
     kit_decode "$1"
-    local unit conf p missing=""
+    local unit conf p f missing=""
     unit=$(unit_name)
+    confirm
+    # an older tunnel for this same link (its control port changed) goes
+    for f in "$UNIT_DIR"/hcust-*-"${K_NAME#hsell-}".service; do
+        [[ -e "$f" && "${f##*/}" != "${unit}.service" ]] || continue
+        grep -q "^Description=Hashem tunnel to ${K_SERVER} (" "$f" || continue
+        systemctl disable --now "${f##*/}" >/dev/null 2>&1 || true
+        rm -f "$f" "$CONF_DIR/$(basename "${f%.service}").toml"
+    done
     conf="$CONF_DIR/${unit}.toml"
     install_frpc
     mkdir -p "$CONF_DIR"
@@ -155,6 +189,11 @@ Restart=always
 RestartSec=3
 LimitNOFILE=1048576
 NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+CapabilityBoundingSet=
 
 [Install]
 WantedBy=multi-user.target
@@ -219,8 +258,14 @@ cmd_status() {
     [[ -n "$any" ]] || echo "No Hashem tunnels on this server."
 }
 
+ASSUME_YES=0
+args=()
+for a in "$@"; do
+    if [[ "$a" == "--yes" || "$a" == "-y" ]]; then ASSUME_YES=1; else args+=("$a"); fi
+done
+set -- "${args[@]+"${args[@]}"}"
 case "${1:-}" in
-    install) [[ $# -eq 2 ]] || die "usage: $0 install hsk1.XXXX"; cmd_install "$2" ;;
+    install) [[ $# -eq 2 ]] || die "usage: $0 install hsk1.XXXX [--yes]"; cmd_install "$2" ;;
     config) [[ $# -eq 2 ]] || die "usage: $0 config hsk1.XXXX"; kit_decode "$2"; frpc_config ;;
     remove) cmd_remove "${2:-}" ;;
     status) cmd_status ;;

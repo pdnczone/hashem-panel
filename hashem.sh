@@ -6397,6 +6397,10 @@ reserve_service_ports() {
 d=json.load(open(os.environ["PEERS_F"]))
 print(" ".join(str(x) for p in d.get("peers",[]) for x in [p.get("frp_port")]+list(p.get("ports") or []) if isinstance(x,int)))' 2>/dev/null)"
     fi
+    # every port the panel's configs take (sold customer tunnels, Xray, Bagher...)
+    if [[ -f "${PANEL_CONFIG_DIR}/ports.reserved" ]]; then
+        ports+=" $(grep -E '^[0-9]+$' "${PANEL_CONFIG_DIR}/ports.reserved" | tr '\n' ' ')"
+    fi
     # keep 1024-65535 only (lower ports are never ephemeral), dedupe, sort
     local list
     list=$(printf '%s
