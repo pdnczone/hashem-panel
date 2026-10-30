@@ -1105,9 +1105,18 @@ for _ in range(3): r.sendto(tcp,(d,0))
 			if upErr != nil {
 				ss, _ := exec.Command("ss", "-Htlnp").CombinedOutput()
 				unitF, _ := os.ReadFile(filepath.Join(engineUnitDir, "hsell-1-1.service"))
-				fw, _ := inFo("iptables-save", "-c")
-				t.Fatalf("Backhaul over GRE, fenced: users cannot reach port 9005: %v\npanel: %v\nhub listens:\n%s\nunit:\n%s\nforeign rules:\n%s\n%s",
-					upErr, customersView()["error"], ss, unitF, fw, r.logs("gbh", "hsell-1-1.service"))
+				fwAll, _ := inFo("iptables-save", "-c")
+				var fwl []string
+				for _, l := range strings.Split(string(fwAll), "\n") {
+					if strings.Contains(l, " HC") || strings.Contains(l, "OUTPUT") {
+						fwl = append(fwl, l)
+					}
+				}
+				fw := strings.Join(fwl, "\n")
+				idf, _ := os.ReadFile(filepath.Join(cconf, unit+".id"))
+				t.Logf("Backhaul over GRE id file:\n%s", strings.ReplaceAll(string(idf), "token=", "token-len="))
+				t.Fatalf("Backhaul over GRE, fenced: users cannot reach port 9005: %v\nforeign fence:\n%s\npanel: %v\nhub listens:\n%s\nunit:\n%s",
+					upErr, fw, customersView()["error"], ss, unitF)
 			}
 			r.xfer(9005, 2e6, 2e6)
 			r.checkBilled(1, 300000)
