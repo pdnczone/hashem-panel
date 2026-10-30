@@ -62,19 +62,77 @@ const (
 	custMaxCount    = 2000
 	custMaxID       = 32767 // custPoliceIndex stays within 0x4853xxxx
 	custFRPVersion  = "0.71.0"
+
+	custEngineFRP      = "frp"
+	custEngineBackhaul = "backhaul"
+	custEngineXray     = "xray"
 )
 
-// Paths, swappable for tests.
+// Paths, swappable for tests. Each engine runs its own copy of the seller's
+// binary from custBinDir, so hashem.sh's pkill of /usr/local/bin/frps or
+// /usr/local/bin/backhaul on an update never hits a customer.
 var (
-	custBinDir  = "/usr/local/lib/hashem-sell"
-	custFrpsSrc = "/usr/local/bin/frps"
+	custBinDir      = "/usr/local/lib/hashem-sell"
+	custFrpsSrc     = "/usr/local/bin/frps"
+	custBackhaulSrc = "/usr/local/bin/backhaul"
+	custXraySrc     = xrayBinPath
 )
 
-func custBin() string              { return filepath.Join(custBinDir, "frps") }
-func custUnit(cid, lid int) string { return fmt.Sprintf("hsell-%d-%d", cid, lid) }
-func custConfDir() string          { return filepath.Join(configDir, "customers") }
-func custConfPath(cid, lid int) string {
-	return filepath.Join(custConfDir(), fmt.Sprintf("%d-%d.toml", cid, lid))
+// custEngines are the engines a link can run, in the order the UI lists them.
+var custEngines = []string{custEngineFRP, custEngineBackhaul, custEngineXray}
+
+// custEngineBinName is the binary an engine's units run (in custBinDir).
+func custEngineBinName(engine string) string {
+	switch engine {
+	case custEngineBackhaul:
+		return "backhaul"
+	case custEngineXray:
+		return "xray"
+	}
+	return "frps"
+}
+
+// custEngineSrc is where the seller's own binary of an engine is installed.
+func custEngineSrc(engine string) string {
+	switch engine {
+	case custEngineBackhaul:
+		return custBackhaulSrc
+	case custEngineXray:
+		return custXraySrc
+	}
+	return custFrpsSrc
+}
+
+// custEngineHow says how the seller installs an engine's binary.
+func custEngineHow(engine string) string {
+	switch engine {
+	case custEngineBackhaul:
+		return "install the Backhaul engine first (hashem menu, or set up any Backhaul tunnel)"
+	case custEngineXray:
+		return "install Xray-core first (hashem menu: Xray tunnel)"
+	}
+	return "install the FRP engine first (hashem menu, or set up any FRP tunnel)"
+}
+
+func custBin() string                    { return custEngineBin(custEngineFRP) }
+func custEngineBin(engine string) string { return filepath.Join(custBinDir, custEngineBinName(engine)) }
+func custUnit(cid, lid int) string       { return fmt.Sprintf("hsell-%d-%d", cid, lid) }
+func custConfDir() string                { return filepath.Join(configDir, "customers") }
+
+// custConfPath is a link's config: Xray reads JSON, FRP and Backhaul TOML.
+func custConfPath(cid, lid int, engine string) string {
+	ext := ".toml"
+	if engine == custEngineXray {
+		ext = ".json"
+	}
+	return filepath.Join(custConfDir(), fmt.Sprintf("%d-%d%s", cid, lid, ext))
+}
+
+// custLinkFiles are every file a link may have in custConfDir, whatever its
+// engine was (a link can change engine).
+func custLinkFiles(cid, lid int) []string {
+	base := filepath.Join(custConfDir(), fmt.Sprintf("%d-%d", cid, lid))
+	return []string{base + ".toml", base + ".json", base + ".crt", base + ".key"}
 }
 func custUnitPath(cid, lid int) string {
 	return filepath.Join(engineUnitDir, custUnit(cid, lid)+".service")
@@ -91,14 +149,33 @@ func custPoliceIndex(cid int, out bool) int {
 }
 
 type customerLink struct {
-	ID        int    `json:"id"`
-	Name      string `json:"name,omitempty"` // the foreign server, for the seller
-	Engine    string `json:"engine"`         // "frp"
-	Transport string `json:"transport"`      // frp: tcp | kcp | quic | websocket
+	ID     int    `json:"id"`
+	Name   string `json:"name,omitempty"` // the foreign server, for the seller
+	Engine string `json:"engine"`         // frp | backhaul | xray
+	// Transport: frp: tcp | kcp | quic | websocket; backhaul: tcp | tcpmux |
+	// ws | wsmux | wss | wssmux; xray (the preset): reality | xhttp | grpc | kcp
+	Transport string `json:"transport"`
 	CtrlPort  int    `json:"ctrl_port"`
 	Ports     []int  `json:"ports"`
 	UDP       bool   `json:"udp,omitempty"`
 	Token     string `json:"token"`
+	// Xray: the Iran end of the reverse link (keys and profile); the kit
+	// carries the foreign end's part.
+	Xray *XrayLink `json:"xray,omitempty"`
+	// Backhaul wss/wssmux: the relay's self-signed certificate (PEM).
+	TLSCert string `json:"tls_cert,omitempty"`
+	TLSKey  string `json:"tls_key,omitempty"`
+}
+
+// ctrlUDP: the control port is (also) UDP.
+func (l customerLink) ctrlUDP() bool {
+	switch l.Engine {
+	case custEngineXray:
+		return l.Transport == "kcp"
+	case custEngineBackhaul:
+		return false
+	}
+	return l.Transport == "kcp" || l.Transport == "quic"
 }
 
 type customer struct {
@@ -221,6 +298,11 @@ func custLoadLocked() {
 	}
 	var ok []customer
 	for _, c := range custs.f.Customers {
+		for i := range c.Links {
+			if c.Links[i].Engine == "" {
+				c.Links[i].Engine = custEngineFRP // links from before the other engines
+			}
+		}
 		if c.ID > 0 && c.ID <= custMaxID {
 			ok = append(ok, c)
 		}
@@ -305,7 +387,7 @@ func customerPortClaims() []portClaim {
 			}
 			ctrl := "the control port of " + owner
 			out = append(out, portClaim{"tcp", l.CtrlPort, claimCustomer, c.ID, l.ID, ctrl})
-			if l.Transport == "kcp" || l.Transport == "quic" {
+			if l.ctrlUDP() {
 				out = append(out, portClaim{"udp", l.CtrlPort, claimCustomer, c.ID, l.ID, ctrl})
 			}
 		}
@@ -315,7 +397,90 @@ func customerPortClaims() []portClaim {
 
 // ---- configs and units ----
 
-var custTransports = map[string]bool{"tcp": true, "kcp": true, "quic": true, "websocket": true}
+// custTransports are each engine's transports, the default first. Backhaul
+// carries UDP only on tcp (accept_udp); Xray's are the presets that need no
+// domain of the seller's own.
+var custTransports = map[string][]string{
+	custEngineFRP:      {"tcp", "kcp", "quic", "websocket"},
+	custEngineBackhaul: {"tcp", "tcpmux", "ws", "wsmux", "wss", "wssmux"},
+	custEngineXray:     {"reality", "xhttp", "grpc", "kcp"},
+}
+
+// custServerConf is the config of a link's relay on this server.
+func custServerConf(cid int, l customerLink) (string, error) {
+	switch l.Engine {
+	case custEngineBackhaul:
+		return custBackhaulConf(cid, l), nil
+	case custEngineXray:
+		x, err := custXrayIran(l)
+		if err != nil {
+			return "", err
+		}
+		conf, err := buildXrayConfig(x)
+		if err != nil {
+			return "", err
+		}
+		data, err := json.MarshalIndent(conf, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		return string(data) + "\n", nil
+	}
+	return custFrpsConf(l), nil
+}
+
+// custBackhaulConf is a link's Backhaul server (v0.7.2 schema). The server
+// alone lists the ports: a client cannot open others. Each forwards to the
+// same port on the foreign server's 127.0.0.1, like FRP's localIP.
+func custBackhaulConf(cid int, l customerLink) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Hashem: sold tunnel. Written by the panel; edits are overwritten.\n[server]\n")
+	fmt.Fprintf(&b, "bind_addr = \"0.0.0.0:%d\"\ntransport = %q\ntoken = %q\n", l.CtrlPort, l.Transport, l.Token)
+	b.WriteString("keepalive_period = 75\nnodelay = true\nheartbeat = 40\nchannel_size = 2048\n")
+	b.WriteString("sniffer = false\nweb_port = 0\nsniffer_log = \"\"\nlog_level = \"warn\"\n")
+	if l.UDP {
+		b.WriteString("accept_udp = true\n")
+	}
+	if l.Transport == "wss" || l.Transport == "wssmux" {
+		fmt.Fprintf(&b, "tls_cert = %q\ntls_key = %q\n", custCertPath(cid, l.ID, ".crt"), custCertPath(cid, l.ID, ".key"))
+	}
+	b.WriteString("ports = [\n")
+	for i, p := range l.Ports {
+		sep := ","
+		if i == len(l.Ports)-1 {
+			sep = ""
+		}
+		fmt.Fprintf(&b, "  \"%d=127.0.0.1:%d\"%s\n", p, p, sep)
+	}
+	b.WriteString("]\n")
+	return b.String()
+}
+
+// custXrayIran is the Iran end of an Xray link: a VLESS reverse portal on
+// the control port and the users' ports. The link's user may only open
+// reverse links (no forward proxy through this server) and anything else
+// goes to the blackhole, so every byte crosses a billed user port.
+func custXrayIran(l customerLink) (XrayLink, error) {
+	if l.Xray == nil {
+		return XrayLink{}, fmt.Errorf("link %d has no Xray keys: edit and save it again", l.ID)
+	}
+	x := *l.Xray
+	x.Mode, x.Side, x.Remote, x.Listen = xrayModeReverse, xraySideIran, "", ""
+	x.TunnelPort, x.Ports, x.UDP, x.ProbePort, x.Disabled, x.Expert = l.CtrlPort, append([]int(nil), l.Ports...), l.UDP, 0, false, nil
+	return x, nil
+}
+
+// custXrayForeign is the customer's end of an Xray link (what the installer
+// writes from the kit): it dials addr.
+func custXrayForeign(l customerLink, addr string) (XrayLink, error) {
+	x, err := custXrayIran(l)
+	if err != nil {
+		return x, err
+	}
+	x.Side, x.Remote = xraySideForeign, addr
+	x.Keys.PrivateKey, x.Keys.TLSKey = "", ""
+	return x, nil
+}
 
 // custFrpsConf is a link's frps config.
 func custFrpsConf(l customerLink) string {
@@ -345,6 +510,11 @@ func custFrpsConf(l customerLink) string {
 	return b.String()
 }
 
+// custCertPath is a Backhaul wss link's certificate (.crt) or key (.key).
+func custCertPath(cid, lid int, ext string) string {
+	return filepath.Join(custConfDir(), fmt.Sprintf("%d-%d%s", cid, lid, ext))
+}
+
 // custFrpcConf is the foreign end of a link (the kit carries the same).
 func custFrpcConf(c customer, l customerLink, addr string) string {
 	var b strings.Builder
@@ -364,17 +534,28 @@ func custFrpcConf(c customer, l customerLink, addr string) string {
 	return b.String()
 }
 
+// custUnitExec is a link's ExecStart (and the environment it needs).
+func custUnitExec(cid int, l customerLink) (env, exec string) {
+	conf := custConfPath(cid, l.ID, l.Engine)
+	if l.Engine == custEngineXray {
+		// as xrayUnit: Linux refuses TCP_USER_TIMEOUT on an MPTCP socket
+		return "Environment=GODEBUG=multipathtcp=0\n", custEngineBin(l.Engine) + " run -c " + conf
+	}
+	return "", custEngineBin(l.Engine) + " -c " + conf
+}
+
 // custUnitFile has no [Install]: only the panel starts it, after the chain
 // that counts it is loaded (also after a reboot).
-func custUnitFile(cid, lid int) string {
+func custUnitFile(cid int, l customerLink) string {
+	env, exec := custUnitExec(cid, l)
 	return fmt.Sprintf(`[Unit]
-Description=Hashem sold tunnel: customer %d, link %d
+Description=Hashem sold tunnel: customer %d, link %d (%s)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=%s -c %s
+%sExecStart=%s
 Restart=always
 RestartSec=3
 LimitNOFILE=1048576
@@ -388,9 +569,9 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictNamespaces=true
 LockPersonality=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-`, cid, lid, custBin(), custConfPath(cid, lid))
+`, cid, l.ID, l.Engine, env, exec)
 }
 
 // custWriteFile writes path when its content differs; it says whether it did.
@@ -401,32 +582,34 @@ func custWriteFile(path, content string, mode os.FileMode) (bool, error) {
 	return true, writeFileAtomic(path, []byte(content), mode)
 }
 
-// custEnsureBin keeps custBin a copy of the installed frps: a missing copy is
-// made, one of another size (frps was updated) replaced. It says whether the
-// copy changed (running units then restart).
-func custEnsureBin() (bool, error) {
-	src, err := os.Stat(custFrpsSrc)
+// custEnsureBin keeps an engine's binary in custBinDir a copy of the
+// seller's installed one: a missing copy is made, one of another size (the
+// engine was updated) replaced. It says whether the copy changed (running
+// units then restart).
+func custEnsureBin(engine string) (bool, error) {
+	srcPath, dstPath := custEngineSrc(engine), custEngineBin(engine)
+	src, err := os.Stat(srcPath)
 	if err != nil {
-		if _, err2 := os.Stat(custBin()); err2 == nil {
+		if _, err2 := os.Stat(dstPath); err2 == nil {
 			return false, nil // the copy alone is enough
 		}
-		return false, fmt.Errorf("frps is not installed on this server (%s): install the FRP engine first (hashem menu, or set up any FRP tunnel)", custFrpsSrc)
+		return false, fmt.Errorf("%s is not installed on this server (%s): %s", custEngineBinName(engine), srcPath, custEngineHow(engine))
 	}
-	if dst, err := os.Stat(custBin()); err == nil && dst.Size() == src.Size() && dst.Mode()&0o111 != 0 {
+	if dst, err := os.Stat(dstPath); err == nil && dst.Size() == src.Size() && dst.Mode()&0o111 != 0 {
 		return false, nil
 	}
-	data, err := os.ReadFile(custFrpsSrc)
+	data, err := os.ReadFile(srcPath)
 	if err != nil {
 		return false, err
 	}
 	if err := os.MkdirAll(custBinDir, 0o755); err != nil {
 		return false, err
 	}
-	tmp := custBin() + ".new"
+	tmp := dstPath + ".new"
 	if err := os.WriteFile(tmp, data, 0o755); err != nil {
 		return false, err
 	}
-	return true, os.Rename(tmp, custBin())
+	return true, os.Rename(tmp, dstPath)
 }
 
 // custRemoveLinkFiles stops a link's unit and deletes its unit and config.
@@ -435,13 +618,15 @@ func custEnsureBin() (bool, error) {
 func custRemoveLinkFiles(cid, lid int) {
 	custTickMu.Lock()
 	defer custTickMu.Unlock()
-	custRemoveUnitLocked(custUnit(cid, lid), custUnitPath(cid, lid), custConfPath(cid, lid))
+	custRemoveUnitLocked(custUnit(cid, lid), custUnitPath(cid, lid), custLinkFiles(cid, lid))
 }
 
-func custRemoveUnitLocked(u, unitPath, confPath string) {
+func custRemoveUnitLocked(u, unitPath string, files []string) {
 	_ = runSystemctl("disable", "--now", u+".service")
 	_ = os.Remove(unitPath)
-	_ = os.Remove(confPath)
+	for _, f := range files {
+		_ = os.Remove(f)
+	}
 	_ = runSystemctl("daemon-reload")
 	delete(custApplied.running, u)
 }
@@ -462,7 +647,7 @@ func custSweepUnits(list []customer) {
 		if _, err := fmt.Sscanf(u, "hsell-%d-%d", &cid, &lid); err != nil || known[u] || custUnit(cid, lid) != u {
 			continue
 		}
-		custRemoveUnitLocked(u, f, custConfPath(cid, lid))
+		custRemoveUnitLocked(u, f, custLinkFiles(cid, lid))
 	}
 }
 
@@ -1090,23 +1275,24 @@ func custSyncUnits(list []customer, chainOK bool) error {
 		custApplied.running = map[string]bool{}
 	}
 	var errs []string
-	binChanged, binErr := false, error(nil)
 	want := map[string]bool{}
+	engineOf := map[string]string{}
 	reload := false
 	restart := map[string]bool{}
 	for _, c := range list {
 		for _, l := range c.Links {
 			u := custUnit(c.ID, l.ID)
+			engineOf[u] = l.Engine
 			// a new unit waits for the chain that counts it; one already
 			// running keeps running through a failed reload (a cut stops it)
 			want[u] = c.Cut == "" && (chainOK || custApplied.running[u])
-			changed, err := custWriteFile(custConfPath(c.ID, l.ID), custFrpsConf(l), 0o600)
+			changed, err := custWriteLinkFiles(c.ID, l)
 			if err != nil {
 				errs = append(errs, u+": "+err.Error())
 				want[u] = false
 				continue
 			}
-			uc, err := custWriteFile(custUnitPath(c.ID, l.ID), custUnitFile(c.ID, l.ID), 0o644)
+			uc, err := custWriteFile(custUnitPath(c.ID, l.ID), custUnitFile(c.ID, l), 0o644)
 			if err != nil {
 				errs = append(errs, u+": "+err.Error())
 				want[u] = false
@@ -1116,14 +1302,16 @@ func custSyncUnits(list []customer, chainOK bool) error {
 			restart[u] = changed || uc
 		}
 	}
-	anyWanted := false
-	for _, w := range want {
-		anyWanted = anyWanted || w
-	}
-	if anyWanted {
-		binChanged, binErr = custEnsureBin()
-		if binErr != nil {
-			errs = append(errs, binErr.Error())
+	// each engine's binary copy, for the engines a wanted unit runs
+	binChanged, binErr := map[string]bool{}, map[string]error{}
+	for u, w := range want {
+		e := engineOf[u]
+		if _, done := binErr[e]; !w || done {
+			continue
+		}
+		binChanged[e], binErr[e] = custEnsureBin(e)
+		if binErr[e] != nil {
+			errs = append(errs, binErr[e].Error())
 		}
 	}
 	if reload {
@@ -1135,7 +1323,7 @@ func custSyncUnits(list []customer, chainOK bool) error {
 	}
 	sort.Strings(units)
 	for _, u := range units {
-		w := want[u] && binErr == nil
+		w := want[u] && binErr[engineOf[u]] == nil
 		running, known := custApplied.running[u]
 		switch {
 		case w && (!known || !running):
@@ -1144,7 +1332,7 @@ func custSyncUnits(list []customer, chainOK bool) error {
 				continue
 			}
 			custApplied.running[u] = true
-		case w && (restart[u] || binChanged):
+		case w && (restart[u] || binChanged[engineOf[u]]):
 			if err := runSystemctl("restart", u+".service"); err != nil {
 				errs = append(errs, "restart "+u+": "+err.Error())
 			}
@@ -1157,6 +1345,40 @@ func custSyncUnits(list []customer, chainOK bool) error {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+// custWriteLinkFiles writes a link's config (and a Backhaul wss link's
+// certificate) and removes what an earlier engine of the link left. It says
+// whether anything changed.
+func custWriteLinkFiles(cid int, l customerLink) (bool, error) {
+	conf, err := custServerConf(cid, l)
+	if err != nil {
+		return false, err
+	}
+	keep := map[string]string{custConfPath(cid, l.ID, l.Engine): conf}
+	if l.Engine == custEngineBackhaul && (l.Transport == "wss" || l.Transport == "wssmux") {
+		if l.TLSCert == "" || l.TLSKey == "" {
+			return false, fmt.Errorf("link %d has no certificate: edit and save it again", l.ID)
+		}
+		keep[custCertPath(cid, l.ID, ".crt")] = l.TLSCert
+		keep[custCertPath(cid, l.ID, ".key")] = l.TLSKey
+	}
+	changed := false
+	for _, f := range custLinkFiles(cid, l.ID) {
+		content, ok := keep[f]
+		if !ok {
+			if os.Remove(f) == nil {
+				changed = true
+			}
+			continue
+		}
+		c, err := custWriteFile(f, content, 0o600)
+		if err != nil {
+			return changed, err
+		}
+		changed = changed || c
+	}
+	return changed, nil
 }
 
 // sendCustomerAlert sends a cut or a warning through the panel's alerts.
@@ -1209,7 +1431,9 @@ func custValidatePlan(quotaGB, rateMbit float64, days int) error {
 // custLinkInput is a link as the API takes it.
 type custLinkInput struct {
 	Name      string `json:"name"`
+	Engine    string `json:"engine"` // "" = frp
 	Transport string `json:"transport"`
+	SNI       string `json:"sni"` // xray: the site Reality borrows ("" = the default)
 	CtrlPort  int    `json:"ctrl_port"`
 	Ports     string `json:"ports"`
 	UDP       bool   `json:"udp"`
@@ -1218,12 +1442,22 @@ type custLinkInput struct {
 // custBuildLink validates in and returns the link (cid, lid set); old is the
 // link it replaces (nil for a new one). claims are every other claim.
 func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []portClaim) (customerLink, error) {
-	l := customerLink{ID: lid, Engine: "frp", Transport: strings.ToLower(strings.TrimSpace(in.Transport)), UDP: in.UDP}
-	if l.Transport == "" {
-		l.Transport = "tcp"
+	l := customerLink{ID: lid, Engine: strings.ToLower(strings.TrimSpace(in.Engine)), Transport: strings.ToLower(strings.TrimSpace(in.Transport)), UDP: in.UDP}
+	if l.Engine == "" {
+		l.Engine = custEngineFRP
 	}
-	if !custTransports[l.Transport] {
-		return l, fmt.Errorf("transport: tcp, kcp, quic or websocket")
+	trs, ok := custTransports[l.Engine]
+	if !ok {
+		return l, fmt.Errorf("engine: %s", strings.Join(custEngines, ", "))
+	}
+	if l.Transport == "" {
+		l.Transport = trs[0]
+	}
+	if !xrayOneOf(l.Transport, trs) {
+		return l, fmt.Errorf("%s transport: %s", l.Engine, strings.Join(trs, ", "))
+	}
+	if l.Engine == custEngineBackhaul && l.UDP && l.Transport != "tcp" {
+		return l, fmt.Errorf("Backhaul carries UDP on the tcp transport only")
 	}
 	var err error
 	if l.Name, err = custCleanText(in.Name, 40); err != nil {
@@ -1247,13 +1481,16 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 	} else {
 		l.Token = randomToken(32)
 	}
+	if err := custLinkSecrets(&l, old, in.SNI); err != nil {
+		return l, err
+	}
 
 	l.CtrlPort = in.CtrlPort
 	if l.CtrlPort == 0 && old != nil {
 		l.CtrlPort = old.CtrlPort
 	}
 	ctrlProto := "tcp"
-	if l.Transport == "kcp" || l.Transport == "quic" {
+	if l.ctrlUDP() {
 		ctrlProto = "udp"
 	}
 	idx := indexClaims(claims)
@@ -1307,7 +1544,61 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 		}
 	}
 	_ = cid
+	if l.Engine == custEngineXray {
+		// the whole Iran config must build (ports against the tunnel port and
+		// the profile), not only the fields checked here
+		x, err := custXrayIran(l)
+		if err == nil {
+			_, err = buildXrayConfig(x)
+		}
+		if err != nil {
+			return l, err
+		}
+	}
 	return l, nil
+}
+
+// custLinkSecrets fills an Xray link's keys and profile, or a Backhaul wss
+// link's certificate. A link that keeps its engine and transport keeps its
+// secrets, so the customer's installed kit stays valid.
+func custLinkSecrets(l *customerLink, old *customerLink, sni string) error {
+	same := old != nil && old.Engine == l.Engine && old.Transport == l.Transport
+	switch l.Engine {
+	case custEngineXray:
+		sni = strings.ToLower(strings.TrimSpace(sni))
+		if sni != "" && (!validXrayName(sni, false) || net.ParseIP(sni) != nil) {
+			return fmt.Errorf("SNI: a domain name")
+		}
+		var x XrayLink
+		if same && old.Xray != nil {
+			x = *old.Xray
+			if sni != "" && l.Transport != "kcp" {
+				x.Profile.SNI = sni
+			}
+		} else {
+			x = XrayLink{Mode: xrayModeReverse, Side: xraySideIran, Profile: xrayPresets[l.Transport]}
+			if sni != "" && l.Transport != "kcp" {
+				x.Profile.SNI = sni
+			}
+			var err error
+			if x, err = newXrayLink(x); err != nil {
+				return err
+			}
+		}
+		l.Xray = &x
+	case custEngineBackhaul:
+		if l.Transport != "wss" && l.Transport != "wssmux" {
+			return nil
+		}
+		if same && old.TLSCert != "" && old.TLSKey != "" {
+			l.TLSCert, l.TLSKey = old.TLSCert, old.TLSKey
+			return nil
+		}
+		var err error
+		l.TLSCert, l.TLSKey, err = newXrayCert("backhaul")
+		return err
+	}
+	return nil
 }
 
 // custClaimsExcept are every claim but one link's own (lid 0: none skipped).
@@ -1326,6 +1617,7 @@ func custClaimsExcept(cid, lid int) []portClaim {
 
 type custLinkView struct {
 	customerLink
+	SNI    string `json:"sni,omitempty"` // xray
 	Unit   string `json:"unit"`
 	Active bool   `json:"active"`
 	Linked bool   `json:"linked"` // the foreign server holds a session on the control port
@@ -1433,7 +1725,10 @@ func customersView() map[string]any {
 		v.Links = []custLinkView{}
 		for _, l := range c.Links {
 			lv := custLinkView{customerLink: l, Unit: custUnit(c.ID, l.ID)}
-			lv.Token = ""
+			lv.Token, lv.Xray, lv.TLSCert, lv.TLSKey = "", nil, "", ""
+			if l.Xray != nil {
+				lv.SNI = l.Xray.Profile.SNI
+			}
 			lv.Active = active[lv.Unit+".service"]
 			lv.Linked = lv.Active && linked[l.CtrlPort]
 			v.Links = append(v.Links, lv)
@@ -1441,11 +1736,17 @@ func customersView() map[string]any {
 		v.customer.Links = nil
 		views = append(views, v)
 	}
-	_, binErr := os.Stat(custFrpsSrc)
-	_, copyErr := os.Stat(custBin())
+	// which engines this server can sell (its own binary or a copy)
+	engines := map[string]bool{}
+	for _, e := range custEngines {
+		_, binErr := os.Stat(custEngineSrc(e))
+		_, copyErr := os.Stat(custEngineBin(e))
+		engines[e] = binErr == nil || copyErr == nil
+	}
 	return map[string]any{
 		"customers": views, "licensed": hasPro(proCustomers), "error": errText,
-		"address": custDefaultAddress(), "frps_ok": binErr == nil || copyErr == nil,
+		"address": custDefaultAddress(), "frps_ok": engines[custEngineFRP], "engines": engines,
+		"transports": custTransports,
 	}
 }
 
@@ -1757,6 +2058,15 @@ func cloneCustomersFile(f customersFile) customersFile {
 		for j, l := range c.Links {
 			out.Customers[i].Links[j] = l
 			out.Customers[i].Links[j].Ports = append([]int(nil), l.Ports...)
+			if l.Xray != nil {
+				x := *l.Xray
+				x.Ports = append([]int(nil), x.Ports...)
+				if x.Profile.KCP != nil {
+					k := *x.Profile.KCP
+					x.Profile.KCP = &k
+				}
+				out.Customers[i].Links[j].Xray = &x
+			}
 		}
 	}
 	return out
@@ -1772,7 +2082,7 @@ func custLinkClaims(c customer, l customerLink) []portClaim {
 		}
 	}
 	out = append(out, portClaim{"tcp", l.CtrlPort, claimCustomer, c.ID, l.ID, "the control port of " + owner})
-	if l.Transport == "kcp" || l.Transport == "quic" {
+	if l.ctrlUDP() {
 		out = append(out, portClaim{"udp", l.CtrlPort, claimCustomer, c.ID, l.ID, "the control port of " + owner})
 	}
 	return out
@@ -1781,7 +2091,10 @@ func custLinkClaims(c customer, l customerLink) []portClaim {
 // ---- the kit: what the customer runs on their foreign server ----
 
 // custKit packs a link for tools/hashem-customer.sh: "hsk1." + base64url of
-// key=value lines. The installer checks every value against a strict pattern.
+// key=value lines. The installer checks every value against a strict pattern
+// and builds the config itself: a kit is data, never a config to run. FRP
+// kits stay version 1 (installers from before other engines read them);
+// Backhaul and Xray kits are version 2, which names the engine.
 func custKit(c customer, l customerLink, addr string) string {
 	udp := "0"
 	if l.UDP {
@@ -1791,8 +2104,12 @@ func custKit(c customer, l customerLink, addr string) string {
 	for i, p := range l.Ports {
 		ports[i] = strconv.Itoa(p)
 	}
-	body := strings.Join([]string{
-		"v=1",
+	v := "v=1"
+	if l.Engine != custEngineFRP {
+		v = "v=2"
+	}
+	lines := []string{
+		v,
 		"name=" + custUnit(c.ID, l.ID),
 		"server=" + addr,
 		"port=" + strconv.Itoa(l.CtrlPort),
@@ -1800,8 +2117,54 @@ func custKit(c customer, l customerLink, addr string) string {
 		"token=" + l.Token,
 		"udp=" + udp,
 		"ports=" + strings.Join(ports, ","),
-	}, "\n") + "\n"
+	}
+	if l.Engine != custEngineFRP {
+		lines = append(lines, "engine="+l.Engine)
+	}
+	if l.Engine == custEngineXray && l.Xray != nil {
+		x := l.Xray
+		lines = append(lines, "uuid="+x.Keys.UUID)
+		if x.Profile.Security == "reality" {
+			lines = append(lines, "pbk="+x.Keys.PublicKey, "sid="+x.Keys.ShortID, "sni="+x.Profile.SNI)
+		}
+		if x.Profile.Path != "" {
+			lines = append(lines, "path="+x.Profile.Path)
+		}
+		if x.Profile.KCP != nil {
+			lines = append(lines, "kcppw="+x.Profile.KCP.Password)
+		}
+	}
+	body := strings.Join(lines, "\n") + "\n"
 	return "hsk1." + base64.RawURLEncoding.EncodeToString([]byte(body))
+}
+
+// custClientConf is the foreign end of a link in plain text, for a manual
+// setup: frpc.toml, Backhaul's client.toml or Xray's config.json.
+func custClientConf(c customer, l customerLink, addr string) (name, text string, err error) {
+	switch l.Engine {
+	case custEngineBackhaul:
+		var b strings.Builder
+		fmt.Fprintf(&b, "# Hashem: tunnel to %s (%s, link %d)\n[client]\n", addr, custUnit(c.ID, l.ID), l.ID)
+		fmt.Fprintf(&b, "remote_addr = \"%s\"\ntransport = %q\ntoken = %q\n", net.JoinHostPort(addr, strconv.Itoa(l.CtrlPort)), l.Transport, l.Token)
+		b.WriteString("connection_pool = 8\nnodelay = true\nretry_interval = 3\nkeepalive_period = 75\n")
+		b.WriteString("sniffer = false\nweb_port = 0\nsniffer_log = \"\"\nlog_level = \"info\"\n")
+		return "client.toml", b.String(), nil
+	case custEngineXray:
+		x, err := custXrayForeign(l, addr)
+		if err != nil {
+			return "", "", err
+		}
+		conf, err := buildXrayConfig(x)
+		if err != nil {
+			return "", "", err
+		}
+		data, err := json.MarshalIndent(conf, "", "  ")
+		if err != nil {
+			return "", "", err
+		}
+		return "config.json", string(data) + "\n", nil
+	}
+	return "frpc.toml", custFrpcConf(c, l, addr), nil
 }
 
 // custInstallerURL is the installer of the release this panel is: every
@@ -1839,17 +2202,24 @@ func handleCustomersKit(w http.ResponseWriter, r *http.Request) {
 	}
 	kit := custKit(c, l, addr)
 	url := custInstallerURL()
+	manualName, manual, err := custClientConf(c, l, addr)
+	if err != nil {
+		writeAPIError(w, r, "E-CUST-05", err.Error())
+		return
+	}
 	writeJSON(w, map[string]any{
-		"kit":       kit,
-		"oneliner":  fmt.Sprintf("curl -fsSL %s -o hashem-customer.sh && sudo bash hashem-customer.sh install %s", url, kit),
-		"installer": url,
-		"frpc_toml": custFrpcConf(c, l, addr),
-		"frp":       custFRPVersion,
-		"unit":      custUnit(c.ID, l.ID),
-		"address":   addr,
-		"ports":     l.Ports,
-		"ctrl_port": l.CtrlPort,
-		"transport": l.Transport,
+		"kit":         kit,
+		"oneliner":    fmt.Sprintf("curl -fsSL %s -o hashem-customer.sh && sudo bash hashem-customer.sh install %s", url, kit),
+		"installer":   url,
+		"manual":      manual,
+		"manual_name": manualName,
+		"engine":      l.Engine,
+		"frp":         custFRPVersion,
+		"unit":        custUnit(c.ID, l.ID),
+		"address":     addr,
+		"ports":       l.Ports,
+		"ctrl_port":   l.CtrlPort,
+		"transport":   l.Transport,
 	})
 }
 
@@ -1891,7 +2261,7 @@ func handleCustomerPlugin(w http.ResponseWriter, r *http.Request) {
 	custLoadLocked()
 	for _, c := range custs.f.Customers {
 		for _, l := range c.Links {
-			if subtle.ConstantTimeCompare([]byte(custPluginKey(l.Token)), []byte(key)) == 1 {
+			if l.Engine == custEngineFRP && subtle.ConstantTimeCompare([]byte(custPluginKey(l.Token)), []byte(key)) == 1 {
 				ll := l
 				link = &ll
 			}

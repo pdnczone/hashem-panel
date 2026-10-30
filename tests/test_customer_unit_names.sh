@@ -14,7 +14,9 @@ TUNNEL_NAME=gre-tunnel
 fail=0
 
 units=(hsell-1-1 hsell-12-3 hsell-250-9)
-cmdline="/usr/local/lib/hashem-sell/frps -c /etc/gre-panel/customers/12-3.toml"
+cmdlines=("/usr/local/lib/hashem-sell/frps -c /etc/gre-panel/customers/12-3.toml"
+    "/usr/local/lib/hashem-sell/backhaul -c /etc/gre-panel/customers/12-4.toml"
+    "/usr/local/lib/hashem-sell/xray run -c /etc/gre-panel/customers/12-5.json")
 
 # the uninstall-everything path (and customers_teardown itself) may match
 body="$(awk '/^uninstall_all_force\(\) \{/,/^}/ {next} /^customers_teardown\(\) \{/,/^}/ {next} {print}' "$SH")"
@@ -46,20 +48,24 @@ while IFS= read -r p; do
     [[ -z "$p" ]] && continue
     p="${p//\$\{INSTALL_DIR\}/$INSTALL_DIR}"
     m=$((m + 1))
-    if printf '%s\n' "$cmdline" | grep -qE -- "$p"; then
-        echo "FAIL: hashem.sh 'pkill -f $p' would kill a customer frps ($cmdline)"
-        fail=1
-    fi
+    for cmdline in "${cmdlines[@]}"; do
+        if printf '%s\n' "$cmdline" | grep -qE -- "$p"; then
+            echo "FAIL: hashem.sh 'pkill -f $p' would kill a customer relay ($cmdline)"
+            fail=1
+        fi
+    done
 done < <(printf '%s\n' "$body" | grep -oE 'pkill (-9 )?-f "[^"]+"' | sed -E 's/^pkill (-9 )?-f "(.*)"$/\2/' | sort -u)
 (( m > 3 )) || { echo "FAIL: found only $m pkill patterns: the parser is broken"; fail=1; }
 
-# 3. pkill/killall by process name: the customer binary's name is frps
+# 3. pkill/killall by process name: the customer binaries are frps, backhaul and xray
 while IFS= read -r p; do
     [[ -z "$p" ]] && continue
-    if [[ "frps" =~ ^($p)$ ]]; then
-        echo "FAIL: hashem.sh 'pkill/killall $p' (by name) would kill customer frps processes"
-        fail=1
-    fi
+    for name in frps backhaul xray; do
+        if [[ "$name" =~ ^($p)$ ]]; then
+            echo "FAIL: hashem.sh 'pkill/killall $p' (by name) would kill customer $name processes"
+            fail=1
+        fi
+    done
 done < <(printf '%s\n' "$body" | grep -oE '(pkill|killall)( -[0-9A-Za-z]+)* [A-Za-z0-9_.*^$-]+' | grep -vE ' -f$' | awk '{print $NF}' | grep -v '^-' | sort -u)
 
 # 4. release_frps_port kills a stray frps holding a control port: never a customer's
@@ -69,7 +75,7 @@ awk '/^release_frps_port\(\) \{/,/^}/' "$SH" | grep -q '/usr/local/lib/hashem-se
 # 5. the customer names themselves stay what panel/customers.go writes
 if [[ -f "$ROOT/panel/customers.go" ]]; then
     grep -q '"hsell-%d-%d"' "$ROOT/panel/customers.go" || { echo "FAIL: customers.go unit name is not hsell-%d-%d"; fail=1; }
-    grep -q '/usr/local/lib/hashem-sell' "$ROOT/panel/customers.go" || { echo "FAIL: customers.go frps copy is not in /usr/local/lib/hashem-sell"; fail=1; }
+    grep -q '/usr/local/lib/hashem-sell' "$ROOT/panel/customers.go" || { echo "FAIL: customers.go engine copies are not in /usr/local/lib/hashem-sell"; fail=1; }
 fi
 
 (( fail )) && exit 1

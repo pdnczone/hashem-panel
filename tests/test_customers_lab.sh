@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
-# tests/test_customers_lab.sh: a tunnel sold to a customer, with the real
-# kernel and the real FRP v0.71.0.
+# tests/test_customers_lab.sh: tunnels sold to customers, with the real
+# kernel and the real engines: FRP v0.71.0, and when given Backhaul v0.7.2
+# and Xray-core v26.3.27 (TestCustomersLabEngines).
 #
 #   cs-us (users) ── cs-hub (the seller's Iran server, the panel) ── cs-fo (the customer's foreign server)
 #
 # The hub's default route faces the users (that is where the speed cap
-# polices). On the foreign server a sink answers on 127.0.0.1:9000 (TCP: a
-# 16-byte header with the bytes up and down; UDP: echo). The panel code
+# polices). On the foreign server a sink answers on 127.0.0.1:9000-9004 (TCP:
+# a 16-byte header with the bytes up and down; UDP: echo). The hub serves a
+# TLS site on 127.0.0.1:9443 for Reality to borrow (no internet here). The panel code
 # (panel/customers_lab_test.go) runs in the hub namespace: it sells the
 # tunnel, the customer's frpc runs the config tools/hashem-customer.sh makes
 # from the kit, and users move exact byte counts through it.
 #
 # Needs root (netns), ip, iptables(-save/-restore), tc, python3, Go or a
 # prebuilt test binary (CUST_LAB_TEST_BIN) and FRP (CUST_LAB_FRP_DIR with
-# frps and frpc v0.71.0). Skips cleanly otherwise. Touches nothing outside
+# frps and frpc v0.71.0); CUST_LAB_BACKHAUL and CUST_LAB_XRAY (the binaries)
+# add the engines lab, which also needs openssl. Skips cleanly otherwise. Touches nothing outside
 # its three namespaces and a mktemp dir.
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -66,18 +69,41 @@ def serve(c):
             down -= n
     finally:
         c.close()
-def udp():
+def udp(port):
     u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    u.bind(("127.0.0.1", 9000))
+    u.bind(("127.0.0.1", port))
     while True:
         d, a = u.recvfrom(65535)
         u.sendto(d, a)
-threading.Thread(target=udp, daemon=True).start()
+def tcp(port):
+    s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("127.0.0.1", port)); s.listen(16)
+    while True:
+        c, _ = s.accept()
+        threading.Thread(target=serve, args=(c,), daemon=True).start()
+for p in range(9000, 9005):
+    threading.Thread(target=udp, args=(p,), daemon=True).start()
+    threading.Thread(target=tcp, args=(p,), daemon=True).start()
+threading.Event().wait()
+PY
+cat >"$TMP/site.py" <<'PY'
+import socket, ssl, sys, threading
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+ctx.load_cert_chain(sys.argv[1], sys.argv[2])
+ctx.set_alpn_protocols(["h2", "http/1.1"])
+def h(c):
+    try:
+        with ctx.wrap_socket(c, server_side=True) as t:
+            t.settimeout(5); t.recv(4096)
+            t.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+    except Exception:
+        c.close()
 s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(("127.0.0.1", 9000)); s.listen(16)
+s.bind(("127.0.0.1", 9443)); s.listen(64)
 while True:
     c, _ = s.accept()
-    threading.Thread(target=serve, args=(c,), daemon=True).start()
+    threading.Thread(target=h, args=(c,), daemon=True).start()
 PY
 cat >"$TMP/client.py" <<'PY'
 # client.py HOST PORT tcp UP DOWN | client.py HOST PORT udp: prints the rates as JSON
@@ -117,7 +143,17 @@ r = {"up_mbit": up * 8 / 1e6 / max(t1 - t0, 1e-6) if up else 0, "down_mbit": dow
 print(json.dumps(r))
 PY
 ip netns exec $FO python3 "$TMP/sink.py" >/dev/null 2>&1 &
-for _ in $(seq 50); do ip netns exec $FO bash -c "exec 3<>/dev/tcp/127.0.0.1/9000" 2>/dev/null && break; sleep 0.1; done
+for _ in $(seq 50); do ip netns exec $FO bash -c "exec 3<>/dev/tcp/127.0.0.1/9004" 2>/dev/null && break; sleep 0.1; done
+BH=${CUST_LAB_BACKHAUL:-} XR=${CUST_LAB_XRAY:-}
+RUN='^TestCustomersLab$'
+if [[ -x "$BH" && -x "$XR" ]] && command -v openssl >/dev/null 2>&1; then
+    RUN='^TestCustomersLab(Engines)?$'
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 -subj "/CN=lab.example" \
+        -addext "subjectAltName=DNS:lab.example" -keyout "$TMP/site.key" -out "$TMP/site.crt" >/dev/null 2>&1
+    ip netns exec $HUB python3 "$TMP/site.py" "$TMP/site.crt" "$TMP/site.key" >/dev/null 2>&1 &
+else
+    echo "NOTE: CUST_LAB_BACKHAUL and CUST_LAB_XRAY not set: the Backhaul and Xray part is skipped"
+fi
 
 BIN=${CUST_LAB_TEST_BIN:-}
 if [[ -z $BIN ]]; then
@@ -126,9 +162,10 @@ if [[ -z $BIN ]]; then
     BIN=$TMP/customerslab.test
 fi
 (cd "$ROOT/panel" && ip netns exec $HUB env CUST_LAB_FRP_DIR="$FRP" CUST_LAB_NO_TC="${CUST_LAB_NO_TC:-}" CUST_LAB_FO_NS=$FO CUST_LAB_US_NS=$US \
+    CUST_LAB_BACKHAUL="$BH" CUST_LAB_XRAY="$XR" CUST_LAB_XRAY_TARGET=127.0.0.1:9443 \
     CUST_LAB_HUB_FO_IP=10.23.0.1 CUST_LAB_HUB_US_IP=10.24.0.1 \
     CUST_LAB_INSTALLER="$ROOT/tools/hashem-customer.sh" CUST_LAB_CLIENT="$TMP/client.py" \
-    "$BIN" -test.run '^TestCustomersLab$' -test.v -test.timeout 10m >"$TMP/lab.log" 2>&1)
+    "$BIN" -test.run "$RUN" -test.v -test.timeout 20m >"$TMP/lab.log" 2>&1)
 rc=$?
 grep -E "customers_lab_test.go|^(--- |ok|FAIL|PASS)" "$TMP/lab.log"
 [[ -n ${GITHUB_ACTIONS:-} && $rc -eq 0 ]] && grep -E "customers_lab_test.go:[0-9]+:" "$TMP/lab.log" | sed 's/^ *//; s/^/::notice title=customers lab::/'

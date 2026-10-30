@@ -3275,7 +3275,7 @@ limits_drop() {
 }
 
 # Sold customer tunnels (panel/customers.go): the hsell-<customer>-<link>
-# units, their frps copy, configs, the HASHEM_CUST chain and the speed caps
+# units, their engine copies (frps, backhaul, xray), configs, the HASHEM_CUST chain and the speed caps
 # (tc pref 4919, IPv6 4920, police actions 0x48530000-0x4853ffff). Only a
 # full uninstall calls it: removing or rebuilding the seller's own tunnel
 # never touches paying customers.
@@ -3287,7 +3287,7 @@ customers_teardown() {
         rm -f "$f"
     done
     systemctl daemon-reload >/dev/null 2>&1 || true
-    pkill -9 -f "/usr/local/lib/hashem-sell/frps" >/dev/null 2>&1 || true
+    pkill -9 -f "^/usr/local/lib/hashem-sell/" >/dev/null 2>&1 || true
     rm -rf /usr/local/lib/hashem-sell "${PANEL_CONFIG_DIR}/customers"
     if command -v iptables >/dev/null 2>&1; then
         for p in INPUT OUTPUT; do

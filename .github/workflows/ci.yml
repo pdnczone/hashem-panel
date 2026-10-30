@@ -133,10 +133,17 @@ jobs:
         run: |
           (cd panel && go test -c -o /tmp/limitslab.test .)
           sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" LIMITS_LAB_TEST_BIN=/tmp/limitslab.test bash tests/test_limits_lab.sh
-      - name: Customers lab (a tunnel sold with real frps/frpc 0.71.0 and the customer's installer, shared speed cap both ways, volume against exact bytes, cut on volume and expiry, resume, clean remove)
+      - name: Customers lab (tunnels sold on real FRP 0.71.0, Backhaul v0.7.2 and Xray-core v26.3.27 reverse with the customer's installer, one speed cap shared by every link both ways, volume against exact bytes, no bypass, cut on volume and expiry, resume, clean remove)
         run: |
-          (cd panel && FRP_BIN_DIR=/tmp/frp-rel go test -count=1 -run '^TestCustomersFrpConfigsLoad$' -v . && go test -c -o /tmp/customerslab.test .)
-          sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" CUST_LAB_TEST_BIN=/tmp/customerslab.test CUST_LAB_FRP_DIR=/tmp/frp-rel bash tests/test_customers_lab.sh
+          mkdir -p /tmp/xray-dl && cd /tmp/xray-dl
+          [[ -x xray ]] || { curl -fsSL -o xray.zip https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip \
+            && echo "23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae  xray.zip" | sha256sum -c - && unzip -oq xray.zip xray; }
+          cd "$GITHUB_WORKSPACE"
+          (cd panel && FRP_BIN_DIR=/tmp/frp-rel go test -count=1 -run '^TestCustomersFrpConfigsLoad$' -v . \
+            && XRAY_BIN=/tmp/xray-dl/xray BACKHAUL_BIN=/tmp/backhaul-rel/backhaul go test -count=1 -run '^TestCustomersEngineConfigsLoad$' -v . \
+            && go test -c -o /tmp/customerslab.test .)
+          sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" CUST_LAB_TEST_BIN=/tmp/customerslab.test CUST_LAB_FRP_DIR=/tmp/frp-rel \
+            CUST_LAB_BACKHAUL=/tmp/backhaul-rel/backhaul CUST_LAB_XRAY=/tmp/xray-dl/xray bash tests/test_customers_lab.sh
       - name: Backhaul UDP lab (tcpmux plus the UDP companion, UDP on the same port, TCP unharmed, kill -9 recovery, dashboard traffic counters)
         run: |
           (cd panel && go test -c -o /tmp/udplab.test .)

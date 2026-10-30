@@ -97,6 +97,53 @@ out=$(bash "$SH" remove "$U" 2>&1) || F "remove: $out ($(ls "$T/sd"))"
 [[ ! -e "$T/sd/$U.service" && ! -e "$T/conf/$U.toml" ]] || F "remove left files"
 [[ ! -e "$T/lib/hc" ]] || F "the frpc copy survived the last tunnel"
 
+# Backhaul and Xray kits (version 2: the kit names the engine)
+printf '#!/bin/sh\necho "ESTAB 0 0 10.0.0.2:40000 203.0.113.7:31000"\n' > "$T/bin/ss"; chmod +x "$T/bin/ss"
+mkdir -p "$T/lib/hc"
+for b in backhaul xray; do printf '#!/bin/sh\n' > "$T/lib/hc/$b"; chmod +x "$T/lib/hc/$b"; done
+echo v0.7.2 > "$T/lib/hc/backhaul.version"; echo v26.3.27 > "$T/lib/hc/xray.version"
+printf '#!/bin/sh\n[ "$1" = "-v" ] && echo 0.71.0\n' > "$T/lib/hc/frpc"; chmod +x "$T/lib/hc/frpc"
+BH=$'v=2\nengine=backhaul\nname=hsell-4-2\nserver=203.0.113.7\nport=31000\ntransport=wssmux\ntoken=AbCdEfGhIjKlMnOpQrStUvWxYz012345\nudp=0\nports=443,2083\n'
+out=$(bash "$SH" config "$(mkkit "$BH")" 2>&1) || F "backhaul config: $out"
+for want in '[client]' 'remote_addr = "203.0.113.7:31000"' 'transport = "wssmux"' 'token = "AbCdEfGhIjKlMnOpQrStUvWxYz012345"' 'connection_pool = 8'; do
+    grep -qF "$want" <<< "$out" || F "backhaul config lacks: $want"
+done
+XR=$'v=2\nengine=xray\nname=hsell-4-3\nserver=203.0.113.7\nport=31001\ntransport=xhttp\ntoken=ZbCdEfGhIjKlMnOpQrStUvWxYz012345\nudp=1\nports=443,2083\nuuid=2ea594b3-1ea8-407e-9417-dc885e0187ad\npbk=hXXHnZ9xJsb1gn564RV3n7Q9LF8mXCSdmBDC0ijQmDE\nsid=2a574b13\nsni=www.digikala.com\npath=/ee7cabe38bed\n'
+out=$(bash "$SH" config "$(mkkit "$XR")" 2>&1) || F "xray config: $out"
+python3 -c 'import json,sys; c=json.load(sys.stdin); assert c["routing"]["rules"][1]["port"]=="443,2083", c' <<< "$out" || F "xray config is not the expected JSON: $out"
+bad "a v1 kit naming backhaul as its transport" "${BH/v=2/v=1}"
+bad "an unknown engine" "${BH/engine=backhaul/engine=spoof}"
+bad "Backhaul UDP on tcpmux" "${BH/udp=0/udp=1}"
+bad "a quote in the SNI" "${XR/sni=www.digikala.com/sni=a\"b.com}"
+bad "a JSON break in the path" "${XR/path=\/ee7cabe38bed/path=\/a\",\"x}"
+bad "a bad uuid" "${XR/uuid=2ea594b3/uuid=zzz594b3}"
+bad "a bad Reality key" "${XR/pbk=hXXH/pbk=h\"XH}"
+bad "a user port that is the control port" "${XR/ports=443,2083/ports=443,31001}"
+XK=$'v=2\nengine=xray\nname=hsell-4-4\nserver=203.0.113.7\nport=31002\ntransport=kcp\ntoken=YbCdEfGhIjKlMnOpQrStUvWxYz012345\nudp=0\nports=443\nuuid=2ea594b3-1ea8-407e-9417-dc885e0187ad\nkcppw=d6bccc0cce627f41a3995745\n'
+out=$(bash "$SH" config "$(mkkit "$XK")" 2>&1) || F "xray kcp config: $out"
+grep -qF '"password": "d6bccc0cce627f41a3995745"' <<< "$out" || F "xray kcp: no mKCP password"
+bad "a bad mKCP password" "${XK/kcppw=d6bc/kcppw=\"d6bc}"
+# install a Backhaul tunnel, then the same link sold as Xray: one tunnel, its new engine
+: > "$T/calls.log"
+out=$(bash "$SH" install "$(mkkit "$BH")" 2>&1) || F "backhaul install: $out"
+U=hcust-203-0-113-7-4-2
+grep -q "ExecStart=$T/lib/hc/backhaul -c $T/conf/$U.toml" "$T/sd/$U.service" || F "backhaul unit: $(cat "$T/sd/$U.service")"
+grep -q "Connected" <<< "$out" || F "backhaul: no success message: $out"
+[[ "$(cat "$T/conf/$U.id")" == "token=AbCdEfGhIjKlMnOpQrStUvWxYz012345" ]] || F "backhaul: no link id file"
+XS=${XR/name=hsell-4-3/name=hsell-4-2}
+XS=${XS/token=ZbCd/token=AbCd}
+bash "$SH" install "$(mkkit "$XS")" >/dev/null 2>&1 || F "the same link as xray"
+[[ ! -e "$T/conf/$U.toml" && -f "$T/conf/$U.json" ]] || F "the engine change left the old config: $(ls "$T/conf")"
+grep -q "ExecStart=$T/lib/hc/xray run -c $T/conf/$U.json" "$T/sd/$U.service" || F "xray unit: $(cat "$T/sd/$U.service")"
+grep -q "Environment=GODEBUG=multipathtcp=0" "$T/sd/$U.service" || F "xray unit lacks GODEBUG"
+bash "$SH" remove "$U" >/dev/null 2>&1 || F "remove the xray tunnel"
+[[ ! -e "$T/conf/$U.json" && ! -e "$T/conf/$U.id" ]] || F "remove left files: $(ls "$T/conf")"
+# a damaged Backhaul download is refused
+rm -rf "$T/lib/hc"
+if out=$(HASHEM_BACKHAUL_TARBALL="$T/fake.tgz" bash "$SH" install "$(mkkit "$BH")" 2>&1); then F "a bad Backhaul archive was accepted"; fi
+grep -q "does not match its checksum" <<< "$out" || F "bad backhaul archive message: $out"
+[[ ! -e "$T/sd/$U.service" ]] || F "a failed Backhaul install left a unit"
+
 # hashem.sh customers_teardown
 : > "$T/calls.log"
 mkdir -p "$T/sd2"
