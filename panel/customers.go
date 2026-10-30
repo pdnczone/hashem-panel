@@ -753,8 +753,17 @@ func custTCClear(ifaces []string, police []int) {
 			}
 		}
 	}
+	// an action freed by a filter just deleted can still be held for a moment
 	for _, n := range police {
-		_, _ = custRun("tc", "actions", "del", "action", "police", "index", strconv.Itoa(n))
+		for try := 0; try < 5; try++ {
+			if _, err := custRun("tc", "actions", "del", "action", "police", "index", strconv.Itoa(n)); err == nil {
+				break
+			}
+			if _, err := custRun("tc", "actions", "get", "action", "police", "index", strconv.Itoa(n)); err != nil {
+				break // gone
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
 	}
 }
 
@@ -823,6 +832,7 @@ func customersTick(now time.Time) {
 			custTCClear(custApplied.tcIfs, custApplied.police)
 			custTCClear(custIfcNames(custIfaces()), nil)
 			custApplied.ipt, custApplied.tc, custApplied.tcIfs, custApplied.police, custApplied.cleaned = "", "", nil, nil, true
+			custSweepPolice() // nothing of ours may stay in the kernel
 		}
 		if !custApplied.swept {
 			custApplied.swept = true
