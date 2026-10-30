@@ -1095,7 +1095,20 @@ for _ in range(3): r.sendto(tcp,(d,0))
 			r.runForeign("gbh", "env", "HASHEM_CUSTOMER_CONF_DIR="+cconf, "bash", "-c",
 				`mount -t cgroup2 none `+cg+` && mkdir -p `+cg+`/hcust-lab && echo $$ > `+cg+`/hcust-lab/cgroup.procs && `+
 					`bash "$1" guard `+unit+` && exec "$2" -c "$3"`, "fence", r.installer, bh, bp)
-			r.waitUp(9005, "Backhaul over GRE, fenced", 60*time.Second, "gbh", "hsell-1-1.service")
+			var upErr error
+			for end := time.Now().Add(60 * time.Second); time.Now().Before(end); time.Sleep(time.Second) {
+				if _, upErr = r.user(9005, "tcp", "0", "1"); upErr == nil {
+					atomicAdd(&r.mu, &r.payload, 1)
+					break
+				}
+			}
+			if upErr != nil {
+				ss, _ := exec.Command("ss", "-Htlnp").CombinedOutput()
+				unitF, _ := os.ReadFile(filepath.Join(engineUnitDir, "hsell-1-1.service"))
+				fw, _ := inFo("iptables-save", "-c")
+				t.Fatalf("Backhaul over GRE, fenced: users cannot reach port 9005: %v\npanel: %v\nhub listens:\n%s\nunit:\n%s\nforeign rules:\n%s\n%s",
+					upErr, customersView()["error"], ss, unitF, fw, r.logs("gbh", "hsell-1-1.service"))
+			}
 			r.xfer(9005, 2e6, 2e6)
 			r.checkBilled(1, 300000)
 		} else {
