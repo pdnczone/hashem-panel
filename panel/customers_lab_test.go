@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // TestCustomersLab runs inside tests/test_customers_lab.sh's hub namespace
@@ -625,6 +627,175 @@ sys.stdout.write(repr(d))`
 	if !r.noTC && len(police) != 2 {
 		t.Fatalf("police actions: %v", police)
 	}
+	r.post(`{"action":"remove","id":1}`)
+	r.checkClean(police, units...)
+}
+
+// TestCustomersLabDial sells two links this server dials, on the real
+// Xray-core v26.3.27 (direct, Reality) and Bagher (the panel's own SSH
+// carrier to a real sshd, frps/frpc 0.71.0): reach, one cap shared by both,
+// the billed volume, the host key pinned by the reply code (a wrong code
+// does not connect), the customer's sshd lets the link's key do nothing
+// but its tunnel port, cut/resume and a clean remove.
+func TestCustomersLabDial(t *testing.T) {
+	xr, target, foIP := os.Getenv("CUST_LAB_XRAY"), os.Getenv("CUST_LAB_XRAY_TARGET"), os.Getenv("CUST_LAB_FO_IP")
+	sshd, panelBin := os.Getenv("CUST_LAB_SSHD"), os.Getenv("CUST_LAB_PANEL_BIN")
+	if xr == "" || sshd == "" || panelBin == "" || os.Getenv("CUST_LAB_FRP_DIR") == "" {
+		t.Skip("set CUST_LAB_XRAY, CUST_LAB_SSHD, CUST_LAB_PANEL_BIN and CUST_LAB_FRP_DIR (tests/test_customers_lab.sh)")
+	}
+	r := newCustLabRig(t)
+	oldExe := custPanelExe
+	custPanelExe = panelBin
+	t.Cleanup(func() { custPanelExe = oldExe })
+	rate := 20
+	if r.noTC {
+		rate = 0
+	}
+	r.post(fmt.Sprintf(`{"action":"create","name":"dial","days":30,"rate_mbit":%d,"address":%q,"links":[
+		{"name":"xd","engine":"xray-direct","transport":"reality","ports":"9005","udp":true,"remote":%q,"ctrl_port":7805,"sni":"lab.hashem.dev"},
+		{"name":"bg","engine":"bagher","transport":"ssh","ports":"9006","udp":true,"remote":%q,"ctrl_port":7806}]}`, rate, r.hubFo, foIP, foIP))
+	units := []string{"hsell-1-1.service", "hsell-1-2.service"}
+	if !r.running(units[0]) {
+		t.Fatalf("the Xray direct unit did not start: %v", customersView()["error"])
+	}
+	if r.running(units[1]) {
+		t.Fatal("the Bagher unit started before the reply code")
+	}
+
+	// Xray direct: the customer's server serves the kit's config (Reality
+	// borrowing the lab's own site)
+	_, conf := r.kit(1, 1)
+	conf = strings.ReplaceAll(conf, `"lab.hashem.dev:443"`, strconv.Quote(target))
+	xp := filepath.Join(r.dir, "xd.json")
+	_ = os.WriteFile(xp, []byte(conf), 0o600)
+	r.runForeign("client-1", "env", "GODEBUG=multipathtcp=0", xr, "run", "-c", xp)
+
+	// Bagher: the customer's sshd with the kit's key line and host key
+	kit, conf := r.kit(1, 2)
+	hk := filepath.Join(r.dir, "hostkeys")
+	_ = os.MkdirAll(hk, 0o700)
+	keygen := func(dir string) {
+		if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", filepath.Join(dir, "ssh_host_ed25519_key")).CombinedOutput(); err != nil {
+			t.Fatalf("ssh-keygen: %v %s", err, out)
+		}
+	}
+	keygen(hk)
+	auth, err := exec.Command("bash", r.installer, "authline", kit).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ak := filepath.Join(r.dir, "authorized_keys")
+	_ = os.WriteFile(ak, auth, 0o600)
+	sshdConf := filepath.Join(r.dir, "sshd_config")
+	_ = os.WriteFile(sshdConf, []byte(fmt.Sprintf("Port 2222\nListenAddress %s\nHostKey %s\nAuthorizedKeysFile %s\nPidFile none\nUsePAM no\nStrictModes no\nPermitRootLogin prohibit-password\nPasswordAuthentication no\n",
+		foIP, filepath.Join(hk, "ssh_host_ed25519_key"), ak)), 0o600)
+	r.runForeign("sshd", sshd, "-D", "-e", "-f", sshdConf)
+	fp := filepath.Join(r.dir, "bg.toml")
+	_ = os.WriteFile(fp, []byte(conf), 0o600)
+	r.runForeign("client-2", filepath.Join(os.Getenv("CUST_LAB_FRP_DIR"), "frpc"), "-c", fp)
+	reply := func(dir string) string {
+		cmd := exec.Command("bash", r.installer, "reply", kit)
+		cmd.Env = append(os.Environ(), "HASHEM_SSH_DIR="+dir, "HASHEM_SSH_PORT=2222", "HASHEM_CUSTOMER_SSH_USER=root")
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("reply code: %v", err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	good := reply(hk)
+
+	// a reply code with another host key: the carrier refuses the server
+	other := filepath.Join(r.dir, "otherkeys")
+	_ = os.MkdirAll(other, 0o700)
+	keygen(other)
+	r.post(fmt.Sprintf(`{"action":"link-reply","id":1,"link_id":2,"reply":%q}`, reply(other)))
+	time.Sleep(8 * time.Second)
+	if _, err := r.user(9006, "tcp", "0", "1"); err == nil {
+		t.Errorf("Bagher connected to a server whose host key is not the reply code's\n%s", r.logs(units[1]))
+	}
+	if l, _ := os.ReadFile(filepath.Join(r.dir, units[1]+".log")); !strings.Contains(string(l), "key mismatch") && !strings.Contains(string(l), "knownhosts") {
+		t.Logf("relay log with a wrong host key:\n%s", l)
+	}
+	r.post(fmt.Sprintf(`{"action":"link-reply","id":1,"link_id":2,"reply":%q}`, good))
+	r.waitUp(9005, "Xray direct", 60*time.Second, "client-1", units[0])
+	r.waitUp(9006, "Bagher", 60*time.Second, "client-2", "sshd", units[1])
+	for _, port := range []int{9005, 9006} {
+		if err := r.udpOK(port); err != nil {
+			t.Errorf("UDP through port %d: %v", port, err)
+		}
+	}
+	// two interfaces, each: two user ports and two foreign endpoints
+	if n := labTCFilters(); !r.noTC && n != 8 {
+		t.Errorf("tc filters: %d, want 8", n)
+	}
+
+	// one cap for both links
+	var wg sync.WaitGroup
+	t0 := time.Now()
+	for _, port := range []int{9005, 9006} {
+		wg.Add(1)
+		go func(port int) {
+			defer wg.Done()
+			r.xfer(port, 0, 8e6)
+		}(port)
+	}
+	wg.Wait()
+	both := 16e6 * 8 / 1e6 / time.Since(t0).Seconds()
+	t.Logf("Xray direct + Bagher downloads at once: %.1f Mbit/s together (cap 20)", both)
+	if !r.noTC && (both > 23 || both < 8) {
+		t.Errorf("two dialing links together downloaded at %.1f Mbit/s under one 20 Mbit/s cap", both)
+	}
+	m := r.xfer(9006, 12e6, 0)
+	t.Logf("capped upload over Bagher: %.1f Mbit/s (cap 20)", m["up_mbit"])
+	if !r.noTC && (m["up_mbit"] > 23 || m["up_mbit"] < 8) {
+		t.Errorf("upload %.1f Mbit/s under a 20 Mbit/s cap", m["up_mbit"])
+	}
+	r.checkBilled(1, 300000)
+
+	// the customer's side: the link's key opens nothing but its own port
+	signer, err := ssh.ParsePrivateKey([]byte(r.get(1).Links[1].SSHKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl, err := ssh.Dial("tcp", net.JoinHostPort(foIP, "2222"), &ssh.ClientConfig{User: "root", Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("ssh to the customer's server with the link's key: %v", err)
+	}
+	if c, err := cl.Dial("tcp", "127.0.0.1:9000"); err == nil {
+		_ = c.Close()
+		t.Error("the link's key reached another service on the customer's server (permitopen)")
+	}
+	if ln, err := cl.Listen("tcp", "127.0.0.1:9999"); err == nil {
+		_ = ln.Close()
+		t.Error("the link's key listened on another port of the customer's server (permitlisten)")
+	}
+	if s, err := cl.NewSession(); err == nil {
+		out, _ := s.CombinedOutput("id")
+		if strings.Contains(string(out), "uid=") {
+			t.Errorf("the link's key ran a command on the customer's server: %s", out)
+		}
+		_ = s.Close()
+	}
+	_ = cl.Close()
+
+	// cut and resume
+	r.post(`{"action":"cut","id":1}`)
+	for _, u := range units {
+		if r.running(u) {
+			t.Errorf("%s kept running after the cut", u)
+		}
+	}
+	for _, port := range []int{9005, 9006} {
+		if _, err := r.user(port, "tcp", "0", "1"); err == nil {
+			t.Errorf("users still reach port %d of a cut customer", port)
+		}
+	}
+	r.post(`{"action":"resume","id":1}`)
+	r.waitUp(9005, "Xray direct after resume", 60*time.Second, "client-1", units[0])
+	r.waitUp(9006, "Bagher after resume", 90*time.Second, "client-2", "sshd", units[1])
+
+	police := append([]int(nil), custApplied.police...)
 	r.post(`{"action":"remove","id":1}`)
 	r.checkClean(police, units...)
 }

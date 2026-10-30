@@ -49,6 +49,9 @@ type bagherCarrierTarget struct {
 	Local    string        // frps address to pipe to; empty: 127.0.0.1:FRPPort
 	Alive    time.Duration // keepalive interval
 	AliveMax int           // missed keepalives before reconnecting
+	// Strict: only the host keys already in known_hosts (a sold link's,
+	// from the customer's reply code); nothing is trusted on first use.
+	Strict bool
 }
 
 func (t bagherCarrierTarget) addr() string {
@@ -69,6 +72,9 @@ func bagherCarrierStatusPath(id int) string {
 }
 
 func writeBagherCarrierStatus(id int, st bagherCarrierStatus) {
+	if id <= 0 {
+		return // a sold link's carrier (sell-bagher) reports nothing here
+	}
 	st.At = time.Now().Unix()
 	b, _ := json.Marshal(st)
 	p := bagherCarrierStatusPath(id)
@@ -260,7 +266,12 @@ func bagherCarrierSession(ctx context.Context, t bagherCarrierTarget, knownHosts
 	if err != nil {
 		return fmt.Errorf("parsing key: %w", err)
 	}
-	hostKey, err := bagherHostKeyCallback(knownHosts)
+	var hostKey ssh.HostKeyCallback
+	if t.Strict {
+		hostKey, err = knownhosts.New(knownHosts)
+	} else {
+		hostKey, err = bagherHostKeyCallback(knownHosts)
+	}
 	if err != nil {
 		return fmt.Errorf("known_hosts: %w", err)
 	}

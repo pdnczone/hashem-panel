@@ -28,12 +28,15 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	crand "crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	_ "embed"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"math"
@@ -49,6 +52,8 @@ import (
 	"sync"
 	"time"
 	"unicode"
+
+	"golang.org/x/crypto/ssh"
 )
 
 const (
@@ -63,9 +68,11 @@ const (
 	custMaxID       = 32767 // custPoliceIndex stays within 0x4853xxxx
 	custFRPVersion  = "0.71.0"
 
-	custEngineFRP      = "frp"
-	custEngineBackhaul = "backhaul"
-	custEngineXray     = "xray"
+	custEngineFRP        = "frp"
+	custEngineBackhaul   = "backhaul"
+	custEngineXray       = "xray"        // reverse: the foreign server dials this one
+	custEngineXrayDirect = "xray-direct" // this server dials the foreign server
+	custEngineBagher     = "bagher"      // SSH: this server dials the foreign sshd
 )
 
 // Paths, swappable for tests. Each engine runs its own copy of the seller's
@@ -76,18 +83,24 @@ var (
 	custFrpsSrc     = "/usr/local/bin/frps"
 	custBackhaulSrc = "/usr/local/bin/backhaul"
 	custXraySrc     = xrayBinPath
+	// custPanelExe is this panel's binary: a Bagher relay runs a copy of it
+	// (its SSH carrier), never the panel's own file, which hashem.sh kills
+	// and replaces on an update.
+	custPanelExe = func() string { p, _ := os.Executable(); return p }()
 )
 
 // custEngines are the engines a link can run, in the order the UI lists them.
-var custEngines = []string{custEngineFRP, custEngineBackhaul, custEngineXray}
+var custEngines = []string{custEngineFRP, custEngineBackhaul, custEngineXray, custEngineXrayDirect, custEngineBagher}
 
 // custEngineBinName is the binary an engine's units run (in custBinDir).
 func custEngineBinName(engine string) string {
 	switch engine {
 	case custEngineBackhaul:
 		return "backhaul"
-	case custEngineXray:
+	case custEngineXray, custEngineXrayDirect:
 		return "xray"
+	case custEngineBagher:
+		return "hashem-relay"
 	}
 	return "frps"
 }
@@ -97,8 +110,10 @@ func custEngineSrc(engine string) string {
 	switch engine {
 	case custEngineBackhaul:
 		return custBackhaulSrc
-	case custEngineXray:
+	case custEngineXray, custEngineXrayDirect:
 		return custXraySrc
+	case custEngineBagher:
+		return custPanelExe
 	}
 	return custFrpsSrc
 }
@@ -108,8 +123,10 @@ func custEngineHow(engine string) string {
 	switch engine {
 	case custEngineBackhaul:
 		return "install the Backhaul engine first (hashem menu, or set up any Backhaul tunnel)"
-	case custEngineXray:
+	case custEngineXray, custEngineXrayDirect:
 		return "install Xray-core first (hashem menu: Xray tunnel)"
+	case custEngineBagher:
+		return "the panel's own binary is missing"
 	}
 	return "install the FRP engine first (hashem menu, or set up any FRP tunnel)"
 }
@@ -122,7 +139,7 @@ func custConfDir() string                { return filepath.Join(configDir, "cust
 // custConfPath is a link's config: Xray reads JSON, FRP and Backhaul TOML.
 func custConfPath(cid, lid int, engine string) string {
 	ext := ".toml"
-	if engine == custEngineXray {
+	if engine == custEngineXray || engine == custEngineXrayDirect {
 		ext = ".json"
 	}
 	return filepath.Join(custConfDir(), fmt.Sprintf("%d-%d%s", cid, lid, ext))
@@ -132,7 +149,7 @@ func custConfPath(cid, lid int, engine string) string {
 // engine was (a link can change engine).
 func custLinkFiles(cid, lid int) []string {
 	base := filepath.Join(custConfDir(), fmt.Sprintf("%d-%d", cid, lid))
-	return []string{base + ".toml", base + ".json", base + ".crt", base + ".key"}
+	return []string{base + ".toml", base + ".json", base + ".crt", base + ".key", base + ".ssh", base + ".known"}
 }
 func custUnitPath(cid, lid int) string {
 	return filepath.Join(engineUnitDir, custUnit(cid, lid)+".service")
@@ -165,6 +182,38 @@ type customerLink struct {
 	// Backhaul wss/wssmux: the relay's self-signed certificate (PEM).
 	TLSCert string `json:"tls_cert,omitempty"`
 	TLSKey  string `json:"tls_key,omitempty"`
+	// Remote is the foreign server this one dials (xray-direct, bagher).
+	Remote string `json:"remote,omitempty"`
+	// Bagher: this link's SSH key (the kit carries the public half), and
+	// what the customer's reply code said: sshd's port, the user and its
+	// host keys (pinned: no key is trusted on first use).
+	SSHKey   string   `json:"ssh_key,omitempty"`
+	SSHPub   string   `json:"ssh_pub,omitempty"`
+	SSHPort  int      `json:"ssh_port,omitempty"`
+	SSHUser  string   `json:"ssh_user,omitempty"`
+	HostKeys []string `json:"host_keys,omitempty"`
+}
+
+// dials: this server opens the link to the foreign server (Remote), so the
+// foreign server's data arrives from Remote's port, not on a control port.
+func (l customerLink) dials() bool {
+	return l.Engine == custEngineXrayDirect || l.Engine == custEngineBagher
+}
+
+// peerPort is the foreign server's port a dialing link connects to.
+func (l customerLink) peerPort() int {
+	if l.Engine == custEngineBagher {
+		if l.SSHPort > 0 {
+			return l.SSHPort
+		}
+		return 22
+	}
+	return l.CtrlPort
+}
+
+// ready: a Bagher link waits for the customer's reply code (host keys).
+func (l customerLink) ready() bool {
+	return l.Engine != custEngineBagher || len(l.HostKeys) > 0
 }
 
 // ctrlUDP: the control port is (also) UDP.
@@ -172,11 +221,15 @@ func (l customerLink) ctrlUDP() bool {
 	switch l.Engine {
 	case custEngineXray:
 		return l.Transport == "kcp"
-	case custEngineBackhaul:
+	case custEngineBackhaul, custEngineBagher, custEngineXrayDirect:
 		return false
 	}
 	return l.Transport == "kcp" || l.Transport == "quic"
 }
+
+// ctrlLocal: the control port is a port of this server (xray-direct's is
+// the foreign server's).
+func (l customerLink) ctrlLocal() bool { return l.Engine != custEngineXrayDirect }
 
 type customer struct {
 	ID      int    `json:"id"`
@@ -386,6 +439,9 @@ func customerPortClaims() []portClaim {
 				}
 			}
 			ctrl := "the control port of " + owner
+			if !l.ctrlLocal() {
+				continue
+			}
 			out = append(out, portClaim{"tcp", l.CtrlPort, claimCustomer, c.ID, l.ID, ctrl})
 			if l.ctrlUDP() {
 				out = append(out, portClaim{"udp", l.CtrlPort, claimCustomer, c.ID, l.ID, ctrl})
@@ -401,9 +457,11 @@ func customerPortClaims() []portClaim {
 // carries UDP only on tcp (accept_udp); Xray's are the presets that need no
 // domain of the seller's own.
 var custTransports = map[string][]string{
-	custEngineFRP:      {"tcp", "kcp", "quic", "websocket"},
-	custEngineBackhaul: {"tcp", "tcpmux", "ws", "wsmux", "wss", "wssmux"},
-	custEngineXray:     {"reality", "xhttp", "grpc", "kcp"},
+	custEngineFRP:        {"tcp", "kcp", "quic", "websocket"},
+	custEngineBackhaul:   {"tcp", "tcpmux", "ws", "wsmux", "wss", "wssmux"},
+	custEngineXray:       {"reality", "xhttp", "grpc", "kcp"},
+	custEngineXrayDirect: {"reality", "xhttp", "grpc", "kcp"},
+	custEngineBagher:     {"ssh"},
 }
 
 // custServerConf is the config of a link's relay on this server.
@@ -411,7 +469,7 @@ func custServerConf(cid int, l customerLink) (string, error) {
 	switch l.Engine {
 	case custEngineBackhaul:
 		return custBackhaulConf(cid, l), nil
-	case custEngineXray:
+	case custEngineXray, custEngineXrayDirect:
 		x, err := custXrayIran(l)
 		if err != nil {
 			return "", err
@@ -469,6 +527,11 @@ func custXrayIran(l customerLink) (XrayLink, error) {
 	}
 	x := *l.Xray
 	x.Mode, x.Side, x.Remote, x.Listen = xrayModeReverse, xraySideIran, "", ""
+	if l.Engine == custEngineXrayDirect {
+		// this server dials the foreign server's VLESS inbound; the users'
+		// ports are the same as in reverse mode
+		x.Mode, x.Remote = xrayModeDirect, l.Remote
+	}
 	x.TunnelPort, x.Ports, x.UDP, x.ProbePort, x.Disabled, x.Expert = l.CtrlPort, append([]int(nil), l.Ports...), l.UDP, 0, false, nil
 	return x, nil
 }
@@ -481,7 +544,11 @@ func custXrayForeign(l customerLink, addr string) (XrayLink, error) {
 		return x, err
 	}
 	x.Side, x.Remote = xraySideForeign, addr
-	x.Keys.PrivateKey, x.Keys.TLSKey = "", ""
+	if x.Mode == xrayModeDirect {
+		x.Remote = "" // the foreign server serves; it dials nobody
+	} else {
+		x.Keys.PrivateKey, x.Keys.TLSKey = "", "" // reverse: the foreign server only dials
+	}
 	return x, nil
 }
 
@@ -489,7 +556,11 @@ func custXrayForeign(l customerLink, addr string) (XrayLink, error) {
 func custFrpsConf(l customerLink) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Hashem: sold tunnel. Written by the panel; edits are overwritten.\n")
-	fmt.Fprintf(&b, "bindAddr = \"0.0.0.0\"\nbindPort = %d\n", l.CtrlPort)
+	bind := "0.0.0.0"
+	if l.Engine == custEngineBagher {
+		bind = "127.0.0.1" // reached only through the SSH carrier
+	}
+	fmt.Fprintf(&b, "bindAddr = %q\nbindPort = %d\n", bind, l.CtrlPort)
 	switch l.Transport {
 	case "kcp":
 		fmt.Fprintf(&b, "kcpBindPort = %d\n", l.CtrlPort)
@@ -525,7 +596,11 @@ func custFrpcConf(c customer, l customerLink, addr string) string {
 	fmt.Fprintf(&b, "serverAddr = %q\nserverPort = %d\n", addr, l.CtrlPort)
 	fmt.Fprintf(&b, "auth.method = \"token\"\nauth.token = %q\n", l.Token)
 	fmt.Fprintf(&b, "loginFailExit = false\n")
-	fmt.Fprintf(&b, "transport.protocol = %q\ntransport.tcpMux = true\ntransport.poolCount = 10\n", l.Transport)
+	proto := l.Transport
+	if l.Engine == custEngineBagher {
+		proto = "tcp" // to 127.0.0.1, the SSH carrier's end
+	}
+	fmt.Fprintf(&b, "transport.protocol = %q\ntransport.tcpMux = true\ntransport.poolCount = 10\n", proto)
 	fmt.Fprintf(&b, "transport.heartbeatInterval = 30\ntransport.heartbeatTimeout = 90\n")
 	b.WriteString("log.to = \"console\"\nlog.level = \"warn\"\n")
 	for _, p := range l.Ports {
@@ -540,9 +615,19 @@ func custFrpcConf(c customer, l customerLink, addr string) string {
 // custUnitExec is a link's ExecStart (and the environment it needs).
 func custUnitExec(cid int, l customerLink) (env, exec string) {
 	conf := custConfPath(cid, l.ID, l.Engine)
-	if l.Engine == custEngineXray {
+	switch l.Engine {
+	case custEngineXray, custEngineXrayDirect:
 		// as xrayUnit: Linux refuses TCP_USER_TIMEOUT on an MPTCP socket
 		return "Environment=GODEBUG=multipathtcp=0\n", custEngineBin(l.Engine) + " run -c " + conf
+	case custEngineBagher:
+		// the frps and the SSH carrier in one process (sell-bagher)
+		user := l.SSHUser
+		if user == "" {
+			user = "hcust"
+		}
+		return "", fmt.Sprintf("%s sell-bagher -frps %s -conf %s -host %s -port %d -user %s -frp-port %d -key %s -known %s",
+			custEngineBin(l.Engine), custEngineBin(custEngineFRP), conf, l.Remote, l.peerPort(), user, l.CtrlPort,
+			custCertPath(cid, l.ID, ".ssh"), custCertPath(cid, l.ID, ".known"))
 	}
 	return "", custEngineBin(l.Engine) + " -c " + conf
 }
@@ -556,12 +641,13 @@ func custUnitFile(cid int, l customerLink) string {
 	var ro []string
 	for _, f := range custLinkFiles(cid, l.ID) {
 		if f == custConfPath(cid, l.ID, l.Engine) || (l.Engine == custEngineBackhaul && (strings.HasSuffix(f, ".crt") || strings.HasSuffix(f, ".key")) &&
-			(l.Transport == "wss" || l.Transport == "wssmux")) {
+			(l.Transport == "wss" || l.Transport == "wssmux")) ||
+			(l.Engine == custEngineBagher && (strings.HasSuffix(f, ".ssh") || strings.HasSuffix(f, ".known"))) {
 			ro = append(ro, f)
 		}
 	}
 	families := "AF_INET AF_INET6 AF_UNIX"
-	if l.Engine == custEngineXray {
+	if l.Engine == custEngineXray || l.Engine == custEngineXrayDirect {
 		families += " AF_NETLINK"
 	}
 	return fmt.Sprintf(`[Unit]
@@ -839,9 +925,16 @@ func custTCArgs(ifaces []custIfc, list []customer) [][]string {
 			continue
 		}
 		var ports, ctrl []int
+		var peers [][2]string // dialing links: the foreign server's address and port
 		for _, l := range c.Links {
 			ports = append(ports, l.Ports...)
-			ctrl = append(ctrl, l.CtrlPort)
+			if !l.dials() {
+				ctrl = append(ctrl, l.CtrlPort)
+				continue
+			}
+			for _, ip := range custPeerIPs(l.Remote) {
+				peers = append(peers, [2]string{ip, strconv.Itoa(l.peerPort())})
+			}
 		}
 		if len(ports) == 0 {
 			continue
@@ -870,11 +963,58 @@ func custTCArgs(ifaces []custIfc, list []customer) [][]string {
 				for _, p := range ctrl {
 					cmds = append(cmds, filter(ifc.Name, a, p, true))
 				}
+				// a link this server dials: the foreign server's data comes
+				// from its address and port to one of ours
+				for _, pr := range peers {
+					cmds = append(cmds, []string{"filter", "add", "dev", ifc.Name, "ingress", "pref", custTCPref, "protocol", "ip", "u32",
+						"match", "ip", "dst", a + "/32", "match", "ip", "src", pr[0] + "/32", "match", "ip", "sport", pr[1], "0xffff",
+						"action", "police", "index", strconv.Itoa(custPoliceIndex(c.ID, true))})
+				}
 			}
 		}
 	}
 	return cmds
 }
+
+// custPeerIPs are the IPv4 addresses of a foreign server this one dials
+// (cached 5 minutes: the tick asks every 10 s). Swappable for tests.
+var custPeerIPs = func(host string) []string {
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.To4() != nil {
+			return []string{ip.To4().String()}
+		}
+		return nil
+	}
+	custPeerCache.Lock()
+	defer custPeerCache.Unlock()
+	if e, ok := custPeerCache.m[host]; ok && time.Since(e.at) < 5*time.Minute {
+		return e.ips
+	}
+	var ips []string
+	if addrs, err := net.LookupIP(host); err == nil {
+		for _, a := range addrs {
+			if v4 := a.To4(); v4 != nil {
+				ips = append(ips, v4.String())
+			}
+		}
+	}
+	sort.Strings(ips)
+	if custPeerCache.m == nil {
+		custPeerCache.m = map[string]custPeerEntry{}
+	}
+	custPeerCache.m[host] = custPeerEntry{ips, time.Now()}
+	return ips
+}
+
+type custPeerEntry struct {
+	ips []string
+	at  time.Time
+}
+
+var custPeerCache = struct {
+	sync.Mutex
+	m map[string]custPeerEntry
+}{}
 
 // custIfc is an interface the caps go on and its local IPv4 addresses (the
 // filters match only traffic to them: never routed or forwarded traffic).
@@ -1303,8 +1443,9 @@ func custSyncUnits(list []customer, chainOK bool) error {
 			u := custUnit(c.ID, l.ID)
 			engineOf[u] = l.Engine
 			// a new unit waits for the chain that counts it; one already
-			// running keeps running through a failed reload (a cut stops it)
-			want[u] = c.Cut == "" && (chainOK || custApplied.running[u])
+			// running keeps running through a failed reload (a cut stops it);
+			// a Bagher link also waits for the customer's reply code
+			want[u] = c.Cut == "" && (chainOK || custApplied.running[u]) && l.ready()
 			changed, err := custWriteLinkFiles(c.ID, l)
 			if err != nil {
 				errs = append(errs, u+": "+err.Error())
@@ -1331,6 +1472,15 @@ func custSyncUnits(list []customer, chainOK bool) error {
 		binChanged[e], binErr[e] = custEnsureBin(e)
 		if binErr[e] != nil {
 			errs = append(errs, binErr[e].Error())
+		}
+		if e == custEngineBagher && binErr[e] == nil {
+			// its frps is the FRP engine's copy
+			ch, err := custEnsureBin(custEngineFRP)
+			binChanged[e] = binChanged[e] || ch
+			if err != nil {
+				binErr[e] = err
+				errs = append(errs, err.Error())
+			}
 		}
 	}
 	if reload {
@@ -1381,6 +1531,18 @@ func custWriteLinkFiles(cid int, l customerLink) (bool, error) {
 		}
 		keep[custCertPath(cid, l.ID, ".crt")] = l.TLSCert
 		keep[custCertPath(cid, l.ID, ".key")] = l.TLSKey
+	}
+	if l.Engine == custEngineBagher {
+		if l.SSHKey == "" {
+			return false, fmt.Errorf("link %d has no SSH key: edit and save it again", l.ID)
+		}
+		keep[custCertPath(cid, l.ID, ".ssh")] = l.SSHKey
+		// the host keys of the customer's reply code, as known_hosts
+		var kh strings.Builder
+		for _, k := range l.HostKeys {
+			fmt.Fprintf(&kh, "%s %s\n", knownHostsEntry(net.JoinHostPort(l.Remote, strconv.Itoa(l.peerPort()))), k)
+		}
+		keep[custCertPath(cid, l.ID, ".known")] = kh.String()
 	}
 	changed := false
 	for _, f := range custLinkFiles(cid, l.ID) {
@@ -1452,7 +1614,8 @@ type custLinkInput struct {
 	Name      string `json:"name"`
 	Engine    string `json:"engine"` // "" = frp
 	Transport string `json:"transport"`
-	SNI       string `json:"sni"` // xray: the site Reality borrows ("" = the default)
+	SNI       string `json:"sni"`    // xray: the site Reality borrows ("" = the default)
+	Remote    string `json:"remote"` // xray-direct, bagher: the foreign server's address
 	CtrlPort  int    `json:"ctrl_port"`
 	Ports     string `json:"ports"`
 	UDP       bool   `json:"udp"`
@@ -1477,6 +1640,15 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 	}
 	if l.Engine == custEngineBackhaul && l.UDP && l.Transport != "tcp" {
 		return l, fmt.Errorf("Backhaul carries UDP on the tcp transport only")
+	}
+	if l.dials() {
+		l.Remote = strings.TrimSpace(in.Remote)
+		if l.Remote == "" && old != nil {
+			l.Remote = old.Remote
+		}
+		if !custValidAddress(l.Remote) {
+			return l, fmt.Errorf("the foreign server's address: an IPv4 address or a domain")
+		}
 	}
 	var err error
 	if l.Name, err = custCleanText(in.Name, 40); err != nil {
@@ -1530,7 +1702,7 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 	if l.CtrlPort == 0 {
 		for i := 0; i < 200 && l.CtrlPort == 0; i++ {
 			p := 20000 + rand.IntN(40000)
-			if hasInt(l.Ports, p) || free("tcp", p, nil) != "" || (ctrlProto == "udp" && free("udp", p, nil) != "") {
+			if hasInt(l.Ports, p) || (l.ctrlLocal() && (free("tcp", p, nil) != "" || (ctrlProto == "udp" && free("udp", p, nil) != ""))) {
 				continue
 			}
 			l.CtrlPort = p
@@ -1546,6 +1718,9 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 			return l, fmt.Errorf("control port %d is also a user port", l.CtrlPort)
 		}
 		for _, proto := range []string{"tcp", ctrlProto} {
+			if !l.ctrlLocal() {
+				break // the foreign server's port: nothing to check here
+			}
 			if why := free(proto, l.CtrlPort, []int{oldCtrl}); why != "" {
 				return l, fmt.Errorf("control port %d is %s", l.CtrlPort, why)
 			}
@@ -1563,7 +1738,7 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 		}
 	}
 	_ = cid
-	if l.Engine == custEngineXray {
+	if l.Engine == custEngineXray || l.Engine == custEngineXrayDirect {
 		// the whole Iran config must build (ports against the tunnel port and
 		// the profile), not only the fields checked here
 		x, err := custXrayIran(l)
@@ -1575,6 +1750,72 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 		}
 	}
 	return l, nil
+}
+
+// custNewSSHKey is a Bagher link's ed25519 key: the OpenSSH private key
+// (PEM) and the public key's base64 blob, which the kit carries.
+func custNewSSHKey(comment string) (priv, pubBlob string, err error) {
+	pub, key, err := ed25519.GenerateKey(crand.Reader)
+	if err != nil {
+		return "", "", err
+	}
+	block, err := ssh.MarshalPrivateKey(key, comment)
+	if err != nil {
+		return "", "", err
+	}
+	sp, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		return "", "", err
+	}
+	return string(pem.EncodeToMemory(block)), base64.StdEncoding.EncodeToString(sp.Marshal()), nil
+}
+
+// custParseReply reads a customer's reply code ("hsr1." + base64url of
+// key=value lines: v, name, port, user, key...) for link name.
+func custParseReply(code, name string) (port int, user string, keys []string, err error) {
+	code = strings.TrimSpace(code)
+	body, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(code, "hsr1."))
+	if !strings.HasPrefix(code, "hsr1.") || err != nil || len(body) > 16<<10 {
+		return 0, "", nil, fmt.Errorf("not a reply code (it starts with hsr1.): copy it again from the customer")
+	}
+	var v, n string
+	for _, line := range strings.Split(string(body), "\n") {
+		k, val, _ := strings.Cut(strings.TrimSpace(line), "=")
+		switch k {
+		case "v":
+			v = val
+		case "name":
+			n = val
+		case "port":
+			port, _ = strconv.Atoi(val)
+		case "user":
+			user = val
+		case "key":
+			pk, _, _, _, perr := ssh.ParseAuthorizedKey([]byte(val))
+			if perr != nil {
+				return 0, "", nil, fmt.Errorf("the reply code has a broken host key")
+			}
+			switch pk.Type() {
+			case ssh.KeyAlgoED25519, ssh.KeyAlgoECDSA256, ssh.KeyAlgoECDSA384, ssh.KeyAlgoECDSA521, ssh.KeyAlgoRSA:
+			default:
+				continue
+			}
+			keys = append(keys, strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pk))))
+		}
+	}
+	switch {
+	case v != "1":
+		return 0, "", nil, fmt.Errorf("this reply code needs a newer panel")
+	case n != name:
+		return 0, "", nil, fmt.Errorf("this reply code is for %s, not %s: the customer ran another kit", n, name)
+	case port < 1 || port > 65535:
+		return 0, "", nil, fmt.Errorf("the reply code has no SSH port")
+	case !bagherUserRe.MatchString(user):
+		return 0, "", nil, fmt.Errorf("the reply code has no valid user")
+	case len(keys) == 0 || len(keys) > 8:
+		return 0, "", nil, fmt.Errorf("the reply code has no usable host key")
+	}
+	return port, user, keys, nil
 }
 
 // custPublicName: a dotted public domain. Reality hands every handshake it
@@ -1603,7 +1844,19 @@ func custPublicName(n string) bool {
 func custLinkSecrets(l *customerLink, old *customerLink, sni string) error {
 	same := old != nil && old.Engine == l.Engine && old.Transport == l.Transport
 	switch l.Engine {
-	case custEngineXray:
+	case custEngineBagher:
+		if same && old.SSHKey != "" {
+			l.SSHKey, l.SSHPub = old.SSHKey, old.SSHPub
+			// the reply code pinned the host keys of that address
+			if old.Remote == l.Remote {
+				l.SSHPort, l.SSHUser, l.HostKeys = old.SSHPort, old.SSHUser, append([]string(nil), old.HostKeys...)
+			}
+			return nil
+		}
+		var err error
+		l.SSHKey, l.SSHPub, err = custNewSSHKey(fmt.Sprintf("hsell-%d", l.ID))
+		return err
+	case custEngineXray, custEngineXrayDirect:
 		sni = strings.ToLower(strings.TrimSpace(sni))
 		if sni != "" && !custPublicName(sni) {
 			return fmt.Errorf("SNI: a public domain name (Reality relays strangers' handshakes to it)")
@@ -1616,6 +1869,9 @@ func custLinkSecrets(l *customerLink, old *customerLink, sni string) error {
 			}
 		} else {
 			x = XrayLink{Mode: xrayModeReverse, Side: xraySideIran, Profile: xrayPresets[l.Transport]}
+			if l.Engine == custEngineXrayDirect {
+				x.Mode = xrayModeDirect // the default SNI is one the foreign server reaches
+			}
 			if sni != "" && l.Transport != "kcp" {
 				x.Profile.SNI = sni
 			}
@@ -1663,6 +1919,8 @@ type custLinkView struct {
 	// UDPCtrl: the control channel is UDP (KCP, QUIC, mKCP): no session to
 	// see, "linked" stays false while the relay runs
 	UDPCtrl bool `json:"udp_ctrl,omitempty"`
+	// AwaitReply: a Bagher link waits for the customer's reply code
+	AwaitReply bool `json:"await_reply,omitempty"`
 }
 
 type custView struct {
@@ -1702,13 +1960,7 @@ var custLinked = func(ports []int) map[int]bool {
 	if len(ports) == 0 {
 		return m
 	}
-	custSS.Lock()
-	if time.Since(custSS.at) > 5*time.Second {
-		custSS.out, _ = runCmdTimeoutOut(5*time.Second, "ss", "-Htn", "state", "established")
-		custSS.at = time.Now()
-	}
-	out := custSS.out
-	custSS.Unlock()
+	out := custSSOut()
 	want := map[int]bool{}
 	for _, p := range ports {
 		want[p] = true
@@ -1726,6 +1978,64 @@ var custLinked = func(ports []int) map[int]bool {
 		}
 	}
 	return m
+}
+
+// custSSOut is `ss -Htn state established`, at most 5 s old.
+func custSSOut() []byte {
+	custSS.Lock()
+	defer custSS.Unlock()
+	if time.Since(custSS.at) > 5*time.Second {
+		custSS.out, _ = runCmdTimeoutOut(5*time.Second, "ss", "-Htn", "state", "established")
+		custSS.at = time.Now()
+	}
+	return custSS.out
+}
+
+// custLinkedPeers lists the foreign endpoints ("ip:port") this server holds
+// an established connection to (the links it dials).
+var custLinkedPeers = func(peers []string) map[string]bool {
+	m := map[string]bool{}
+	if len(peers) == 0 {
+		return m
+	}
+	want := map[string]bool{}
+	for _, p := range peers {
+		want[p] = true
+	}
+	for _, line := range strings.Split(string(custSSOut()), "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 3 && want[f[len(f)-1]] {
+			m[f[len(f)-1]] = true
+		}
+	}
+	return m
+}
+
+// custLinkUp: a link's foreign server is connected (map from custLinked and
+// custLinkedPeers).
+func custLinkUp(l customerLink, linked map[int]bool, peers map[string]bool) bool {
+	if !l.dials() {
+		return linked[l.CtrlPort]
+	}
+	for _, ip := range custPeerIPs(l.Remote) {
+		if peers[net.JoinHostPort(ip, strconv.Itoa(l.peerPort()))] {
+			return true
+		}
+	}
+	return false
+}
+
+// custPeerList are the endpoints the dialing links of list connect to.
+func custPeerList(links []customerLink) []string {
+	var out []string
+	for _, l := range links {
+		if l.dials() {
+			for _, ip := range custPeerIPs(l.Remote) {
+				out = append(out, net.JoinHostPort(ip, strconv.Itoa(l.peerPort())))
+			}
+		}
+	}
+	return out
 }
 
 func daysLeft(expires int64, now time.Time) *int {
@@ -1761,6 +2071,11 @@ func customersView() map[string]any {
 	}
 	active := custUnitsActive(units)
 	linked := custLinked(ctrl)
+	var all []customerLink
+	for _, c := range list {
+		all = append(all, c.Links...)
+	}
+	peers := custLinkedPeers(custPeerList(all))
 	views := make([]custView, 0, len(list))
 	for _, c := range list {
 		v := custView{customer: c, SpeedRx: speed[c.ID][0], SpeedTx: speed[c.ID][1], DaysLeft: daysLeft(c.ExpiresAt, now), Status: "/_hs/" + c.Token}
@@ -1772,8 +2087,10 @@ func customersView() map[string]any {
 				lv.SNI = l.Xray.Profile.SNI
 			}
 			lv.Active = active[lv.Unit+".service"]
-			lv.Linked = lv.Active && linked[l.CtrlPort]
+			lv.Linked = lv.Active && custLinkUp(l, linked, peers)
 			lv.UDPCtrl = l.ctrlUDP()
+			lv.AwaitReply = !l.ready()
+			lv.SSHKey, lv.SSHPub, lv.HostKeys = "", "", nil
 			v.Links = append(v.Links, lv)
 		}
 		v.customer.Links = nil
@@ -1812,6 +2129,7 @@ type custRequest struct {
 	ResetUsage *bool           `json:"reset_usage"`
 	Links      []custLinkInput `json:"links"`
 	Link       *custLinkInput  `json:"link"`
+	Reply      string          `json:"reply"` // link-reply: the customer's reply code
 }
 
 // custFreeActions work without a license: they only take service away.
@@ -2054,6 +2372,20 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 		}
 		*old = l
 
+	case "link-reply":
+		l := c.link(req.LinkID)
+		if l == nil {
+			return fail("E-CUST-04", fmt.Errorf("customer %d has no foreign server %d", c.ID, req.LinkID))
+		}
+		if l.Engine != custEngineBagher {
+			return fail("E-CUST-02", fmt.Errorf("only a Bagher link takes a reply code"))
+		}
+		port, user, keys, err := custParseReply(req.Reply, custUnit(c.ID, l.ID))
+		if err != nil {
+			return fail("E-CUST-02", err)
+		}
+		l.SSHPort, l.SSHUser, l.HostKeys = port, user, keys
+
 	case "link-remove":
 		idx := -1
 		for i, l := range c.Links {
@@ -2101,6 +2433,7 @@ func cloneCustomersFile(f customersFile) customersFile {
 		for j, l := range c.Links {
 			out.Customers[i].Links[j] = l
 			out.Customers[i].Links[j].Ports = append([]int(nil), l.Ports...)
+			out.Customers[i].Links[j].HostKeys = append([]string(nil), l.HostKeys...)
 			if l.Xray != nil {
 				x := *l.Xray
 				x.Ports = append([]int(nil), x.Ports...)
@@ -2123,6 +2456,9 @@ func custLinkClaims(c customer, l customerLink) []portClaim {
 		if l.UDP {
 			out = append(out, portClaim{"udp", p, claimCustomer, c.ID, l.ID, owner})
 		}
+	}
+	if !l.ctrlLocal() {
+		return out
 	}
 	out = append(out, portClaim{"tcp", l.CtrlPort, claimCustomer, c.ID, l.ID, "the control port of " + owner})
 	if l.ctrlUDP() {
@@ -2164,11 +2500,15 @@ func custKit(c customer, l customerLink, addr string) string {
 	if l.Engine != custEngineFRP {
 		lines = append(lines, "engine="+l.Engine)
 	}
-	if l.Engine == custEngineXray && l.Xray != nil {
+	if (l.Engine == custEngineXray || l.Engine == custEngineXrayDirect) && l.Xray != nil {
 		x := l.Xray
 		lines = append(lines, "uuid="+x.Keys.UUID)
 		if x.Profile.Security == "reality" {
 			lines = append(lines, "pbk="+x.Keys.PublicKey, "sid="+x.Keys.ShortID, "sni="+x.Profile.SNI)
+			if l.Engine == custEngineXrayDirect {
+				// direct: the foreign server serves Reality with this link's key
+				lines = append(lines, "pk="+x.Keys.PrivateKey)
+			}
 		}
 		if x.Profile.Path != "" {
 			lines = append(lines, "path="+x.Profile.Path)
@@ -2176,6 +2516,9 @@ func custKit(c customer, l customerLink, addr string) string {
 		if x.Profile.KCP != nil {
 			lines = append(lines, "kcppw="+x.Profile.KCP.Password)
 		}
+	}
+	if l.Engine == custEngineBagher {
+		lines = append(lines, "sshpub="+l.SSHPub)
 	}
 	body := strings.Join(lines, "\n") + "\n"
 	return "hsk1." + base64.RawURLEncoding.EncodeToString([]byte(body))
@@ -2192,7 +2535,16 @@ func custClientConf(c customer, l customerLink, addr string) (name, text string,
 		b.WriteString("connection_pool = 8\nnodelay = true\nretry_interval = 3\nkeepalive_period = 75\n")
 		b.WriteString("sniffer = false\nweb_port = 0\nsniffer_log = \"\"\nlog_level = \"info\"\nskip_optz = true\n")
 		return "client.toml", b.String(), nil
-	case custEngineXray:
+	case custEngineBagher:
+		var b strings.Builder
+		fmt.Fprintf(&b, "# Hashem: Bagher tunnel to %s (%s, link %d).\n", addr, custUnit(c.ID, l.ID), l.ID)
+		fmt.Fprintf(&b, "# 1. a user for it (no password, no shell), with this line in its ~/.ssh/authorized_keys:\n#\n#   %s\n#\n",
+			custBagherAuthLine(c, l))
+		b.WriteString("# 2. send the seller sshd's port, the user and this server's host keys (/etc/ssh/ssh_host_*_key.pub);\n")
+		b.WriteString("#    the installer's reply code carries exactly that.\n# 3. frpc -c with this file:\n\n")
+		b.WriteString(custFrpcConf(c, l, "127.0.0.1"))
+		return "frpc.toml", b.String(), nil
+	case custEngineXray, custEngineXrayDirect:
 		x, err := custXrayForeign(l, addr)
 		if err != nil {
 			return "", "", err
@@ -2208,6 +2560,14 @@ func custClientConf(c customer, l customerLink, addr string) (name, text string,
 		return "config.json", string(data) + "\n", nil
 	}
 	return "frpc.toml", custFrpcConf(c, l, addr), nil
+}
+
+// custBagherAuthLine is the foreign server's authorized_keys line for a
+// Bagher link: the key may only listen on 127.0.0.1 at the link's port (for
+// this server's frps) and open nothing but that port; no command, no shell.
+func custBagherAuthLine(c customer, l customerLink) string {
+	return fmt.Sprintf(`%s,permitlisten="127.0.0.1:%d",permitopen="127.0.0.1:%d" ssh-ed25519 %s %s`,
+		bagherKeyLock, l.CtrlPort, l.CtrlPort, l.SSHPub, custUnit(c.ID, l.ID))
 }
 
 // custInstallerURL is the installer of the release this panel is: every
@@ -2379,9 +2739,10 @@ func custPublicView(c customer, sp [2]float64, now time.Time) custPublic {
 		ctrl = append(ctrl, l.CtrlPort)
 	}
 	linked := custLinked(ctrl)
+	peers := custLinkedPeers(custPeerList(c.Links))
 	for _, l := range c.Links {
 		st := "down"
-		if c.Cut == "" && linked[l.CtrlPort] {
+		if c.Cut == "" && custLinkUp(l, linked, peers) {
 			st = "up"
 		} else if c.Cut == "" && l.ctrlUDP() {
 			st = "running" // a UDP control channel: no session to see

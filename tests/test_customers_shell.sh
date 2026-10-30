@@ -195,6 +195,49 @@ if out=$(HASHEM_BACKHAUL_TARBALL="$T/fake.tgz" bash "$SH" install "$(mkkit "$BH"
 grep -q "does not match its checksum" <<< "$out" || F "bad backhaul archive message: $out"
 [[ ! -e "$T/sd/$U.service" ]] || F "a failed Backhaul install left a unit"
 
+# Bagher: a locked-down user, its key line, a reply code; remove takes the line away
+mkdir -p "$T/lib/hc" "$T/home/hcust" "$T/sshd"
+printf '#!/bin/sh\n[ "$1" = "-v" ] && echo 0.71.0\n' > "$T/lib/hc/frpc"; chmod +x "$T/lib/hc/frpc"
+cat > "$T/bin/getent" <<EOF
+#!/bin/sh
+case "\$1" in
+  passwd) [ "\$2" = hcust ] && echo "hcust:x:998:998::$T/home/hcust:/usr/sbin/nologin" ;;
+  *) echo "203.0.113.7     STREAM 203.0.113.7" ;;
+esac
+EOF
+chmod +x "$T/bin/getent"
+for c in useradd usermod chown; do printf '#!/bin/sh\necho "%s $*" >> %s/calls.log\n' "$c" "$T" > "$T/bin/$c"; chmod +x "$T/bin/$c"; done
+printf '#!/bin/sh\n[ "$1" = "-T" ] && echo "port 2222"\nexit 0\n' > "$T/bin/sshd"; chmod +x "$T/bin/sshd"
+echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl root@fo" > "$T/sshd/ssh_host_ed25519_key.pub"
+export HASHEM_SSH_DIR="$T/sshd"
+BG=$'v=2\nengine=bagher\nname=hsell-5-1\nserver=203.0.113.7\nport=31500\ntransport=ssh\ntoken=BbCdEfGhIjKlMnOpQrStUvWxYz012345\nudp=1\nports=443\nsshpub=AAAAC3NzaC1lZDI1NTE5AAAAIEu8Pp9xvOHGCZnNqY2UtFzrW1PZ3Zp6YyUq9o3gJmJk\n'
+out=$(bash "$SH" config "$(mkkit "$BG")" 2>&1) || F "bagher config: $out"
+grep -qF 'serverAddr = "127.0.0.1"' <<< "$out" && grep -qF 'serverPort = 31500' <<< "$out" && grep -qF 'transport.protocol = "tcp"' <<< "$out" \
+    || F "bagher frpc config: $out"
+bad "a Bagher key that is not ed25519" "${BG/sshpub=AAAAC3NzaC1lZDI1NTE5/sshpub=AAAAB3NzaC1yc2EAAAADAQAB}"
+bad "a quote in the Bagher key" "${BG/sshpub=AAAAC3/sshpub=\"AAAC3}"
+: > "$T/calls.log"
+out=$(bash "$SH" install "$(mkkit "$BG")" 2>&1) || F "bagher install: $out"
+U=hcust-203-0-113-7-$(h6 203.0.113.7)-5-1
+AK="$T/home/hcust/.ssh/authorized_keys"
+[[ "$(cat "$AK" 2>/dev/null)" == "command=\"/bin/false\",restrict,port-forwarding,permitlisten=\"127.0.0.1:31500\",permitopen=\"127.0.0.1:31500\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEu8Pp9xvOHGCZnNqY2UtFzrW1PZ3Zp6YyUq9o3gJmJk $U" ]] \
+    || F "bagher authorized_keys: $(cat "$AK" 2>&1)"
+[[ "$(stat -c %a "$AK" 2>/dev/null)" == 600 ]] || F "authorized_keys is not 0600"
+grep -q "usermod -p \* hcust" "$T/calls.log" || F "the user is left locked (sshd refuses it without PAM)"
+code=$(grep -oE 'hsr1\.[A-Za-z0-9_-]+' <<< "$out")
+[[ -n "$code" ]] || F "no reply code: $out"
+dec=$(printf '%s' "${code#hsr1.}" | tr '_-' '/+'); while (( ${#dec} % 4 )); do dec="$dec="; done
+dec=$(printf '%s' "$dec" | base64 -d)
+for want in "v=1" "name=hsell-5-1" "port=2222" "user=hcust" "key=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"; do
+    grep -qx -- "$want" <<< "$dec" || F "reply code lacks $want: $dec"
+done
+grep -q "ExecStart=$T/lib/hc/frpc -c $T/conf/$U.toml" "$T/sd/$U.service" || F "bagher unit: $(cat "$T/sd/$U.service")"
+# another seller's line stays; remove takes only this one
+echo "ssh-ed25519 AAAAOTHER other-seller ${U}0" >> "$AK"
+bash "$SH" remove "$U" >/dev/null 2>&1 || F "remove the bagher tunnel"
+[[ "$(cat "$AK")" == "ssh-ed25519 AAAAOTHER other-seller ${U}0" ]] || F "remove: authorized_keys is now: $(cat "$AK")"
+unset HASHEM_SSH_DIR
+
 # hashem.sh customers_teardown
 : > "$T/calls.log"
 mkdir -p "$T/sd2"

@@ -11,7 +11,10 @@
 #   bash hashem-customer.sh config hsk1.XXXX         # print the tunnel's config only
 #
 # The kit says which engine the seller sold: FRP (frpc v0.71.0), Backhaul
-# (v0.7.2) or Xray (Xray-core v26.3.27, a reverse link). The installer
+# (v0.7.2), Xray (Xray-core v26.3.27, reverse or direct) or Bagher (SSH:
+# the seller's server logs in to this one's sshd as a locked-down user and
+# frpc v0.71.0 runs through it; install prints a reply code for the
+# seller, `reply hsk1.XXXX` prints it again). The installer
 # downloads that engine from its official release (sha256 checked) to
 # /usr/local/lib/hashem-customer, writes its config to /etc/hashem-customer
 # and runs one systemd unit per tunnel. The kit is data: every value is
@@ -47,7 +50,7 @@ kit_decode() {
     while (( ${#body} % 4 )); do body="${body}="; done
     body=$(printf '%s' "$body" | base64 -d 2>/dev/null) || die "the kit is damaged: copy it again"
     K_V="" K_NAME="" K_SERVER="" K_PORT="" K_TRANSPORT="" K_TOKEN="" K_UDP="" K_PORTS="" K_ENGINE=""
-    K_UUID="" K_PBK="" K_SID="" K_SNI="" K_PATH="" K_KCPPW=""
+    K_UUID="" K_PBK="" K_SID="" K_SNI="" K_PATH="" K_KCPPW="" K_PK="" K_SSHPUB=""
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
         key=${line%%=*}
@@ -68,6 +71,8 @@ kit_decode() {
             sni) K_SNI=$val ;;
             path) K_PATH=$val ;;
             kcppw) K_KCPPW=$val ;;
+            pk) K_PK=$val ;;
+            sshpub) K_SSHPUB=$val ;;
         esac
     done <<< "$body"
     case "$K_V" in
@@ -75,14 +80,16 @@ kit_decode() {
         2) ;;
         *) die "this kit needs a newer hashem-customer.sh (kit version ${K_V:-?})" ;;
     esac
-    [[ "$K_ENGINE" =~ ^(frp|backhaul|xray)$ ]] || die "kit: bad engine"
+    [[ "$K_ENGINE" =~ ^(frp|backhaul|xray|xray-direct|bagher)$ ]] || die "kit: bad engine"
     [[ "$K_NAME" =~ ^hsell-[0-9]{1,6}-[0-9]{1,4}$ ]] || die "kit: bad name"
     [[ "$K_SERVER" =~ ^[A-Za-z0-9]([A-Za-z0-9.:-]{0,251}[A-Za-z0-9])?$ ]] || die "kit: bad server address"
     valid_port "$K_PORT" || die "kit: bad control port"
     case "$K_ENGINE" in
         frp) [[ "$K_TRANSPORT" =~ ^(tcp|kcp|quic|websocket)$ ]] || die "kit: bad transport" ;;
         backhaul) [[ "$K_TRANSPORT" =~ ^(tcp|tcpmux|ws|wsmux|wss|wssmux)$ ]] || die "kit: bad transport" ;;
-        xray) [[ "$K_TRANSPORT" =~ ^(reality|xhttp|grpc|kcp)$ ]] || die "kit: bad transport"
+        bagher) [[ "$K_TRANSPORT" == ssh ]] || die "kit: bad transport"
+            [[ "$K_SSHPUB" =~ ^AAAAC3NzaC1lZDI1NTE5AAAAI[A-Za-z0-9+/]{43}$ ]] || die "kit: bad SSH key" ;;
+        xray|xray-direct) [[ "$K_TRANSPORT" =~ ^(reality|xhttp|grpc|kcp)$ ]] || die "kit: bad transport"
             [[ "$K_UUID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || die "kit: bad uuid"
             if [[ "$K_TRANSPORT" == kcp ]]; then
                 [[ "$K_KCPPW" =~ ^[0-9a-f]{8,64}$ ]] || die "kit: bad mKCP password"
@@ -90,6 +97,7 @@ kit_decode() {
                 [[ "$K_PBK" =~ ^[A-Za-z0-9_-]{43}$ ]] || die "kit: bad Reality key"
                 [[ "$K_SID" =~ ^[0-9a-f]{0,16}$ ]] || die "kit: bad Reality short id"
                 [[ "$K_SNI" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$ ]] || die "kit: bad SNI"
+                [[ "$K_ENGINE" != xray-direct || "$K_PK" =~ ^[A-Za-z0-9_-]{43}$ ]] || die "kit: bad Reality private key"
             fi
             case "$K_TRANSPORT" in
                 xhttp) [[ "$K_PATH" =~ ^/[A-Za-z0-9]{1,32}$ ]] || die "kit: bad path" ;;
@@ -128,6 +136,8 @@ confirm() {
     local protos=TCP
     [[ "$K_UDP" == 1 ]] && protos="TCP and UDP"
     say "This tunnel publishes ${protos} port(s) ${K_PORTS//,/, } of this server on ${K_SERVER}."
+    [[ "$K_ENGINE" != xray-direct ]] || say "The seller's server connects to port ${K_PORT} of this server: let it through your firewall."
+    [[ "$K_ENGINE" != bagher ]] || say "The seller's server logs in to this server's sshd as the user ${SSH_USER} (made for it: no password, no shell), which may only open the tunnel's port ${K_PORT} on 127.0.0.1."
     [[ "$K_ENGINE" != backhaul ]] || say "Backhaul lets the seller's server choose what this server connects to: a firewall fence keeps the tunnel to ${K_SERVER}:${K_PORT} and 127.0.0.1 on these ports."
     if command -v ss >/dev/null 2>&1; then
         for p in ${K_PORTS//,/ }; do
@@ -147,12 +157,14 @@ confirm() {
 }
 
 frpc_config() {
-    local p
+    local p addr=$K_SERVER proto=$K_TRANSPORT
+    # Bagher: frps is on the seller's server, reached through 127.0.0.1 here
+    [[ "$K_ENGINE" == bagher ]] && addr=127.0.0.1 proto=tcp
     echo "# Hashem: tunnel to ${K_SERVER} (${K_NAME}). Written by hashem-customer.sh."
-    printf 'serverAddr = "%s"\nserverPort = %s\n' "$K_SERVER" "$K_PORT"
+    printf 'serverAddr = "%s"\nserverPort = %s\n' "$addr" "$K_PORT"
     printf 'auth.method = "token"\nauth.token = "%s"\n' "$K_TOKEN"
     printf 'loginFailExit = false\n'
-    printf 'transport.protocol = "%s"\ntransport.tcpMux = true\ntransport.poolCount = 10\n' "$K_TRANSPORT"
+    printf 'transport.protocol = "%s"\ntransport.tcpMux = true\ntransport.poolCount = 10\n' "$proto"
     printf 'transport.heartbeatInterval = 30\ntransport.heartbeatTimeout = 90\n'
     printf 'log.to = "console"\nlog.level = "info"\n'
     for p in ${K_PORTS//,/ }; do
@@ -214,16 +226,122 @@ xray_config() {
     printf '    {"inboundTag": ["from-iran"], "outboundTag": "block"}\n  ]}\n}\n'
 }
 
+# xray_direct_stream: the server end's streamSettings (xrayStream, server).
+xray_direct_stream() {
+    local mux='"sockopt": {"customSockopt": [{"level": "6", "network": "tcp", "opt": "25", "system": "linux", "type": "int", "value": "16384"}]}'
+    local reality
+    reality=$(printf '"security": "reality", "realitySettings": {"target": "%s:443", "xver": 0, "serverNames": ["%s"], "privateKey": "%s", "shortIds": ["%s"]}' "$K_SNI" "$K_SNI" "$K_PK" "$K_SID")
+    case "$K_TRANSPORT" in
+        reality) printf '{"network": "raw", %s}' "$reality" ;;
+        xhttp) printf '{"network": "xhttp", %s, "xhttpSettings": {"mode": "auto", "path": "%s"}, %s}' "$reality" "$K_PATH" "$mux" ;;
+        grpc) printf '{"network": "grpc", %s, "grpcSettings": {"serviceName": "%s"}, %s}' "$reality" "$K_PATH" "$mux" ;;
+        kcp) printf '{"network": "kcp", "security": "none", "kcpSettings": {"congestion": true, "downlinkCapacity": 100, "mtu": 1350, "tti": 20, "uplinkCapacity": 20}, "finalmask": {"udp": [{"type": "mkcp-aes128gcm", "settings": {"password": "%s"}}]}}' "$K_KCPPW" ;;
+    esac
+}
+
+# xray_direct_config: the foreign end of a direct link. The seller's server
+# dials this VLESS inbound; connections go only to this server's own
+# 127.0.0.1 on the sold ports, everything else to the blackhole.
+xray_direct_config() {
+    local flow="" net=tcp policy=""
+    [[ "$K_TRANSPORT" == reality ]] && flow=', "flow": "xtls-rprx-vision"'
+    [[ "$K_UDP" == 1 ]] && net="tcp,udp"
+    [[ "$K_TRANSPORT" != kcp ]] && policy=',
+  "policy": {"levels": {"0": {"handshake": 150}}}'
+    printf '{\n  "log": {"access": "none", "loglevel": "warning"},\n'
+    printf '  "inbounds": [{"tag": "tunnel", "listen": "0.0.0.0", "port": %s, "protocol": "vless", "settings": {"clients": [{"id": "%s", "email": "hashem@link"%s}], "decryption": "none"}, "streamSettings": %s}],\n' \
+        "$K_PORT" "$K_UUID" "$flow" "$(xray_direct_stream)"
+    printf '  "outbounds": [\n    {"protocol": "blackhole", "tag": "block"},\n    {"protocol": "freedom", "tag": "direct"},\n'
+    printf '    {"protocol": "blackhole", "tag": "probe", "settings": {"response": {"type": "http"}}}\n  ],\n'
+    printf '  "routing": {"domainStrategy": "AsIs", "rules": [\n'
+    printf '    {"inboundTag": ["tunnel"], "domain": ["full:probe.hashem"], "outboundTag": "probe"},\n'
+    printf '    {"inboundTag": ["tunnel"], "ip": ["127.0.0.1"], "port": "%s", "network": "%s", "outboundTag": "direct"},\n' "$K_PORTS" "$net"
+    printf '    {"inboundTag": ["tunnel"], "outboundTag": "block"}\n  ]}%s\n}\n' "$policy"
+}
+
 # engine_config: this tunnel's config for its engine.
 engine_config() {
     case "$K_ENGINE" in
         backhaul) backhaul_config ;;
         xray) xray_config ;;
+        xray-direct) xray_direct_config ;;
         *) frpc_config ;;
     esac
 }
 
-conf_ext() { if [[ "$K_ENGINE" == xray ]]; then echo json; else echo toml; fi; }
+conf_ext() { if [[ "$K_ENGINE" == xray || "$K_ENGINE" == xray-direct ]]; then echo json; else echo toml; fi; }
+
+# ---- Bagher: the seller's server logs in to this sshd ----
+# A system user of its own (no password, no shell) whose key may only listen
+# on 127.0.0.1 at the tunnel's port and open nothing else: no command, no
+# shell, no way to this server's other services or network.
+SSH_USER="${HASHEM_CUSTOMER_SSH_USER:-hcust}"
+
+# bagher_auth_line UNIT: the authorized_keys line (the unit name is its comment).
+bagher_auth_line() {
+    printf 'command="/bin/false",restrict,port-forwarding,permitlisten="127.0.0.1:%s",permitopen="127.0.0.1:%s" ssh-ed25519 %s %s\n' "$K_PORT" "$K_PORT" "$K_SSHPUB" "$1"
+}
+
+bagher_auth_file() {
+    local home
+    home=$(getent passwd "$SSH_USER" | cut -d: -f6)
+    [[ -n "$home" ]] || return 1
+    echo "${HASHEM_CUSTOMER_AUTH_KEYS:-$home/.ssh/authorized_keys}"
+}
+
+# bagher_user: the user, made once; '*' (no password) rather than a locked
+# account, which sshd refuses even for keys when PAM is off.
+bagher_user() {
+    if ! getent passwd "$SSH_USER" >/dev/null 2>&1; then
+        local nologin
+        nologin=$(command -v nologin || echo /usr/sbin/nologin)
+        useradd --system --create-home --home-dir "/var/lib/hashem-customer/$SSH_USER" --shell "$nologin" "$SSH_USER" \
+            || die "cannot create the user $SSH_USER"
+    fi
+    usermod -p '*' "$SSH_USER" >/dev/null 2>&1 || true
+    if command -v sshd >/dev/null 2>&1 && sshd -T 2>/dev/null | grep -qiE '^(allowusers|allowgroups) '; then
+        echo "[!] sshd has AllowUsers/AllowGroups: add $SSH_USER there, or the seller's server cannot log in." >&2
+    fi
+}
+
+# bagher_authorize UNIT: its line in the user's authorized_keys (replacing an older one).
+bagher_authorize() {
+    local f dir
+    f=$(bagher_auth_file) || die "no home for $SSH_USER"
+    dir=$(dirname "$f")
+    mkdir -p "$dir"
+    touch "$f"
+    bagher_unauthorize "$1"
+    bagher_auth_line "$1" >> "$f"
+    chmod 700 "$dir"; chmod 600 "$f"
+    chown -R "$SSH_USER:" "$dir" 2>/dev/null || true
+}
+
+# bagher_unauthorize UNIT: its line goes.
+bagher_unauthorize() {
+    local f
+    f=$(bagher_auth_file 2>/dev/null) || return 0
+    [[ -f "$f" ]] || return 0
+    awk -v u="$1" '$NF != u' "$f" > "$f.new"  # the line whose comment is exactly UNIT
+    cat "$f.new" > "$f"
+    rm -f "$f.new"
+}
+
+# reply_code UNIT: what the seller pastes back: sshd's port, the user and
+# this server's host keys, so the seller's server trusts exactly them.
+reply_code() {
+    local port body f
+    port=${HASHEM_SSH_PORT:-}
+    [[ -n "$port" ]] || port=$(sshd -T 2>/dev/null | awk '$1 == "port" { print $2; exit }')
+    valid_port "${port:-}" || port=22
+    body=$(printf 'v=1\nname=%s\nport=%s\nuser=%s\n' "$K_NAME" "$port" "$SSH_USER")
+    for f in "${HASHEM_SSH_DIR:-/etc/ssh}"/ssh_host_*_key.pub; do
+        [[ -f "$f" ]] || continue
+        body+=$'\n'"key=$(awk '{ print $1, $2; exit }' "$f")"
+    done
+    [[ "$body" == *key=* ]] || die "no SSH host keys in ${HASHEM_SSH_DIR:-/etc/ssh}: is sshd installed?"
+    printf 'hsr1.%s\n' "$(printf '%s\n' "$body" | base64 -w0 | tr '+/' '-_' | tr -d '=')"
+}
 
 frp_arch() {
     case "$(uname -m)" in
@@ -335,7 +453,7 @@ install_xray() {
 install_engine() {
     case "$K_ENGINE" in
         backhaul) install_backhaul ;;
-        xray) install_xray ;;
+        xray|xray-direct) install_xray ;;
         *) install_frpc ;;
     esac
 }
@@ -345,7 +463,7 @@ unit_exec() {
     local conf=$1
     case "$K_ENGINE" in
         backhaul) echo "ExecStart=${BIN_DIR}/backhaul -c ${conf}" ;;
-        xray) printf 'Environment=GODEBUG=multipathtcp=0\nExecStart=%s/xray run -c %s\n' "$BIN_DIR" "$conf" ;;
+        xray|xray-direct) printf 'Environment=GODEBUG=multipathtcp=0\nExecStart=%s/xray run -c %s\n' "$BIN_DIR" "$conf" ;;
         *) echo "ExecStart=${BIN_DIR}/frpc -c ${conf}" ;;
     esac
 }
@@ -360,7 +478,9 @@ unit_guard() {
 # connected UNIT: the tunnel reached the seller's server.
 connected() {
     case "$K_ENGINE" in
-        frp) journalctl -u "$1.service" --since "-30s" --no-pager -q 2>/dev/null | grep -q "login to server success" ;;
+        frp|bagher) journalctl -u "$1.service" --since "-30s" --no-pager -q 2>/dev/null | grep -q "login to server success" ;;
+        xray-direct) [[ "$K_TRANSPORT" == kcp ]] && return 0
+           ss -Htn state established "( sport = :${K_PORT} )" 2>/dev/null | grep -q . ;;
         *) [[ "$K_TRANSPORT" == kcp ]] && return 0  # mKCP: UDP, no session to see
            ss -Htn state established "( dport = :${K_PORT} )" 2>/dev/null | grep -q . ;;
     esac
@@ -483,6 +603,9 @@ cmd_install() {
     kit_decode "$1"
     local unit conf p f u missing=""
     unit=$(unit_name)
+    if [[ "$K_ENGINE" == bagher ]] && ! command -v sshd >/dev/null 2>&1 && [[ ! -x /usr/sbin/sshd ]]; then
+        die "a Bagher tunnel needs sshd (apt-get install -y openssh-server): nothing was changed"
+    fi
     if [[ "$K_ENGINE" == backhaul ]] && ! guard_supported; then
         die "this server cannot fence a Backhaul tunnel (it needs iptables with the cgroup match and cgroup v2): nothing was changed. Ask the seller for an FRP or Xray link instead."
     fi
@@ -506,12 +629,19 @@ cmd_install() {
             continue
         fi
         systemctl disable --now "${f##*/}" >/dev/null 2>&1 || true
+        bagher_unauthorize "$u"
         rm -f "$f" "$CONF_DIR/$u".{toml,json,id}
     done
     mkdir -p "$CONF_DIR"
     chmod 700 "$CONF_DIR"
     (umask 077 && engine_config > "$conf.new" && id_file > "$CONF_DIR/${unit}.id")
     mv -f "$conf.new" "$conf"
+    if [[ "$K_ENGINE" == bagher ]]; then
+        bagher_user
+        bagher_authorize "$unit"
+    else
+        bagher_unauthorize "$unit"  # the same link, moved off Bagher
+    fi
     cat > "$UNIT_DIR/${unit}.service" <<EOF
 [Unit]
 Description=Hashem tunnel to ${K_SERVER} (${K_NAME})
@@ -544,6 +674,13 @@ EOF
     systemctl daemon-reload
     systemctl enable "${unit}.service" >/dev/null 2>&1
     systemctl restart "${unit}.service"
+    if [[ "$K_ENGINE" == bagher ]]; then
+        say "Tunnel ${unit} is ready. Send the seller this reply code; the tunnel connects once they paste it:"
+        echo
+        reply_code
+        echo
+        return 0
+    fi
     say "Tunnel ${unit}: connecting to ${K_SERVER}:${K_PORT} (${K_ENGINE}, ${K_TRANSPORT})..."
     local ok=""
     for _ in $(seq 20); do
@@ -578,6 +715,7 @@ cmd_remove() {
         [[ "$what" == all || "$what" == "$u" ]] || continue
         systemctl disable --now "${u}.service" >/dev/null 2>&1 || true
         cmd_unguard "$u" 2>/dev/null || true
+        bagher_unauthorize "$u"
         rm -f "$f" "$CONF_DIR/${u}".{toml,json,id}
         say "Removed $u"
         n=$((n + 1))
@@ -616,5 +754,7 @@ case "${1:-}" in
     guard) [[ $# -eq 2 ]] || die "usage: $0 guard UNIT"; need_root guard; cmd_guard "$2" ;;
     unguard) [[ $# -eq 2 ]] || die "usage: $0 unguard UNIT"; need_root unguard; cmd_unguard "$2" ;;
     idfile) [[ $# -eq 2 ]] || die "usage: $0 idfile hsk1.XXXX"; kit_decode "$2"; id_file ;;
-    *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+    reply) [[ $# -eq 2 ]] || die "usage: $0 reply hsk1.XXXX"; kit_decode "$2"; [[ "$K_ENGINE" == bagher ]] || die "only a Bagher kit has a reply code"; reply_code ;;
+    authline) [[ $# -eq 2 ]] || die "usage: $0 authline hsk1.XXXX"; kit_decode "$2"; [[ "$K_ENGINE" == bagher ]] || die "not a Bagher kit"; bagher_auth_line "$(unit_name)" ;;
+    *) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
