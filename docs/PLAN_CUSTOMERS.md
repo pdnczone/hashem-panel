@@ -176,6 +176,28 @@ that prints a reply code the seller pastes back).
 ### P5: reminders (Telegram, days left / 90 % used), history, CSV export,
 plan templates, bulk renew.
 
+- Reminders, through the panel's alerts (Telegram and the rest): 90 % used
+  (exists), and 3 days and 1 day before the plan ends, each once a period
+  (renew starts a new one). Nothing is sent to the customer: the seller
+  forwards it.
+- History per customer (the last 100 entries, in customers.json): created,
+  plan changed, renewed (days, usage reset), cut (why), resumed, reminder
+  sent, foreign server added / changed / removed; a renewal that resets
+  the usage also keeps the period that ended (start, end, bytes used,
+  volume). Shown in a History modal on the customer's card.
+- CSV export, `GET /api/customers/export.csv` (logged in): one row per
+  customer (id, name, note, status, created, expires, days left, plan
+  days, volume GB, used GB, speed, foreign servers, ports). Cells that
+  start with = + - @ or a tab get a leading ' (no formula injection).
+- Plan templates (name, days, volume, speed), at most 50: saved and
+  removed in the Customers tab, picked in the new-customer wizard and the
+  renew dialog.
+- Bulk renew: tick customers, renew them all by N days (usage reset or
+  not) in one change: all or none.
+- Gate: unit tests for each (reminder thresholds and once-only, history
+  cap, CSV escaping, templates, bulk all-or-none, license: every new
+  action needs Pro except none); no new kernel behaviour, so no new lab.
+
 ### P6: selling the foreign side: separate design, not in this plan.
 
 ## Gate (every phase)
