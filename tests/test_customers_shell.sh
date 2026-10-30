@@ -146,12 +146,26 @@ grep -qF '"target": "203.0.113.7:443", "xver": 0, "serverNames": ["www.digikala.
 bad "an IP as the SNI" "${XD/sni=www.digikala.com/sni=127.0.0.1}"
 bad "a LAN name as the SNI" "${XD/sni=www.digikala.com/sni=router.lan}"
 bad "a single-label SNI" "${XD/sni=www.digikala.com/sni=intranet}"
-for a in 127.0.0.1 10.1.2.3 192.168.1.1 172.20.0.1 169.254.169.254 100.64.0.1 0.0.0.0 ::1 fd00::1 fe80::1 ::ffff:127.0.0.1; do
+for a in 127.0.0.1 10.1.2.3 192.168.1.1 172.20.0.1 169.254.169.254 100.64.0.1 0.0.0.0 ::1 fd00::1 fe80::1 fec0::1 ::ffff:127.0.0.1 ::127.0.0.1 2002:7f00:1::1; do
     printf '#!/bin/sh\necho "203.0.113.8     STREAM x"\necho "%s     STREAM x"\n' "$a" > "$T/bin/getent"
     bad "an SNI resolving to $a" "$XD"
 done
 printf '#!/bin/sh\nexit 2\n' > "$T/bin/getent"
 bad "an SNI that does not resolve" "$XD"
+# retarget: the pinned address follows the site, never to a private one
+mkdir -p "$T/conf"
+U=hcust-xd
+printf '{"target": "203.0.113.7:443", "xver": 0, "serverNames": ["www.digikala.com"], "x": 1}\n' > "$T/conf/$U.json"
+printf '#!/bin/sh\necho "203.0.113.9     STREAM x"\necho "203.0.113.7     STREAM x"\n' > "$T/bin/getent"
+bash "$SH" retarget "$U" 2>&1 || F "retarget failed"
+grep -qF '"target": "203.0.113.7:443"' "$T/conf/$U.json" || F "retarget moved a target still in the answers: $(cat "$T/conf/$U.json")"
+printf '#!/bin/sh\necho "10.0.0.5     STREAM x"\n' > "$T/bin/getent"
+bash "$SH" retarget "$U" 2>/dev/null || F "retarget failed on a private answer"
+grep -qF '"target": "203.0.113.7:443"' "$T/conf/$U.json" || F "retarget followed the SNI to a private address"
+printf '#!/bin/sh\necho "203.0.113.9     STREAM x"\n' > "$T/bin/getent"
+bash "$SH" retarget "$U" 2>&1 || F "retarget failed"
+grep -qF '"target": "203.0.113.9:443", "xver": 0, "serverNames": ["www.digikala.com"], "x": 1' "$T/conf/$U.json" || F "retarget did not follow the site: $(cat "$T/conf/$U.json")"
+rm -f "$T/conf/$U.json"
 printf '#!/bin/sh\necho "203.0.113.7     STREAM 203.0.113.7"\n' > "$T/bin/getent"
 # install a Backhaul tunnel, then the same link sold as Xray: one tunnel, its new engine
 : > "$T/calls.log"

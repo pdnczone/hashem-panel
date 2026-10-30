@@ -183,7 +183,14 @@ func (r *custLabRig) kit(cid, lid int) (kit, conf string) {
 		Kit string `json:"kit"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &k)
-	out, err := exec.Command("bash", r.installer, "config", k.Kit).CombinedOutput()
+	// the lab has no DNS: the SNI "resolves" to a public-looking address,
+	// which the Xray direct test swaps for the lab's site
+	stub := filepath.Join(r.dir, "stub")
+	_ = os.MkdirAll(stub, 0o755)
+	_ = os.WriteFile(filepath.Join(stub, "getent"), []byte("#!/bin/sh\necho \"198.51.100.77     STREAM x\"\n"), 0o755)
+	cmd := exec.Command("bash", r.installer, "config", k.Kit)
+	cmd.Env = append(os.Environ(), "PATH="+stub+":"+os.Getenv("PATH"))
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		r.t.Fatalf("installer config %d/%d: %v\n%s", cid, lid, err, out)
 	}
@@ -666,7 +673,10 @@ func TestCustomersLabDial(t *testing.T) {
 	// Xray direct: the customer's server serves the kit's config (Reality
 	// borrowing the lab's own site)
 	_, conf := r.kit(1, 1)
-	conf = strings.ReplaceAll(conf, `"lab.hashem.dev:443"`, strconv.Quote(target))
+	if !strings.Contains(conf, `"target": "198.51.100.77:443"`) {
+		t.Fatalf("the installer did not pin the SNI's address:\n%s", conf)
+	}
+	conf = strings.ReplaceAll(conf, `"198.51.100.77:443"`, strconv.Quote(target))
 	xp := filepath.Join(r.dir, "xd.json")
 	_ = os.WriteFile(xp, []byte(conf), 0o600)
 	r.runForeign("client-1", "env", "GODEBUG=multipathtcp=0", xr, "run", "-c", xp)
