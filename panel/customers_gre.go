@@ -377,30 +377,38 @@ func custGRELoadChain(rules string) error {
 	return nil
 }
 
-// custGREHook puts each hook first: inserted at 1, then its other copies
-// removed (never a moment without one).
+// custGREHook puts each hook first, in one iptables-restore commit per
+// table: every copy deleted by its rule (not by number: another program may
+// insert meanwhile) and one inserted at 1, so there is never a moment
+// without it. If the copies changed in between, the commit fails as a
+// whole; the hook is then only made sure of, and the next tick tries again.
 func custGREHook() error {
 	for _, h := range custGREHooks {
-		if out, err := custRun("iptables", "-w", "5", "-t", h[0], "-I", h[1], "1", "-j", h[2]); err != nil {
-			return fmt.Errorf("iptables -t %s -I %s: %s", h[0], h[1], strings.TrimSpace(string(out)))
-		}
-		out, err := custRun("iptables", "-w", "5", "-t", h[0], "-S", h[1])
-		if err != nil {
-			continue
-		}
-		var extra []int
 		n := 0
-		for _, l := range strings.Split(string(out), "\n") {
-			if l = strings.TrimSpace(l); !strings.HasPrefix(l, "-A ") {
-				continue
-			}
-			n++
-			if n > 1 && l == "-A "+h[1]+" -j "+h[2] {
-				extra = append(extra, n)
+		if out, err := custRun("iptables", "-w", "5", "-t", h[0], "-S", h[1]); err == nil {
+			for _, l := range strings.Split(string(out), "\n") {
+				if strings.TrimSpace(l) == "-A "+h[1]+" -j "+h[2] {
+					n++
+				}
 			}
 		}
-		for i := len(extra) - 1; i >= 0; i-- {
-			_, _ = custRun("iptables", "-w", "5", "-t", h[0], "-D", h[1], strconv.Itoa(extra[i]))
+		var b strings.Builder
+		fmt.Fprintf(&b, "*%s\n", h[0])
+		for i := 0; i < n; i++ {
+			fmt.Fprintf(&b, "-D %s -j %s\n", h[1], h[2])
+		}
+		fmt.Fprintf(&b, "-I %s 1 -j %s\nCOMMIT\n", h[1], h[2])
+		f := filepath.Join(configDir, "customers-gre-hook-"+h[0]+".v4")
+		err := os.WriteFile(f, []byte(b.String()), 0o600)
+		if err == nil {
+			_, err = custRun("iptables-restore", "-w", "5", "-n", f)
+		}
+		if err != nil {
+			if _, cerr := custRun("iptables", "-w", "5", "-t", h[0], "-C", h[1], "-j", h[2]); cerr != nil {
+				if out, err := custRun("iptables", "-w", "5", "-t", h[0], "-I", h[1], "1", "-j", h[2]); err != nil {
+					return fmt.Errorf("iptables -t %s -I %s: %s", h[0], h[1], strings.TrimSpace(string(out)))
+				}
+			}
 		}
 	}
 	if _, err := custRun("ip6tables", "-w", "5", "-S", "INPUT"); err == nil {

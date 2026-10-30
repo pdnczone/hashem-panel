@@ -496,6 +496,11 @@ func TestCustomersLabEngines(t *testing.T) {
 	cconf := filepath.Join(r.dir, "cconf")
 	_ = os.MkdirAll(cconf, 0o700)
 	const fenceUnit = "hcust-lab-1-1"
+	// its fence hook stays in the foreign namespace otherwise (another
+	// test's processes in the same cgroup path would meet it)
+	t.Cleanup(func() {
+		_ = exec.Command("ip", "netns", "exec", r.foNS, "env", "HASHEM_CUSTOMER_CONF_DIR="+cconf, "bash", r.installer, "unguard", fenceUnit).Run()
+	})
 	for lid := 1; lid <= 4; lid++ {
 		kit, conf := r.kit(1, lid)
 		name := fmt.Sprintf("client-%d", lid)
@@ -1088,13 +1093,14 @@ for _ in range(3): r.sendto(tcp,(d,0))
 			cg := filepath.Join(r.dir, "gcg")
 			_ = os.MkdirAll(cg, 0o755)
 			t.Cleanup(func() {
-				_ = exec.Command("ip", "netns", "exec", r.foNS, "sh", "-c", "mount -t cgroup2 none "+cg+" && rmdir "+cg+"/hcust-lab; umount "+cg).Run()
+				_ = exec.Command("ip", "netns", "exec", r.foNS, "sh", "-c", "mount -t cgroup2 none "+cg+" && rmdir "+cg+"/hcust-lab-gre; umount "+cg).Run()
 			})
 			bp := filepath.Join(r.dir, "gbh.toml")
 			_ = os.WriteFile(bp, []byte(conf), 0o600)
 			r.runForeign("gbh", "env", "HASHEM_CUSTOMER_CONF_DIR="+cconf, "bash", "-c",
-				`mount -t cgroup2 none `+cg+` && mkdir -p `+cg+`/hcust-lab && echo $$ > `+cg+`/hcust-lab/cgroup.procs && `+
+				`mount -t cgroup2 none `+cg+` && mkdir -p `+cg+`/hcust-lab-gre && echo $$ > `+cg+`/hcust-lab-gre/cgroup.procs && `+
 					`bash "$1" guard `+unit+` && exec "$2" -c "$3"`, "fence", r.installer, bh, bp)
+			t.Cleanup(func() { _, _ = inFo("bash", r.installer, "unguard", unit) })
 			var upErr error
 			for end := time.Now().Add(60 * time.Second); time.Now().Before(end); time.Sleep(time.Second) {
 				if _, upErr = r.user(9005, "tcp", "0", "1"); upErr == nil {

@@ -298,7 +298,7 @@ confirm() {
     say "This tunnel publishes ${protos} port(s) ${K_PORTS//,/, } of this server on ${K_SERVER}."
     [[ "$K_ENGINE" != xray-direct ]] || say "The seller's server connects to port ${K_PORT} of this server: let it through your firewall."
     [[ "$K_ENGINE" != bagher ]] || say "The seller's server logs in to this server's sshd as the user ${SSH_USER} (made for it: no password, no shell), which may only listen on the tunnel's port ${K_PORT} on 127.0.0.1 (sshd's rules for it are in ${SSHD_DROPIN})."
-    [[ -z "$K_GPUB" ]] || say "The tunnel runs inside a GRE tunnel to ${K_GPUB} (interface $(gre_if "$(unit_name)"), ${K_GOUT}/30): over it this server takes only the tunnel's replies and ICMP from ${K_GIN}."
+    [[ -z "$K_GPUB" ]] || say "The tunnel runs inside a GRE tunnel to ${K_GPUB} (interface $(gre_if "$(unit_name)"), ${K_GOUT}/30): over it this server takes only the tunnel's replies (and ICMP errors for them) from ${K_GIN}."
     [[ "$K_ENGINE" != backhaul ]] || say "Backhaul lets the seller's server choose what this server connects to: a firewall fence keeps the tunnel to ${K_SERVER}:${K_PORT} and 127.0.0.1 on these ports."
     if command -v ss >/dev/null 2>&1; then
         for p in ${K_PORTS//,/ }; do
@@ -902,6 +902,7 @@ cmd_gre_down() {
     guard_unit_ok "$unit"
     ifn=$(gre_if "$unit") chain=$(gre_chain "$unit")
     ip link del dev "$ifn" >/dev/null 2>&1 || true
+    ip link del dev "hcg${ifn#hcc}" >/dev/null 2>&1 || true  # the name of an early build
     while read -r ipt tbl ch rest; do
         command -v "$ipt" >/dev/null 2>&1 || continue
         # shellcheck disable=SC2086  # the hook's words (a crash between two -I may have left two)
