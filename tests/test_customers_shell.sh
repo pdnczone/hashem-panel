@@ -107,6 +107,7 @@ case "\$*" in
   *"-S OUTPUT"*) [ -f $T/hook ] && cat $T/hook ;;
   *"-t raw -S PREROUTING"*) [ -n "\${FENCE_PRE:-}" ] && printf '%s\\n' "\$FENCE_PRE" ;;
   *"-t raw -S HG"*) [ -n "\${FENCE_CH:-}" ] && printf '%s\\n' "\$FENCE_CH" ;;
+  *"-t mangle -S PREROUTING"*) [ -n "\${FENCE_MG:-}" ] && printf '%s\\n' "\$FENCE_MG" ;;
 esac
 exit 0
 EOF
@@ -328,7 +329,7 @@ bad "GRE around Xray" "${XG}gpub=203.0.113.7"$'\ngin=10.231.4.9\ngout=10.231.4.1
 bad "a version 3 kit without GRE" "${BH/v=2/v=3}"
 : > "$T/calls.log"
 GU="hcust-203-0-113-7-$(h6 203.0.113.7)-6-1"
-GIF="hcg$(printf '%s' "$GU" | sha256sum | cut -c1-8)"
+GIF="hcc$(printf '%s' "$GU" | sha256sum | cut -c1-8)"
 out=$(bash "$SH" install "$(mkkit "$GK")" --yes 2>&1) || F "GRE install: $out"
 grep -qF "Requires=hcustgre-${GU#hcust-}.service" "$T/sd/$GU.service" || F "the tunnel does not require its GRE unit: $(cat "$T/sd/$GU.service")"
 grep -qF "ExecStart=/bin/bash $T/lib/hc/hashem-customer.sh gre-up $GU" "$T/sd/hcustgre-${GU#hcust-}.service" || F "GRE unit: $(cat "$T/sd/hcustgre-${GU#hcust-}.service" 2>&1)"
@@ -338,13 +339,14 @@ grep -q "systemctl restart hcustgre-${GU#hcust-}.service" "$T/calls.log" || F "t
 : > "$T/calls.log"
 out=$(bash "$SH" gre-up "$GU" 2>&1) || F "gre-up: $out"
 for want in "ip link add $GIF type gre remote 203.0.113.7 ttl 255" \
-            "-t raw -A HG[0-9a-f]+ -s 10.231.4.9 -d 10.231.4.10 -p tcp --sport 31600 -j RETURN" "-t raw -A HG[0-9a-f]+ -s 10.231.4.9 -d 10.231.4.10 -p icmp -j RETURN" \
+            "-t raw -A HG[0-9a-f]+ -s 10.231.4.9/32 -d 10.231.4.10/32 -p tcp -m tcp --sport 31600 -j RETURN" "-t raw -A HG[0-9a-f]+ -s 10.231.4.9/32 -d 10.231.4.10/32 -p icmp -j RETURN" \
+            "iptables -w 5 -t mangle -I PREROUTING 1 -i $GIF -m conntrack ! --ctstate RELATED,ESTABLISHED -j DROP" \
             "-t raw -A HG.* -j DROP" "iptables -w 5 -t raw -I PREROUTING 1 -i $GIF -j HG" "iptables -w 5 -t filter -I FORWARD 1 -i $GIF -j DROP" \
             "iptables -w 5 -t filter -I FORWARD 1 -o $GIF -j DROP" "ip6tables -w 5 -t filter -I INPUT 1 -i $GIF -j DROP" "ip addr add 10.231.4.10/30 dev $GIF"; do
     grep -qE -- "$want" "$T/calls.log" || F "gre-up lacks: $want"
 done
 grep -q -- "-p udp" "$T/calls.log" && F "an FRP tcp tunnel's fence lets UDP in"
-grep -q "ctstate" "$T/calls.log" && F "the GRE fence trusts conntrack (any flow's replies)"
+grep -E -- "-t raw .*ctstate" "$T/calls.log" && F "the raw fence uses conntrack (it runs before it)"
 [[ $(grep -n "ip link set dev $GIF mtu 1380 up" "$T/calls.log" | cut -d: -f1) -gt $(grep -n -- "-t raw -I PREROUTING" "$T/calls.log" | cut -d: -f1) ]] || F "the GRE came up before its fence"
 # a /30 the server already uses (a VPN route) is refused, before anything is made
 printf '#!/bin/sh\necho "ip $*" >> %s/calls.log\ncase "$*" in *"route show"*) echo "10.231.0.0/16 dev wg0 scope link" ;; esac\n' "$T" > "$T/bin/ip"; chmod +x "$T/bin/ip"
@@ -359,11 +361,24 @@ out=$(bash "$SH" install "$(mkkit "$GO")" --yes 2>&1) && F "install on an overla
 GCH="HG$(printf '%s' "$GU" | sha256sum | cut -c1-10)"
 printf '#!/bin/sh\necho "ip $*" >> %s/calls.log\ncase "$*" in *"link show dev"*) echo "9: x: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1380" ;; esac\n' "$T" > "$T/bin/ip"; chmod +x "$T/bin/ip"
 : > "$T/calls.log"
-FENCE_PRE="-A PREROUTING -i $GIF -j $GCH" FENCE_CH="-A $GCH -j DROP" bash "$SH" gre-check-all >/dev/null 2>&1 || F "gre-check-all failed"
+FCH=$(printf -- '-N %s\n-A %s -s 10.231.4.9/32 -d 10.231.4.10/32 -p tcp -m tcp --sport 31600 -j RETURN\n-A %s -s 10.231.4.9/32 -d 10.231.4.10/32 -p icmp -j RETURN\n-A %s -j DROP' "$GCH" "$GCH" "$GCH" "$GCH")
+FMG="-A PREROUTING -i $GIF -m conntrack ! --ctstate RELATED,ESTABLISHED -j DROP"
+out=$(FENCE_PRE="-A PREROUTING -i $GIF -j $GCH" FENCE_CH="$FCH" FENCE_MG="$FMG" bash "$SH" gre-check "$GU" 2>&1) || F "gre-check: a fenced GRE reads as not fenced: $out"
+FENCE_PRE="-A PREROUTING -i $GIF -j $GCH" FENCE_CH="$FCH" FENCE_MG="$FMG" bash "$SH" gre-check-all >/dev/null 2>&1 || F "gre-check-all failed"
 grep -q "ip link add" "$T/calls.log" && F "the minute check remade a fenced GRE"
 : > "$T/calls.log"
-FENCE_PRE=$'-A PREROUTING -p tcp -j ACCEPT\n'"-A PREROUTING -i $GIF -j $GCH" FENCE_CH="-A $GCH -j DROP" bash "$SH" gre-check-all >/dev/null 2>&1
+FENCE_PRE=$'-A PREROUTING -p tcp -j ACCEPT\n'"-A PREROUTING -i $GIF -j $GCH" FENCE_CH="$FCH" FENCE_MG="$FMG" bash "$SH" gre-check-all >/dev/null 2>&1
 grep -q "ip link add $GIF" "$T/calls.log" || F "a GRE fence under an ACCEPT was not made again"
+# the seller panel's own fence above (this server sells too) is fine
+: > "$T/calls.log"
+FENCE_PRE=$'-A PREROUTING -j HASHEM_CUST_GRE\n'"-A PREROUTING -i $GIF -j $GCH" FENCE_CH="$FCH" FENCE_MG="$FMG" bash "$SH" gre-check-all >/dev/null 2>&1
+grep -q "ip link add" "$T/calls.log" && F "the seller panel's fence above made the GRE again"
+# a RETURN slipped into the fence, or no stateful drop: made again
+for v in "FENCE_CH=${FCH/-j DROP/-j RETURN}" "FENCE_MG="; do
+    : > "$T/calls.log"
+    env FENCE_PRE="-A PREROUTING -i $GIF -j $GCH" FENCE_CH="$FCH" FENCE_MG="$FMG" "$v" bash "$SH" gre-check-all >/dev/null 2>&1
+    grep -q "ip link add $GIF" "$T/calls.log" || F "a changed GRE fence ($v) was not made again"
+done
 printf '#!/bin/sh\necho "ip $*" >> %s/calls.log\n' "$T" > "$T/bin/ip"; chmod +x "$T/bin/ip"
 # the fence follows the id file only: a tampered one is refused
 cp "$T/conf/$GU.id" "$T/id.bak"
@@ -415,7 +430,8 @@ grep -q "frps-2" "$T/calls.log" && F "teardown touched the seller's own frps-2"
 grep -q "iptables -w 5 -D INPUT -j HASHEM_CUST" "$T/calls.log" || F "teardown: chain hook not removed"
 grep -q "iptables -w 5 -X HASHEM_CUST" "$T/calls.log" || F "teardown: chain not deleted"
 grep -q "iptables -w 5 -D FORWARD -j HASHEM_CUST_GREF" "$T/calls.log" || F "teardown: GRE forward fence not unhooked"
-grep -q "iptables -w 5 -X HASHEM_CUST_GRE$" "$T/calls.log" || F "teardown: GRE fence chain not deleted"
+grep -q "iptables -w 5 -t raw -X HASHEM_CUST_GRE$" "$T/calls.log" || F "teardown: the raw GRE fence not deleted"
+grep -q "iptables -w 5 -t raw -D PREROUTING -j HASHEM_CUST_GRE" "$T/calls.log" || F "teardown: the raw GRE fence not unhooked"
 grep -q "ip6tables -w 5 -D INPUT -i hcg+ -j DROP" "$T/calls.log" || F "teardown: GRE IPv6 drop not removed"
 grep -q "ip link del dev hcg12x3" "$T/calls.log" || F "teardown: GRE interface not removed"
 grep -q "ip link del dev eth0" "$T/calls.log" && F "teardown removed an interface that is not a GRE link's"

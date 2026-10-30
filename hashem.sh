@@ -1404,8 +1404,8 @@ carrier_apply() {
         local dev
         for dev in $( (ip -o link show type gre; ip -o link show type ip6gre) 2>/dev/null | awk -F': ' '{print $2}' | cut -d'@' -f1); do
             # hpt0: the panel's path test, never a tunnel (keyed GRE, removed after the test);
-            # hcg*: a GRE sold to a customer (plain GRE, the customer's end is plain too)
-            [[ "$dev" == "gre0" || "$dev" == "gretap0" || "$dev" == "ip6gre0" || "$dev" == hpt* || "$dev" == hcg* ]] && continue
+            # hcg*/hcc*: a GRE sold to a customer / bought from a seller (plain GRE at both ends)
+            [[ "$dev" == "gre0" || "$dev" == "gretap0" || "$dev" == "ip6gre0" || "$dev" == hpt* || "$dev" == hcg* || "$dev" == hcc* ]] && continue
             IFS_TO_APPLY+=("$dev")
         done
         if [[ ${#IFS_TO_APPLY[@]} -eq 0 ]]; then
@@ -3296,7 +3296,10 @@ customers_teardown() {
         done
         iptables -w 5 -F HASHEM_CUST 2>/dev/null || true
         iptables -w 5 -X HASHEM_CUST 2>/dev/null || true
-        # GRE-wrapped links: their fence (INPUT, FORWARD)
+        # GRE-wrapped links: their fence (raw PREROUTING, FORWARD; INPUT in an early build)
+        iptables -w 5 -t raw -D PREROUTING -j HASHEM_CUST_GRE 2>/dev/null || true
+        iptables -w 5 -t raw -F HASHEM_CUST_GRE 2>/dev/null || true
+        iptables -w 5 -t raw -X HASHEM_CUST_GRE 2>/dev/null || true
         iptables -w 5 -D INPUT -j HASHEM_CUST_GRE 2>/dev/null || true
         iptables -w 5 -D FORWARD -j HASHEM_CUST_GREF 2>/dev/null || true
         for p in HASHEM_CUST_GRE HASHEM_CUST_GREF; do
@@ -5674,7 +5677,7 @@ doctor_diagnostics() {
         TARGET_IP="$IRAN_GRE_IP"
     else
         local IFACE
-        IFACE=$(ip -o link show type gre 2>/dev/null | awk -F': ' '{print $2}' | cut -d'@' -f1 | grep -v -e '^hpt' -e '^hcg' | head -n1)
+        IFACE=$(ip -o link show type gre 2>/dev/null | awk -F': ' '{print $2}' | cut -d'@' -f1 | grep -v -e '^hpt' -e '^hcg' -e '^hcc' | head -n1)
         if [[ -n "$IFACE" ]]; then
             LOCAL_IP=$(ip -o -4 addr show dev "$IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)
             if [[ "$LOCAL_IP" =~ \.1$ ]]; then

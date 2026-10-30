@@ -370,19 +370,37 @@ func custGRELoadChain(rules string) error {
 	if out, err := custRun("iptables-restore", "-w", "5", "-n", f); err != nil {
 		return fmt.Errorf("iptables-restore (GRE): %s", strings.TrimSpace(string(out)))
 	}
-	return custGREHook()
+	if err := custGREHook(); err != nil {
+		return err
+	}
+	custGREDropLegacy()
+	return nil
 }
 
-// custGREHook puts each hook first (removing it wherever else it is).
+// custGREHook puts each hook first: inserted at 1, then its other copies
+// removed (never a moment without one).
 func custGREHook() error {
 	for _, h := range custGREHooks {
-		for i := 0; i < 4; i++ {
-			if _, err := custRun("iptables", "-w", "5", "-t", h[0], "-D", h[1], "-j", h[2]); err != nil {
-				break
-			}
-		}
 		if out, err := custRun("iptables", "-w", "5", "-t", h[0], "-I", h[1], "1", "-j", h[2]); err != nil {
 			return fmt.Errorf("iptables -t %s -I %s: %s", h[0], h[1], strings.TrimSpace(string(out)))
+		}
+		out, err := custRun("iptables", "-w", "5", "-t", h[0], "-S", h[1])
+		if err != nil {
+			continue
+		}
+		var extra []int
+		n := 0
+		for _, l := range strings.Split(string(out), "\n") {
+			if l = strings.TrimSpace(l); !strings.HasPrefix(l, "-A ") {
+				continue
+			}
+			n++
+			if n > 1 && l == "-A "+h[1]+" -j "+h[2] {
+				extra = append(extra, n)
+			}
+		}
+		for i := len(extra) - 1; i >= 0; i-- {
+			_, _ = custRun("iptables", "-w", "5", "-t", h[0], "-D", h[1], strconv.Itoa(extra[i]))
 		}
 	}
 	if _, err := custRun("ip6tables", "-w", "5", "-S", "INPUT"); err == nil {
@@ -407,13 +425,25 @@ func custGREDropChain() {
 		_, _ = custRun("iptables", "-w", "5", "-t", h[0], "-F", h[2])
 		_, _ = custRun("iptables", "-w", "5", "-t", h[0], "-X", h[2])
 	}
-	// a fence from before it moved to raw
-	_, _ = custRun("iptables", "-w", "5", "-D", "INPUT", "-j", custGREChain)
-	_, _ = custRun("iptables", "-w", "5", "-F", custGREChain)
-	_, _ = custRun("iptables", "-w", "5", "-X", custGREChain)
+	custGREDropLegacy()
 	for _, r := range custGRE6Rules {
 		_, _ = custRun("ip6tables", append([]string{"-w", "5", "-D"}, r...)...)
 	}
+}
+
+// custGREDropLegacy removes the fence of a build that kept it in filter
+// INPUT (its DROP would keep a new control port out).
+func custGREDropLegacy() {
+	if _, err := custRun("iptables", "-w", "5", "-t", "filter", "-S", custGREChain); err != nil {
+		return
+	}
+	for i := 0; i < 4; i++ {
+		if _, err := custRun("iptables", "-w", "5", "-t", "filter", "-D", "INPUT", "-j", custGREChain); err != nil {
+			break
+		}
+	}
+	_, _ = custRun("iptables", "-w", "5", "-t", "filter", "-F", custGREChain)
+	_, _ = custRun("iptables", "-w", "5", "-t", "filter", "-X", custGREChain)
 }
 
 // custGREIfacesNow are the hcg* interfaces in the kernel. Swappable.
@@ -515,7 +545,12 @@ func custGRESync(list []customer, now time.Time) (made bool, err error) {
 		check = true // a hook moved or went: the full check below
 	}
 	custApplied.greCheck = now
-	// the fence first: an interface never runs without it
+	for _, name := range custGREIfacesNow() {
+		if _, ok := want[name]; !ok {
+			_, _ = custRun("ip", "link", "del", "dev", name)
+		}
+	}
+	// the fence before any interface is made: none runs without it
 	if rules == "" {
 		custGREDropChain()
 	} else if !custGREChainOK(rules) {
@@ -523,11 +558,6 @@ func custGRESync(list []customer, now time.Time) (made bool, err error) {
 			custGREDown(names)
 			custApplied.gre = ""
 			return false, err
-		}
-	}
-	for _, name := range custGREIfacesNow() {
-		if _, ok := want[name]; !ok {
-			_, _ = custRun("ip", "link", "del", "dev", name)
 		}
 	}
 	var errs []string
