@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -219,6 +220,10 @@ func TestCustomersXrayKitMatches(t *testing.T) {
 		t.Skip("no bash")
 	}
 	installer, _ := filepath.Abs("../tools/hashem-customer.sh")
+	// the installer pins Xray direct's Reality target to the SNI's address
+	stub := t.TempDir()
+	_ = os.WriteFile(filepath.Join(stub, "getent"), []byte("#!/bin/sh\necho \"203.0.113.50     STREAM x\"\n"), 0o755)
+	env := append(os.Environ(), "PATH="+stub+":"+os.Getenv("PATH"))
 	c := customer{ID: 4, Name: "x", Token: strings.Repeat("a", 32)}
 	for i, preset := range custTransports[custEngineXray] {
 		for _, eng := range []string{custEngineXray, custEngineXrayDirect} {
@@ -228,9 +233,18 @@ func TestCustomersXrayKitMatches(t *testing.T) {
 					t.Fatal(err)
 				}
 				kit := custKit(c, l, "203.0.113.7")
-				out, err := exec.Command("bash", installer, "config", kit).CombinedOutput()
+				cmd := exec.Command("bash", installer, "config", kit)
+				cmd.Env = env
+				out, err := cmd.CombinedOutput()
 				if err != nil {
 					t.Fatalf("%s: installer: %v\n%s", preset, err, out)
+				}
+				if eng == custEngineXrayDirect && preset != "kcp" {
+					pinned := `"target": "203.0.113.50:443"`
+					if !bytes.Contains(out, []byte(pinned)) {
+						t.Errorf("%s: Xray direct's target is not pinned:\n%s", preset, out)
+					}
+					out = bytes.Replace(out, []byte(pinned), []byte(`"target": "`+l.Xray.Profile.SNI+`:443"`), 1)
 				}
 				var got any
 				if err := json.Unmarshal(out, &got); err != nil {
@@ -333,14 +347,18 @@ func TestCustomersEngineConfigsLoad(t *testing.T) {
 func TestCustomersDialEngines(t *testing.T) {
 	newCustLab(t)
 	withPro(t)
-	oldPeer := custPeerIPs
-	custPeerIPs = func(h string) []string {
+	oldRes := custResolveRemote
+	dns := "198.51.100.20"
+	custResolveRemote = func(h string) (string, error) {
 		if h == "fo.example.org" {
-			return []string{"198.51.100.20"}
+			if dns == "" {
+				return "", fmt.Errorf("no answer")
+			}
+			return dns, nil
 		}
-		return oldPeer(h)
+		return oldRes(h)
 	}
-	t.Cleanup(func() { custPeerIPs = oldPeer })
+	t.Cleanup(func() { custResolveRemote = oldRes })
 	code, m := custPost(t, `{"action":"create","name":"dial","days":30,"rate_mbit":10,"address":"iran.example.com","links":[
 		{"name":"xd","engine":"xray-direct","transport":"reality","ports":"9443","remote":"198.51.100.9","ctrl_port":8443},
 		{"name":"bg","engine":"bagher","transport":"ssh","ports":"9444","udp":true,"remote":"fo.example.org","ctrl_port":31500}]}`)
@@ -413,11 +431,11 @@ func TestCustomersDialEngines(t *testing.T) {
 		t.Errorf("reply: port %d user %q keys %v", bg.SSHPort, bg.SSHUser, bg.HostKeys)
 	}
 	known, _ := os.ReadFile(custCertPath(1, 2, ".known"))
-	if string(known) != "[fo.example.org]:2222 "+bg.HostKeys[0]+"\n" {
+	if string(known) != "[198.51.100.20]:2222 "+bg.HostKeys[0]+"\n" {
 		t.Errorf("known_hosts: %q", known)
 	}
 	unit, _ := os.ReadFile(custUnitPath(1, 2))
-	for _, want := range []string{custEngineBin("bagher") + " sell-bagher -frps " + custEngineBin("frp"), "-host fo.example.org -port 2222 -user hcust -frp-port 31500",
+	for _, want := range []string{custEngineBin("bagher") + " sell-bagher -frps " + custEngineBin("frp"), "-host 198.51.100.20 -port 2222 -user hcust -frp-port 31500",
 		"-key " + custCertPath(1, 2, ".ssh"), "BindReadOnlyPaths=" + custConfPath(1, 2, "bagher") + " " + custCertPath(1, 2, ".ssh") + " " + custCertPath(1, 2, ".known")} {
 		if !strings.Contains(string(unit), want) {
 			t.Errorf("bagher unit lacks %q:\n%s", want, unit)
@@ -446,6 +464,26 @@ func TestCustomersDialEngines(t *testing.T) {
 	}
 	if got := plug(9443, "stcp"); !strings.Contains(got, `"reject":true`) {
 		t.Errorf("the plugin let a Bagher link open stcp: %s", got)
+	}
+
+	// the address is pinned when the link is saved: later DNS answers (an
+	// AAAA, another A, none) do not move the relay off what the cap matches
+	if l := custGet(t, 1).Links[1]; l.RemoteIP != "198.51.100.20" {
+		t.Errorf("Bagher remote_ip %q", l.RemoteIP)
+	}
+	dns = ""
+	if code, m := custPost(t, `{"action":"link-update","id":1,"link_id":2,"link":{"engine":"bagher","transport":"ssh","ports":"9444","remote":"fo.example.org"}}`); code != 200 {
+		t.Errorf("a save with DNS down: %d %v", code, m)
+	}
+	if l := custGet(t, 1).Links[1]; l.RemoteIP != "198.51.100.20" || len(l.HostKeys) != 1 {
+		t.Errorf("a save with DNS down: remote_ip %q, host keys %v", l.RemoteIP, l.HostKeys)
+	}
+	if code, _ := custPost(t, `{"action":"link-update","id":1,"link_id":2,"link":{"engine":"bagher","transport":"ssh","ports":"9444","remote":"nowhere.example.org"}}`); code == 200 {
+		t.Error("a foreign server with no IPv4 address was saved")
+	}
+	dns = "203.0.113.99"
+	if strings.Contains(fmt.Sprint(custTCArgs([]custIfc{{"eth0", []string{"192.0.2.10"}}}, []customer{custGet(t, 1)})), "203.0.113.99") {
+		t.Error("the cap followed DNS without a save")
 	}
 
 	// a new address forgets the pinned keys

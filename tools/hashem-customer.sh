@@ -113,6 +113,59 @@ kit_decode() {
         [[ "$p" != "$K_PORT" ]] || die "kit: port $p is also the control port"
     done
     [[ "$K_ENGINE" != backhaul || "$K_UDP" == 0 || "$K_TRANSPORT" == tcp ]] || die "kit: Backhaul carries UDP on tcp only"
+    if [[ "$K_ENGINE" == xray-direct && "$K_TRANSPORT" != kcp ]]; then
+        public_name "$K_SNI" || die "kit: the SNI must be a public domain name"
+        resolve_sni
+    fi
+}
+
+# public_name NAME: a dotted public domain (as the panel's custPublicName).
+public_name() {
+    local n=${1,,} tld
+    [[ "$n" == *.* && ! "$n" =~ ^[0-9.]+$ ]] || return 1
+    tld=${n##*.}
+    [[ "$tld" =~ ^[a-z]{2,}$ ]] || return 1
+    case "$tld" in localhost|local|internal|lan|home|corp|intranet|arpa|test|invalid|example) return 1 ;; esac
+    [[ "${n%%.*}" != localhost ]]
+}
+
+# public_addr ADDR: not loopback, private, link-local, CGNAT, multicast or
+# another special range.
+public_addr() {
+    local a=${1,,} o1 o2 o3 o4
+    if [[ "$a" == *:* ]]; then
+        [[ "$a" =~ ^::ffff:([0-9.]+)$ ]] && { public_addr "${BASH_REMATCH[1]}"; return; }
+        [[ ! "$a" =~ ^(::1?$|f[cd]|fe[89ab]|ff|2001:db8:|64:ff9b:|::ffff:) ]]
+        return
+    fi
+    [[ "$a" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+    IFS=. read -r o1 o2 o3 o4 <<< "$a"
+    : "$o4"
+    (( o1 == 0 || o1 == 10 || o1 == 127 || o1 >= 224 )) && return 1
+    (( o1 == 169 && o2 == 254 )) && return 1
+    (( o1 == 172 && o2 >= 16 && o2 <= 31 )) && return 1
+    (( o1 == 192 && o2 == 168 )) && return 1
+    (( o1 == 100 && o2 >= 64 && o2 <= 127 )) && return 1
+    (( o1 == 192 && o2 == 0 && o3 == 0 )) && return 1
+    (( o1 == 198 && (o2 == 18 || o2 == 19) )) && return 1
+    return 0
+}
+
+# resolve_sni: SNI_TARGET, where Reality hands the handshakes it does not
+# recognise (anyone's who connects to the tunnel's port). The kit names the
+# SNI, so it must not lead to this server or its network: every answer must
+# be public, and the address is pinned (a later DNS answer cannot move it).
+SNI_TARGET=""
+resolve_sni() {
+    local a ips v4="" any=""
+    ips=$(getent ahosts "$K_SNI" 2>/dev/null | awk '!seen[$1]++ { print $1 }') || true
+    [[ -n "$ips" ]] || die "the SNI ${K_SNI} does not resolve on this server: check its DNS, or ask the seller for another SNI"
+    for a in $ips; do
+        public_addr "$a" || die "the SNI ${K_SNI} points at ${a}, an address of this server or its network: anyone could reach it through the tunnel's port. Ask the seller for another SNI."
+        [[ -n "$v4" || "$a" == *:* ]] || v4=$a
+        [[ -n "$any" ]] || any=$a
+    done
+    if [[ -n "$v4" ]]; then SNI_TARGET="$v4:443"; else SNI_TARGET="[$any]:443"; fi
 }
 
 valid_port() { [[ "$1" =~ ^[0-9]{1,5}$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 )); }
@@ -137,7 +190,7 @@ confirm() {
     [[ "$K_UDP" == 1 ]] && protos="TCP and UDP"
     say "This tunnel publishes ${protos} port(s) ${K_PORTS//,/, } of this server on ${K_SERVER}."
     [[ "$K_ENGINE" != xray-direct ]] || say "The seller's server connects to port ${K_PORT} of this server: let it through your firewall."
-    [[ "$K_ENGINE" != bagher ]] || say "The seller's server logs in to this server's sshd as the user ${SSH_USER} (made for it: no password, no shell), which may only open the tunnel's port ${K_PORT} on 127.0.0.1."
+    [[ "$K_ENGINE" != bagher ]] || say "The seller's server logs in to this server's sshd as the user ${SSH_USER} (made for it: no password, no shell), which may only listen on the tunnel's port ${K_PORT} on 127.0.0.1 (sshd's rules for it are in ${SSHD_DROPIN})."
     [[ "$K_ENGINE" != backhaul ]] || say "Backhaul lets the seller's server choose what this server connects to: a firewall fence keeps the tunnel to ${K_SERVER}:${K_PORT} and 127.0.0.1 on these ports."
     if command -v ss >/dev/null 2>&1; then
         for p in ${K_PORTS//,/ }; do
@@ -230,7 +283,7 @@ xray_config() {
 xray_direct_stream() {
     local mux='"sockopt": {"customSockopt": [{"level": "6", "network": "tcp", "opt": "25", "system": "linux", "type": "int", "value": "16384"}]}'
     local reality
-    reality=$(printf '"security": "reality", "realitySettings": {"target": "%s:443", "xver": 0, "serverNames": ["%s"], "privateKey": "%s", "shortIds": ["%s"]}' "$K_SNI" "$K_SNI" "$K_PK" "$K_SID")
+    reality=$(printf '"security": "reality", "realitySettings": {"target": "%s", "xver": 0, "serverNames": ["%s"], "privateKey": "%s", "shortIds": ["%s"]}' "$SNI_TARGET" "$K_SNI" "$K_PK" "$K_SID")
     case "$K_TRANSPORT" in
         reality) printf '{"network": "raw", %s}' "$reality" ;;
         xhttp) printf '{"network": "xhttp", %s, "xhttpSettings": {"mode": "auto", "path": "%s"}, %s}' "$reality" "$K_PATH" "$mux" ;;
@@ -272,59 +325,114 @@ engine_config() {
 conf_ext() { if [[ "$K_ENGINE" == xray || "$K_ENGINE" == xray-direct ]]; then echo json; else echo toml; fi; }
 
 # ---- Bagher: the seller's server logs in to this sshd ----
-# A system user of its own (no password, no shell) whose key may only listen
-# on 127.0.0.1 at the tunnel's port and open nothing else: no command, no
-# shell, no way to this server's other services or network.
+# A system user of its own (no password, no shell). sshd's own rules for it
+# (a Match block) allow nothing but listening (-R): no local forwarding, no
+# Unix sockets, no command, agent, X11 or tunnel. The key line further limits
+# it to 127.0.0.1 at the tunnel's port. The keys file is root's, outside the
+# user's home: the user cannot change it.
 SSH_USER="${HASHEM_CUSTOMER_SSH_USER:-hcust}"
+SSH_HOME="/var/lib/hashem-customer/$SSH_USER"
+KEYS_FILE="${HASHEM_CUSTOMER_AUTH_KEYS:-/etc/ssh/hashem-$SSH_USER.keys}"
+SSHD_DROPIN="${HASHEM_SSHD_DROPIN:-/etc/ssh/sshd_config.d/hashem-customer.conf}"
 
 # bagher_auth_line UNIT: the authorized_keys line (the unit name is its comment).
 bagher_auth_line() {
     printf 'command="/bin/false",restrict,port-forwarding,permitlisten="127.0.0.1:%s",permitopen="127.0.0.1:%s" ssh-ed25519 %s %s\n' "$K_PORT" "$K_PORT" "$K_SSHPUB" "$1"
 }
 
-bagher_auth_file() {
-    local home
-    home=$(getent passwd "$SSH_USER" | cut -d: -f6)
-    [[ -n "$home" ]] || return 1
-    echo "${HASHEM_CUSTOMER_AUTH_KEYS:-$home/.ssh/authorized_keys}"
+# sshd_rules: sshd's Match block for the user.
+sshd_rules() {
+    cat <<EOF
+# Hashem: the seller's servers log in as ${SSH_USER} for Bagher tunnels. Written by hashem-customer.sh.
+Match User ${SSH_USER}
+    AuthorizedKeysFile ${KEYS_FILE}
+    AllowTcpForwarding remote
+    AllowStreamLocalForwarding no
+    AllowAgentForwarding no
+    X11Forwarding no
+    PermitTTY no
+    PermitTunnel no
+    PermitOpen none
+    GatewayPorts no
+    ForceCommand /bin/false
+EOF
+}
+
+sshd_reload() { systemctl try-reload-or-restart ssh.service sshd.service >/dev/null 2>&1 || true; }
+
+# bagher_sshd: the Match block in place, and sshd seen applying it.
+bagher_sshd() {
+    local d cur out
+    d=$(dirname "$SSHD_DROPIN")
+    [[ -d "$d" ]] || die "sshd has no $d (OpenSSH older than 8.2?): a Bagher tunnel needs it. Nothing was changed for sshd."
+    cur=$(cat "$SSHD_DROPIN" 2>/dev/null || true)
+    if [[ "$cur" != "$(sshd_rules)" ]]; then
+        sshd_rules > "$SSHD_DROPIN.new"
+        chmod 644 "$SSHD_DROPIN.new"
+        mv -f "$SSHD_DROPIN.new" "$SSHD_DROPIN"
+        if ! sshd -t >/dev/null 2>&1; then
+            if [[ -n "$cur" ]]; then printf '%s\n' "$cur" > "$SSHD_DROPIN"; else rm -f "$SSHD_DROPIN"; fi
+            die "sshd refuses its config with the Hashem rules (sshd -t): nothing was changed for sshd"
+        fi
+        sshd_reload
+    fi
+    out=$(sshd -T -C "user=$SSH_USER,host=hashem.invalid,addr=192.0.2.1" 2>/dev/null || true)
+    if ! grep -qix "allowtcpforwarding remote" <<< "$out" || ! grep -qix "allowstreamlocalforwarding no" <<< "$out" \
+        || ! grep -qixF "authorizedkeysfile $KEYS_FILE" <<< "$out"; then
+        rm -f "$SSHD_DROPIN"
+        sshd_reload
+        die "sshd does not apply ${SSHD_DROPIN} (its /etc/ssh/sshd_config needs 'Include ${d}/*.conf' near the top, before any Match): nothing was changed for sshd"
+    fi
 }
 
 # bagher_user: the user, made once; '*' (no password) rather than a locked
-# account, which sshd refuses even for keys when PAM is off.
+# account, which sshd refuses even for keys when PAM is off. A user of that
+# name that this script did not make is left alone.
 bagher_user() {
-    if ! getent passwd "$SSH_USER" >/dev/null 2>&1; then
-        local nologin
+    local ent nologin
+    ent=$(getent passwd "$SSH_USER" || true)
+    if [[ -z "$ent" ]]; then
         nologin=$(command -v nologin || echo /usr/sbin/nologin)
-        useradd --system --create-home --home-dir "/var/lib/hashem-customer/$SSH_USER" --shell "$nologin" "$SSH_USER" \
+        mkdir -p "$(dirname "$SSH_HOME")"
+        useradd --system --create-home --home-dir "$SSH_HOME" --shell "$nologin" "$SSH_USER" \
             || die "cannot create the user $SSH_USER"
+        usermod -p '*' "$SSH_USER" >/dev/null 2>&1 || true
+    else
+        local home shell
+        home=$(cut -d: -f6 <<< "$ent")
+        shell=$(cut -d: -f7 <<< "$ent")
+        [[ "$home" == "$SSH_HOME" && "$shell" =~ (nologin|/false)$ ]] \
+            || die "this server already has a user $SSH_USER that is not the tunnels' (home $home, shell $shell): nothing was changed"
     fi
-    usermod -p '*' "$SSH_USER" >/dev/null 2>&1 || true
-    if command -v sshd >/dev/null 2>&1 && sshd -T 2>/dev/null | grep -qiE '^(allowusers|allowgroups) '; then
+    if sshd -T 2>/dev/null | grep -qiE '^(allowusers|allowgroups) '; then
         echo "[!] sshd has AllowUsers/AllowGroups: add $SSH_USER there, or the seller's server cannot log in." >&2
     fi
 }
 
-# bagher_authorize UNIT: its line in the user's authorized_keys (replacing an older one).
+# bagher_authorize UNIT: its line in the keys file (replacing an older one).
 bagher_authorize() {
-    local f dir
-    f=$(bagher_auth_file) || die "no home for $SSH_USER"
-    dir=$(dirname "$f")
-    mkdir -p "$dir"
-    touch "$f"
+    touch "$KEYS_FILE"
     bagher_unauthorize "$1"
-    bagher_auth_line "$1" >> "$f"
-    chmod 700 "$dir"; chmod 600 "$f"
-    chown -R "$SSH_USER:" "$dir" 2>/dev/null || true
+    bagher_auth_line "$1" >> "$KEYS_FILE"
+    chmod 644 "$KEYS_FILE"
 }
 
 # bagher_unauthorize UNIT: its line goes.
 bagher_unauthorize() {
-    local f
-    f=$(bagher_auth_file 2>/dev/null) || return 0
-    [[ -f "$f" ]] || return 0
-    awk -v u="$1" '$NF != u' "$f" > "$f.new"  # the line whose comment is exactly UNIT
-    cat "$f.new" > "$f"
-    rm -f "$f.new"
+    local tmp
+    [[ -f "$KEYS_FILE" ]] || return 0
+    tmp=$(mktemp "$KEYS_FILE.XXXXXX")
+    awk -v u="$1" '$NF != u' "$KEYS_FILE" > "$tmp"  # the line whose comment is exactly UNIT
+    cat "$tmp" > "$KEYS_FILE"
+    rm -f "$tmp"
+}
+
+# bagher_port_free: nothing but sshd (an earlier session of this tunnel)
+# listens on the tunnel's port here: the key may open that port, so it must
+# not be another service's.
+bagher_port_free() {
+    command -v ss >/dev/null 2>&1 || return 0
+    ! ss -Hltnp "sport = :$K_PORT" 2>/dev/null | grep -v 'users:(("sshd' | grep -q .
 }
 
 # reply_code UNIT: what the seller pastes back: sshd's port, the user and
@@ -332,7 +440,7 @@ bagher_unauthorize() {
 reply_code() {
     local port body f
     port=${HASHEM_SSH_PORT:-}
-    [[ -n "$port" ]] || port=$(sshd -T 2>/dev/null | awk '$1 == "port" { print $2; exit }')
+    [[ -n "$port" ]] || port=$(sshd -T 2>/dev/null | awk '$1 == "port" { print $2; exit }' || true)
     valid_port "${port:-}" || port=22
     body=$(printf 'v=1\nname=%s\nport=%s\nuser=%s\n' "$K_NAME" "$port" "$SSH_USER")
     for f in "${HASHEM_SSH_DIR:-/etc/ssh}"/ssh_host_*_key.pub; do
@@ -606,11 +714,18 @@ cmd_install() {
     if [[ "$K_ENGINE" == bagher ]] && ! command -v sshd >/dev/null 2>&1 && [[ ! -x /usr/sbin/sshd ]]; then
         die "a Bagher tunnel needs sshd (apt-get install -y openssh-server): nothing was changed"
     fi
+    if [[ "$K_ENGINE" == bagher ]] && ! bagher_port_free; then
+        die "port ${K_PORT} is already in use on this server: ask the seller for another control port. Nothing was changed."
+    fi
     if [[ "$K_ENGINE" == backhaul ]] && ! guard_supported; then
         die "this server cannot fence a Backhaul tunnel (it needs iptables with the cgroup match and cgroup v2): nothing was changed. Ask the seller for an FRP or Xray link instead."
     fi
     [[ -f "$0" ]] || die "run the downloaded file (bash hashem-customer.sh ...), not a pipe"
     confirm
+    if [[ "$K_ENGINE" == bagher ]]; then
+        bagher_user
+        bagher_sshd
+    fi
     conf="$CONF_DIR/${unit}.$(conf_ext)"
     install_engine
     install -m 0755 "$0" "$BIN_DIR/hashem-customer.sh.new" && mv -f "$BIN_DIR/hashem-customer.sh.new" "$BIN_DIR/hashem-customer.sh"
@@ -637,7 +752,6 @@ cmd_install() {
     (umask 077 && engine_config > "$conf.new" && id_file > "$CONF_DIR/${unit}.id")
     mv -f "$conf.new" "$conf"
     if [[ "$K_ENGINE" == bagher ]]; then
-        bagher_user
         bagher_authorize "$unit"
     else
         bagher_unauthorize "$unit"  # the same link, moved off Bagher
@@ -755,6 +869,7 @@ case "${1:-}" in
     unguard) [[ $# -eq 2 ]] || die "usage: $0 unguard UNIT"; need_root unguard; cmd_unguard "$2" ;;
     idfile) [[ $# -eq 2 ]] || die "usage: $0 idfile hsk1.XXXX"; kit_decode "$2"; id_file ;;
     reply) [[ $# -eq 2 ]] || die "usage: $0 reply hsk1.XXXX"; kit_decode "$2"; [[ "$K_ENGINE" == bagher ]] || die "only a Bagher kit has a reply code"; reply_code ;;
+    sshdrules) sshd_rules ;;
     authline) [[ $# -eq 2 ]] || die "usage: $0 authline hsk1.XXXX"; kit_decode "$2"; [[ "$K_ENGINE" == bagher ]] || die "not a Bagher kit"; bagher_auth_line "$(unit_name)" ;;
     *) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
