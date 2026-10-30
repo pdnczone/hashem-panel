@@ -794,7 +794,6 @@ func main() {
 	go startClusterMonitor()
 	go startMeshLoop()
 	go startLimitsLoop()
-	go startCustomersLoop()
 	go func() {
 		cc := loadCarrierConfig()
 		if strings.HasPrefix(cc.ActiveCarrier, "wss") {
@@ -814,6 +813,8 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	// after the busy-port switch: the sold relays' plugin calls go to cfg.Port
+	go startCustomersLoop()
 	srv := &http.Server{
 		Handler:           panelChain(mux),
 		ReadHeaderTimeout: 10 * time.Second,

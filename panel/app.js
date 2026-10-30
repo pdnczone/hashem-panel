@@ -339,7 +339,7 @@ function goTab(name) {
   // Bagher lives in Setup (create) and Tunnel (run) like every other tunnel.
   if (name === 'sshfwd' || name === 'bagher') { openBagherSetup(); return; }
   // Hashem Pro tabs: the license window instead of the tab
-  const proTab = { doctor: 'diagnostics', perf: 'performance', watchdog: 'watchdog', benchmark: 'benchmark', spoof: 'spoof', xray: 'xray', customers: 'customers' }[name];
+  const proTab = { doctor: 'diagnostics', perf: 'performance', watchdog: 'watchdog', benchmark: 'benchmark', spoof: 'spoof', xray: 'xray' }[name];
   if (proTab && !isProLicensed(proTab)) {
     if (_licenseData === null) {
       loadLicense().then(() => { if (isProLicensed(proTab)) goTab(name); else openBagherLicModal(proTab); });
@@ -11365,16 +11365,16 @@ const custNum = id => { const v = parseFloat(($(id) || {}).value); return isFini
 function custChips(forId, vals) {
   return `<div class="lm-chips" data-for="${forId}">${vals.map(([v, l]) => `<button type="button" onclick="$('${forId}').value='${v}'">${esc(l)}</button>`).join('')}</div>`;
 }
-const custPlanFields = (c) => `<div class="xr-fields">
-    <div class="xr-field"><label class="qs-label" for="cfDays">${esc(tr('', 'Days'))}</label>
-      <input class="hashem-input" id="cfDays" type="number" min="0" max="3660" step="1" inputmode="numeric" value="${c.days ?? 30}">
-      ${custChips('cfDays', [['30', '30'], ['60', '60'], ['90', '90'], ['0', tr('', 'No end')]])}</div>
-    <div class="xr-field"><label class="qs-label" for="cfQuota">${esc(tr('', 'Volume (GB)'))}</label>
-      <input class="hashem-input" id="cfQuota" type="number" min="0" step="any" inputmode="decimal" placeholder="${esc(tr('', 'Unlimited'))}" value="${c.quota_gb > 0 ? c.quota_gb : ''}">
-      ${custChips('cfQuota', [['50', '50'], ['100', '100'], ['200', '200'], ['', tr('', 'Unlimited')]])}</div>
-    <div class="xr-field"><label class="qs-label" for="cfRate">${esc(tr('', 'Speed (Mbit/s)'))}</label>
-      <input class="hashem-input" id="cfRate" type="number" min="0" step="any" inputmode="decimal" placeholder="${esc(tr('', 'Unlimited'))}" value="${c.rate_mbit > 0 ? c.rate_mbit : ''}">
-      ${custChips('cfRate', [['20', '20'], ['50', '50'], ['100', '100'], ['', tr('', 'Unlimited')]])}</div>
+const custPlanFields = (c, p) => `<div class="xr-fields">
+    <div class="xr-field"><label class="qs-label" for="${p}Days">${esc(tr('', 'Days'))}</label>
+      <input class="hashem-input" id="${p}Days" type="number" min="0" max="3660" step="1" inputmode="numeric" value="${c.days ?? 30}">
+      ${custChips(p + 'Days', [['30', '30'], ['60', '60'], ['90', '90'], ['0', tr('', 'No end')]])}</div>
+    <div class="xr-field"><label class="qs-label" for="${p}Quota">${esc(tr('', 'Volume (GB)'))}</label>
+      <input class="hashem-input" id="${p}Quota" type="number" min="0" step="any" inputmode="decimal" placeholder="${esc(tr('', 'Unlimited'))}" value="${c.quota_gb > 0 ? c.quota_gb : ''}">
+      ${custChips(p + 'Quota', [['50', '50'], ['100', '100'], ['200', '200'], ['', tr('', 'Unlimited')]])}</div>
+    <div class="xr-field"><label class="qs-label" for="${p}Rate">${esc(tr('', 'Speed (Mbit/s)'))}</label>
+      <input class="hashem-input" id="${p}Rate" type="number" min="0" step="any" inputmode="decimal" placeholder="${esc(tr('', 'Unlimited'))}" value="${c.rate_mbit > 0 ? c.rate_mbit : ''}">
+      ${custChips(p + 'Rate', [['20', '20'], ['50', '50'], ['100', '100'], ['', tr('', 'Unlimited')]])}</div>
   </div>
   <div class="qs-hint">${esc(tr('', 'One plan for all of the customer\'s foreign servers: the volume is their sum, the speed is shared. Only users\' traffic is counted.'))}</div>`;
 
@@ -11438,7 +11438,7 @@ function custLinkFields(p, l) {
   const tsel = ['tcp', 'websocket', 'kcp', 'quic'].map(t => `<option value="${t}"${l.transport === t ? ' selected' : ''}>${t.toUpperCase()}</option>`).join('');
   return `<div class="xr-fields">
       <div class="xr-field"><label class="qs-label" for="${p}Name">${esc(tr('', 'Foreign server name'))}</label><input class="hashem-input" id="${p}Name" maxlength="40" placeholder="${esc(tr('', 'e.g. Frankfurt'))}" value="${esc(l.name || '')}"></div>
-      <div class="xr-field"><label class="qs-label" for="${p}Ports">${esc(tr('', 'Users\' ports'))}</label><input class="hashem-input lm-num" id="${p}Ports" placeholder="443, 2083" value="${esc((l.ports || []).join(', '))}"></div>
+      <div class="xr-field"><label class="qs-label" for="${p}Ports">${esc(tr('', 'Users\' ports'))}</label><input class="hashem-input lm-num" id="${p}Ports" placeholder="443, 2083" value="${esc(Array.isArray(l.ports) ? l.ports.join(', ') : (l.ports || ''))}"></div>
     </div>
     <div class="xr-fields">
       <div class="xr-field"><label class="qs-label" for="${p}Tr">${esc(tr('', 'Transport'))}</label><select class="hashem-input" id="${p}Tr">${tsel}</select></div>
@@ -11519,7 +11519,7 @@ function custWizStep1() {
       <div class="xr-field"><label class="qs-label" for="cwName">${esc(tr('', 'Customer name'))}</label><input class="hashem-input" id="cwName" maxlength="60" placeholder="${esc(tr('', 'e.g. Ali (shop)'))}" value="${esc(w.name)}"></div>
       <div class="xr-field"><label class="qs-label" for="cwNote">${esc(tr('', 'Note (only you see it)'))}</label><input class="hashem-input" id="cwNote" maxlength="500" placeholder="${esc(tr('', 'e.g. paid by card, Telegram @ali'))}" value="${esc(w.note)}"></div>
     </div>
-    ${custPlanFields(w)}
+    ${custPlanFields(w, 'cw')}
     <details class="xr-adv"><summary>${esc(tr('', 'Address in the kit'))}</summary><div class="xr-field cs-adv">
       <input class="hashem-input lm-num" id="cwAddr" maxlength="253" placeholder="${esc((_cust && _cust.address) || '')}" value="${esc(w.address)}">
       <div class="qs-hint">${esc(tr('', 'What the foreign servers dial: this server\'s public IP by default, or a domain that points to it.'))}</div></div></details>
@@ -11553,9 +11553,9 @@ function custWizRead() {
   const w = _custWiz;
   if (w.step === 1) {
     w.name = $('cwName').value.trim(); w.note = $('cwNote').value.trim(); w.address = $('cwAddr').value.trim();
-    const d = parseInt($('cfDays').value, 10);
-    w.days = isFinite(d) && d > 0 ? d : 0;
-    w.quota_gb = custNum('cfQuota'); w.rate_mbit = custNum('cfRate');
+    const d = parseInt($('cwDays').value, 10);
+    w.days = isFinite(d) ? d : 0;
+    w.quota_gb = custNum('cwQuota'); w.rate_mbit = custNum('cwRate');
   }
   if (w.step === 2) w.links = w.links.map((_, i) => custLinkRead('cw' + i));
 }
@@ -11563,7 +11563,7 @@ function custWizProblem() {
   const w = _custWiz;
   if (w.step === 1) {
     if (!w.name) return tr('', 'Enter the customer\'s name.');
-    if (w.days > 3660) return tr('', 'Days: 1 to 3660');
+    if (w.days < 0 || w.days > 3660) return tr('', 'Days: 1 to 3660');
   }
   if (w.step === 2) {
     const seen = {};

@@ -120,7 +120,7 @@ func TestCustomersLab(t *testing.T) {
 		}
 		pmMu.Unlock()
 		custDropChain()
-		custTCClear(custIfaces(), custApplied.police)
+		custTCClear(custIfcNames(custIfaces()), custApplied.police)
 		configDir, engineUnitDir, custBinDir, custFrpsSrc, runner, runSystemctl, cfg.Port = oldDir, oldUnit, oldBin, oldSrc, oldRunner, oldSys, oldPort
 		resetCustState()
 	})
@@ -326,7 +326,7 @@ func TestCustomersLab(t *testing.T) {
 
 func labTCFilters() int {
 	n := 0
-	for _, ifn := range custIfaces() {
+	for _, ifn := range custIfcNames(custIfaces()) {
 		if c := tcFiltersPresent(ifn, custTCPref, custTCPref6); c > 0 {
 			n += c
 		}
