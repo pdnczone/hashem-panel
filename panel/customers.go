@@ -281,9 +281,13 @@ type customer struct {
 	UsedTx      uint64 `json:"used_tx"`
 	PeriodStart int64  `json:"period_start"`
 	// Cut: "" (running) | "expired" | "quota" | "manual".
-	Cut    string         `json:"cut,omitempty"`
-	Warned bool           `json:"warned,omitempty"` // the 90% alert went out this period
-	Links  []customerLink `json:"links"`
+	Cut    string `json:"cut,omitempty"`
+	Warned bool   `json:"warned,omitempty"` // the 90% alert went out this period
+	// Reminded: the last "days left" reminder sent this period (days; 0 none)
+	Reminded int            `json:"reminded,omitempty"`
+	Links    []customerLink `json:"links"`
+	History  []custHist     `json:"history,omitempty"` // the last custHistMax events
+	Periods  []custPeriod   `json:"periods,omitempty"` // usage periods that ended
 }
 
 func (c customer) used() uint64 { return c.UsedRx + c.UsedTx }
@@ -305,7 +309,8 @@ type customersFile struct {
 	// Counters are the chain's byte counters (by comment) at the last tick,
 	// saved with the usage they were added to: after a panel restart the
 	// bytes counted while it was down are billed, none twice.
-	Counters map[string]uint64 `json:"counters,omitempty"`
+	Counters  map[string]uint64 `json:"counters,omitempty"`
+	Templates []custTemplate    `json:"templates,omitempty"` // saved plans
 }
 
 var custs = struct {
@@ -1248,16 +1253,27 @@ func customersTick(now time.Time) {
 		}
 		if c.Cut == "" && c.ExpiresAt > 0 && now.Unix() >= c.ExpiresAt {
 			c.Cut, custs.dirty = "expired", true
+			c.logEvent(now, "cut", "cut: the plan ended")
 			events = append(events, custEvent{c.ID, c.Name, "plan ended " + time.Unix(c.ExpiresAt, 0).Format("2006-01-02 15:04"), "cut"})
 		}
 		if q := c.quotaBytes(); q > 0 && c.Cut == "" {
 			if c.used() >= q {
 				c.Cut, custs.dirty = "quota", true
+				c.logEvent(now, "cut", "cut: the volume is used up ("+fmtBytesDec(c.used())+")")
 				events = append(events, custEvent{c.ID, c.Name, fmt.Sprintf("volume used up: %s of %s", fmtBytesDec(c.used()), fmtBytesDec(q)), "cut"})
 			} else if !c.Warned && c.used() >= q/10*9 {
 				c.Warned, custs.dirty = true, true
+				c.logEvent(now, "reminder", "90% of the volume used")
 				events = append(events, custEvent{c.ID, c.Name, fmt.Sprintf("%s of %s", fmtBytesDec(c.used()), fmtBytesDec(q)), "90% used"})
 			}
+		}
+	}
+	for i := range custs.f.Customers {
+		c := &custs.f.Customers[i]
+		if d := c.custRemind(now); d > 0 {
+			custs.dirty = true
+			c.logEvent(now, "reminder", fmt.Sprintf("%d day(s) left of the plan", d))
+			events = append(events, custEvent{c.ID, c.Name, fmt.Sprintf("the plan ends %s (%d day(s) left)", time.Unix(c.ExpiresAt, 0).Format("2006-01-02 15:04"), d), "days left"})
 		}
 	}
 	list := cloneCustomersFile(custs.f).Customers
@@ -2123,7 +2139,11 @@ func customersView() map[string]any {
 	now := time.Now()
 	custs.Lock()
 	custLoadLocked()
-	list := cloneCustomersFile(custs.f).Customers
+	f := cloneCustomersFile(custs.f)
+	list, templates := f.Customers, f.Templates
+	if templates == nil {
+		templates = []custTemplate{}
+	}
 	speed := map[int][2]float64{}
 	for k, v := range custs.speed {
 		speed[k] = v
@@ -2176,7 +2196,7 @@ func customersView() map[string]any {
 	return map[string]any{
 		"customers": views, "licensed": hasPro(proCustomers), "error": errText,
 		"address": custDefaultAddress(), "frps_ok": engines[custEngineFRP], "engines": engines,
-		"transports": custTransports,
+		"transports": custTransports, "templates": templates,
 	}
 }
 
@@ -2199,8 +2219,13 @@ type custRequest struct {
 	ResetUsage *bool           `json:"reset_usage"`
 	Links      []custLinkInput `json:"links"`
 	Link       *custLinkInput  `json:"link"`
-	Reply      string          `json:"reply"` // link-reply: the customer's reply code
+	Reply      string          `json:"reply"`       // link-reply: the customer's reply code
+	IDs        []int           `json:"ids"`         // bulk-renew
+	TemplateID int             `json:"template_id"` // template-save (0: new), template-remove
 }
+
+// custNoCustomer are the actions that name no customer.
+var custNoCustomer = map[string]bool{"create": true, "template-save": true, "template-remove": true, "bulk-renew": true}
 
 // custFreeActions work without a license: they only take service away.
 var custFreeActions = map[string]bool{"cut": true, "remove": true, "link-remove": true}
@@ -2258,7 +2283,7 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 		}
 		return nil
 	}
-	if req.Action != "create" {
+	if !custNoCustomer[req.Action] {
 		if err := find(); err != nil {
 			return "E-CUST-04", err, nil, 0
 		}
@@ -2278,7 +2303,7 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 	custs.Lock()
 	defer custs.Unlock()
 	snapshot := cloneCustomersFile(custs.f)
-	if req.Action != "create" {
+	if !custNoCustomer[req.Action] {
 		c = custFindLocked(req.ID)
 		if c == nil {
 			return "E-CUST-04", fmt.Errorf("no customer %d", req.ID), nil, 0
@@ -2334,6 +2359,7 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 		if err := custGREAlloc(custs.f.Customers, nc.ID, nc.Links); err != nil {
 			return fail("E-CUST-03", err)
 		}
+		nc.logEvent(now, "created", custPlanText(nc.Days, nc.QuotaGB, nc.RateMbit)+fmt.Sprintf(", %d foreign server(s)", len(nc.Links)))
 		custs.f.Customers = append(custs.f.Customers, nc)
 		created = nc.ID
 
@@ -2353,6 +2379,9 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 		if err := custValidatePlan(req.QuotaGB, req.RateMbit, 0); err != nil {
 			return fail("E-CUST-02", err)
 		}
+		if c.QuotaGB != req.QuotaGB || c.RateMbit != req.RateMbit {
+			c.logEvent(now, "plan", "plan changed: "+custPlanText(c.Days, req.QuotaGB, req.RateMbit))
+		}
 		c.Name, c.Note, c.Address, c.QuotaGB, c.RateMbit = name, note, a, req.QuotaGB, req.RateMbit
 		// a higher volume (or none) reconnects a customer cut for volume
 		if q := c.quotaBytes(); c.Cut == "quota" && (q == 0 || c.used() < q) {
@@ -2363,27 +2392,29 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 		}
 
 	case "renew":
-		days := req.Days
-		if days == 0 {
-			days = c.Days
+		if err := custRenewLocked(c, req.Days, req.ResetUsage == nil || *req.ResetUsage, now); err != nil {
+			return fail("E-CUST-02", err)
 		}
-		if days < 1 || days > 3660 {
-			return fail("E-CUST-02", fmt.Errorf("days: 1 to 3660"))
+
+	case "bulk-renew":
+		if err := custBulkRenewLocked(req.IDs, req.Days, req.ResetUsage == nil || *req.ResetUsage, now); err != nil {
+			return fail("E-CUST-02", err)
 		}
-		from := now
-		if c.ExpiresAt > now.Unix() {
-			from = time.Unix(c.ExpiresAt, 0)
+
+	case "template-save":
+		if _, err := custTemplateSaveLocked(req); err != nil {
+			return fail("E-CUST-02", err)
 		}
-		c.ExpiresAt = from.Add(time.Duration(days) * 24 * time.Hour).Unix()
-		c.Days = days
-		if req.ResetUsage == nil || *req.ResetUsage {
-			c.UsedRx, c.UsedTx, c.Warned, c.PeriodStart = 0, 0, false, now.Unix()
-		}
-		if c.Cut == "expired" || (c.Cut == "quota" && (c.quotaBytes() == 0 || c.used() < c.quotaBytes())) {
-			c.Cut = ""
+
+	case "template-remove":
+		if err := custTemplateRemoveLocked(req.TemplateID); err != nil {
+			return fail("E-CUST-04", err)
 		}
 
 	case "cut":
+		if c.Cut == "" {
+			c.logEvent(now, "cut", "cut by hand")
+		}
 		c.Cut = "manual"
 
 	case "resume":
@@ -2393,9 +2424,14 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 		case c.quotaBytes() > 0 && c.used() >= c.quotaBytes():
 			return fail("E-CUST-05", fmt.Errorf("the volume is used up: reset the usage, raise the volume or renew"))
 		}
+		if c.Cut != "" {
+			c.logEvent(now, "resume", "resumed by hand")
+		}
 		c.Cut = ""
 
 	case "reset":
+		c.endPeriod(now)
+		c.logEvent(now, "reset", "usage reset ("+fmtBytesDec(c.used())+" used)")
 		c.UsedRx, c.UsedTx, c.Warned, c.PeriodStart = 0, 0, false, now.Unix()
 		if c.Cut == "quota" {
 			c.Cut = ""
@@ -2434,6 +2470,7 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 			return fail("E-CUST-03", err)
 		}
 		c.Links = append(c.Links, one[0])
+		c.logEvent(now, "link", fmt.Sprintf("foreign server %d added (%s)", one[0].ID, custLinkText(one[0])))
 
 	case "link-update":
 		if req.Link == nil {
@@ -2452,6 +2489,7 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 			return fail("E-CUST-03", err)
 		}
 		*old = one[0]
+		c.logEvent(now, "link", fmt.Sprintf("foreign server %d changed (%s)", old.ID, custLinkText(*old)))
 
 	case "link-reply":
 		l := c.link(req.LinkID)
@@ -2482,6 +2520,7 @@ func customersApply(req custRequest, now time.Time) (code string, err error, rem
 		}
 		removed = append(removed, [2]int{c.ID, req.LinkID})
 		c.Links = append(c.Links[:idx], c.Links[idx+1:]...)
+		c.logEvent(now, "link", fmt.Sprintf("foreign server %d removed", req.LinkID))
 
 	default:
 		return fail("E-CUST-01", fmt.Errorf("unknown action %q", req.Action))
@@ -2504,12 +2543,15 @@ func custValidAddress(a string) bool {
 var custAPIMu sync.Mutex
 
 func cloneCustomersFile(f customersFile) customersFile {
-	out := customersFile{NextID: f.NextID, Customers: make([]customer, len(f.Customers)), Counters: map[string]uint64{}}
+	out := customersFile{NextID: f.NextID, Customers: make([]customer, len(f.Customers)), Counters: map[string]uint64{},
+		Templates: append([]custTemplate(nil), f.Templates...)}
 	for k, v := range f.Counters {
 		out.Counters[k] = v
 	}
 	for i, c := range f.Customers {
 		out.Customers[i] = c
+		out.Customers[i].History = append([]custHist(nil), c.History...)
+		out.Customers[i].Periods = append([]custPeriod(nil), c.Periods...)
 		out.Customers[i].Links = make([]customerLink, len(c.Links))
 		for j, l := range c.Links {
 			out.Customers[i].Links[j] = l

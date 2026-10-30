@@ -11314,6 +11314,7 @@ function custRow(c) {
     `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="copyTextSafe(${jsArg(custStatusURL(c))}, ${jsArg(tr('', 'Status page link copied'))}, ${jsArg(c.name)})">${esc(tr('', 'Status page'))}</button>`,
     `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openCustLink(${c.id}, 0)">${esc(tr('', 'Add foreign server'))}</button>`,
     `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openCustEdit(${c.id})">${esc(tr('', 'Edit plan'))}</button>`,
+    `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openCustHistory(${c.id})">${esc(tr('', 'History'))}</button>`,
     `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30 u-c-er" onclick="custAction('remove', ${c.id})">${esc(tr('', 'Remove'))}</button>`,
   ].filter(Boolean);
   return `<div class="lm-row cs-row${c.cut ? ' cut' : cls === 'warn' || (q && pct >= 90) || (dl != null && dl <= 3) ? ' warn' : ''}" id="cust-${c.id}">
@@ -11387,7 +11388,28 @@ const custNum = id => { const v = parseFloat(($(id) || {}).value); return isFini
 function custChips(forId, vals) {
   return `<div class="lm-chips" data-for="${forId}">${vals.map(([v, l]) => `<button type="button" onclick="$('${forId}').value='${v}'">${esc(l)}</button>`).join('')}</div>`;
 }
-const custPlanFields = (c, p) => `<div class="xr-fields">
+// custTplPicker: a select that fills the plan fields of prefix p from a
+// saved plan (none when there are no templates).
+function custTplPicker(p, daysOnly) {
+  const t = (_cust && _cust.templates) || [];
+  if (!t.length) return '';
+  return `<div class="xr-field"><label class="qs-label" for="${p}Tpl">${esc(tr('', 'Plan template'))}</label>
+    <select class="hashem-input" id="${p}Tpl" onchange="custTplApply('${p}', this.value, ${daysOnly ? 'true' : 'false'})"><option value="">—</option>
+    ${t.map(x => `<option value="${x.id}">${esc(x.name)} · ${esc(custPlanShort(x))}</option>`).join('')}</select></div>`;
+}
+function custPlanShort(x) {
+  return (x.days > 0 ? x.days + ' ' + tr('', 'days') : tr('', 'No end')) + ' · ' + (x.quota_gb > 0 ? x.quota_gb + ' GB' : tr('', 'Unlimited')) +
+    ' · ' + (x.rate_mbit > 0 ? x.rate_mbit + ' Mbit/s' : tr('', 'Unlimited'));
+}
+function custTplApply(p, id, daysOnly) {
+  const x = ((_cust && _cust.templates) || []).find(t => String(t.id) === String(id));
+  if (!x) return;
+  if ($(p + 'Days')) $(p + 'Days').value = x.days;
+  if (daysOnly) return;
+  if ($(p + 'Quota')) $(p + 'Quota').value = x.quota_gb > 0 ? x.quota_gb : '';
+  if ($(p + 'Rate')) $(p + 'Rate').value = x.rate_mbit > 0 ? x.rate_mbit : '';
+}
+const custPlanFields = (c, p) => `${custTplPicker(p, false)}<div class="xr-fields">
     <div class="xr-field"><label class="qs-label" for="${p}Days">${esc(tr('', 'Days'))}</label>
       <input class="hashem-input" id="${p}Days" type="number" min="0" max="3660" step="1" inputmode="numeric" value="${c.days ?? 30}">
       ${custChips(p + 'Days', [['30', '30'], ['60', '60'], ['90', '90'], ['0', tr('', 'No end')]])}</div>
@@ -11425,7 +11447,7 @@ function openCustRenew(id) {
   const c = custFind(id);
   if (!c) return;
   const from = c.expires_at > Date.now() / 1000 ? tr('', 'The new days are added after the current end date.') : tr('', 'The plan starts again from today.');
-  const html = `<div class="xr-field"><label class="qs-label" for="cfDays">${esc(tr('', 'Days'))}</label>
+  const html = `${custTplPicker('cf', true)}<div class="xr-field"><label class="qs-label" for="cfDays">${esc(tr('', 'Days'))}</label>
       <input class="hashem-input" id="cfDays" type="number" min="1" max="3660" step="1" inputmode="numeric" value="${c.days || 30}">
       ${custChips('cfDays', [['30', '30'], ['60', '60'], ['90', '90'], ['365', '365']])}</div>
     <label class="xr-check"><input type="checkbox" id="cfReset" checked> ${esc(tr('', 'Start a new period: used volume back to 0'))}</label>
@@ -11437,6 +11459,67 @@ function openCustRenew(id) {
     toastOk(tr('', 'Renewed'), c.name);
   });
 }
+// the customer's history (newest first) and the periods that ended
+const CUST_HIST_KIND = { created: 'Created', plan: 'Plan', renew: 'Renewed', cut: 'Cut', resume: 'Resumed', reset: 'Usage reset', reminder: 'Reminder', link: 'Foreign server' };
+function openCustHistory(id) {
+  const c = custFind(id);
+  if (!c) return;
+  const h = (c.history || []).slice().reverse();
+  const rows = h.length ? h.map(e => `<tr><td class="lm-num">${esc(custDate(e.at))}</td><td>${esc(tr('', CUST_HIST_KIND[e.kind] || e.kind))}</td><td>${esc(e.text)}</td></tr>`).join('')
+    : `<tr><td colspan="3">${esc(tr('', 'Nothing yet'))}</td></tr>`;
+  const per = (c.periods || []).slice().reverse();
+  const ptab = per.length ? `<h4 class="u-mt-16">${esc(tr('', 'Ended periods'))}</h4><div class="table-scroll"><table class="data-table"><thead><tr><th>${esc(tr('', 'From'))}</th><th>${esc(tr('', 'To'))}</th><th>${esc(tr('', 'Used'))}</th></tr></thead><tbody>` +
+    per.map(x => `<tr><td class="lm-num">${esc(custDate(x.start))}</td><td class="lm-num">${esc(custDate(x.end))}</td><td class="lm-num">${esc(fmtGB(x.used) + (x.quota_gb > 0 ? ' / ' + fmtGB(x.quota_gb * 1e9) : ''))}</td></tr>`).join('') + '</tbody></table></div>' : '';
+  custModal(tr('', 'History') + ' — ' + c.name, `<div class="table-scroll"><table class="data-table"><thead><tr><th>${esc(tr('', 'When'))}</th><th>${esc(tr('', 'What'))}</th><th>${esc(tr('', 'Details'))}</th></tr></thead><tbody>${rows}</tbody></table></div>${ptab}
+    <div class="qs-hint">${esc(tr('', 'The last 100 events and 24 periods are kept.'))}</div>`, '', null);
+}
+// saved plans: the list (remove) and a form for a new one
+function openCustTemplates() {
+  if (!isProLicensed('customers')) { openBagherLicModal('customers'); return; }
+  const t = (_cust && _cust.templates) || [];
+  const list = t.length ? '<div class="lm-list">' + t.map(x => `<div class="cs-tpl"><b>${esc(x.name)}</b> <span class="lm-num">${esc(custPlanShort(x))}</span>
+      <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30 u-c-er" onclick="custTplRemove(${x.id})">${esc(tr('', 'Remove'))}</button></div>`).join('') + '</div>'
+    : `<div class="qs-hint">${esc(tr('', 'No templates yet: save the plans you sell often.'))}</div>`;
+  const html = list + `<h4 class="u-mt-16">${esc(tr('', 'New template'))}</h4>
+    <div class="xr-field"><label class="qs-label" for="ctName">${esc(tr('', 'Name'))}</label><input class="hashem-input" id="ctName" maxlength="40" placeholder="${esc(tr('', 'e.g. Gold, 30 days'))}"></div>` +
+    custPlanFields({ days: 30 }, 'ct').replace(custTplPicker('ct', false), '');
+  custModal(tr('', 'Plan templates'), html, tr('', 'Save template'), async () => {
+    const days = parseInt($('ctDays').value, 10);
+    if (!(days >= 1 && days <= 3660)) throw new Error(tr('', 'Days: 1 to 3660'));
+    renderCustomers(await api('/api/customers', { action: 'template-save', name: $('ctName').value.trim(), days, quota_gb: custNum('ctQuota'), rate_mbit: custNum('ctRate') }));
+    toastOk(tr('', 'Template saved'), $('ctName').value.trim());
+    setTimeout(openCustTemplates, 50);
+  });
+}
+async function custTplRemove(id) {
+  try {
+    renderCustomers(await api('/api/customers', { action: 'template-remove', template_id: id }));
+    openCustTemplates();
+  } catch (e) { toastErr(e.message); }
+}
+// renew several customers at once (all or none)
+function openCustBulkRenew() {
+  if (!isProLicensed('customers')) { openBagherLicModal('customers'); return; }
+  const list = (_cust && _cust.customers) || [];
+  if (!list.length) return;
+  const rows = list.map(c => `<label class="xr-check"><input type="checkbox" class="cb-bulk" value="${c.id}"${c.cut === 'expired' || (c.days_left != null && c.days_left <= 7) ? ' checked' : ''}>
+      ${esc(c.name)} <small class="lm-num">${esc(c.days_left == null ? tr('', 'No end date') : tr('', 'Days left') + ': ' + c.days_left)}${c.cut ? ' · ' + esc(tr('', 'cut')) : ''}</small></label>`).join('');
+  const html = `<div class="qs-hint">${esc(tr('', 'Customers ending within 7 days or ended are ticked.'))}</div><div class="cs-bulk">${rows}</div>
+    ${custTplPicker('cb', true)}<div class="xr-field"><label class="qs-label" for="cbDays">${esc(tr('', 'Days'))}</label>
+      <input class="hashem-input" id="cbDays" type="number" min="1" max="3660" step="1" inputmode="numeric" value="30">
+      ${custChips('cbDays', [['30', '30'], ['60', '60'], ['90', '90'], ['365', '365']])}</div>
+    <label class="xr-check"><input type="checkbox" id="cbReset" checked> ${esc(tr('', 'Start a new period: used volume back to 0'))}</label>`;
+  custModal(tr('', 'Renew several'), html, tr('', 'Renew'), async () => {
+    const ids = [...document.querySelectorAll('.cb-bulk:checked')].map(x => parseInt(x.value, 10));
+    if (!ids.length) throw new Error(tr('', 'Choose at least one customer'));
+    const days = parseInt($('cbDays').value, 10);
+    if (!(days >= 1 && days <= 3660)) throw new Error(tr('', 'Days: 1 to 3660'));
+    renderCustomers(await api('/api/customers', { action: 'bulk-renew', ids, days, reset_usage: $('cbReset').checked }));
+    toastOk(tr('', 'Renewed'), tr('', '{n} customers').replace('{n}', ids.length));
+  });
+}
+function custExport() { location.href = at('/api/customers/export.csv'); }
+
 // a foreign server: lid 0 adds one
 function openCustLink(id, lid) {
   if (!isProLicensed('customers')) { openBagherLicModal('customers'); return; }

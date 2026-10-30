@@ -701,6 +701,7 @@ func main() {
 	mux.HandleFunc("GET "+base+"/api/customers", requireAuth(handleCustomersGet))
 	mux.HandleFunc("POST "+base+"/api/customers", requireAuth(requireCSRF(handleCustomersPost)))
 	mux.HandleFunc("GET "+base+"/api/customers/kit", requireAuth(handleCustomersKit))
+	mux.HandleFunc("GET "+base+"/api/customers/export.csv", requireAuth(handleCustomersExport))
 	// a sold tunnel's status page: no login, the token in the path is the secret
 	mux.HandleFunc("GET /_hs/{token}", handleCustomerStatus)
 	// frps of a sold tunnel asks which proxies to allow (loopback only)
