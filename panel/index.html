@@ -1367,6 +1367,7 @@
       <button role="tab" aria-selected="false" aria-controls="tab-cluster" tabindex="-1" class="nav-item" data-tab="cluster" id="clusterNav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg><span data-i18n="nav_cluster">Cluster</span><span class="nav-lock hidden" id="navClusterPro" role="img" title="Hashem Pro" aria-label="Hashem Pro"><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg></span></button>
       <button role="tab" aria-selected="false" aria-controls="tab-setup" tabindex="-1" class="nav-item" data-tab="setup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg><span data-i18n="nav_setup">Setup</span></button>
       <button role="tab" aria-selected="false" aria-controls="tab-xray" tabindex="-1" class="nav-item" data-tab="xray" id="xrayNav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5l7 7-7 7"/><path d="M20 5l-7 7 7 7"/></svg><span data-i18n="nav_xray">Xray</span><span class="nav-lock hidden" id="navXrayPro" role="img" title="Hashem Pro" aria-label="Hashem Pro"><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg></span></button>
+      <button role="tab" aria-selected="false" aria-controls="tab-customers" tabindex="-1" class="nav-item" data-tab="customers" id="customersNav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8"/><path d="M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/></svg><span data-i18n="nav_customers">Customers</span><span class="nav-lock hidden" id="navCustomersPro" role="img" title="Hashem Pro" aria-label="Hashem Pro"><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg></span></button>
       <button role="tab" aria-selected="false" aria-controls="tab-logs" tabindex="-1" class="nav-item" data-tab="logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span data-i18n="nav_logs">Logs</span></button>
       <div class="nav-sec" role="presentation" data-i18n="sec_system">System</div>
       <button role="tab" aria-selected="false" aria-controls="tab-perf" tabindex="-1" class="nav-item" data-tab="perf" id="perfNav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span data-i18n="nav_perf">Performance</span><span class="nav-lock hidden" id="navPerfPro" role="img" title="Hashem Pro" aria-label="Hashem Pro"><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg></span></button>
@@ -3101,6 +3102,22 @@
           <div id="xrayWizard"></div>
         </div>
       </section>
+      <!-- Customers: tunnels sold to customers (customers.go; loadCustomers in app.js) -->
+      <section id="tab-customers" role="tabpanel" hidden>
+        <div class="tunnel-card u-mb-20">
+          <div class="tc-header u-bb-ln u-pb-16 u-mb-16">
+            <div>
+              <span class="tc-title u-fs-18 u-fw-700">Customers</span> <span class="eng-pro hidden" id="custPro" data-no-i18n>PRO</span>
+              <div class="qs-hint u-mt-4">Sell tunnels: each customer brings foreign servers, you set the plan (days, volume, speed), and their users connect to this server. A tunnel is cut when its plan ends or its volume is used up.</div>
+            </div>
+            <button type="button" class="hashem-btn hashem-btn-primary u-btn-30" onclick="openCustWizard()">New customer</button>
+          </div>
+          <div class="cs-sum" id="custSummary"></div>
+          <div class="xr-err hidden" id="custErr" role="alert"></div>
+          <div id="custWizard"></div>
+          <div id="custList"><div class="ent-skel u-h-14"></div></div>
+        </div>
+      </section>
       <section id="tab-update" role="tabpanel" hidden>
         <div class="tunnel-card">
           <div class="tc-header"><p class="tc-title">Panel Update <span class="badge info hidden" id="updDevBadge" data-i18n="upd_dev_badge">DEV</span></p><span class="status-indicator" id="updDot"><span class="dot"></span><span id="updDotTxt">—</span></span></div>
@@ -3488,6 +3505,13 @@
       <div class="xr-err hidden" id="limitModalErr"></div>
     </div>
     <div class="ent-modal-f"><button class="hashem-btn hashem-btn-ghost" id="limitModalNo">Cancel</button><button class="hashem-btn hashem-btn-primary" id="limitModalYes">Save</button></div>
+  </div>
+</div>
+<div class="ent-modal-ov" id="custModal" hidden>
+  <div class="ent-modal lm-modal cs-modal" role="dialog" aria-modal="true" aria-labelledby="custModalTitle">
+    <div class="ent-modal-h"><b id="custModalTitle" data-no-i18n></b><button class="ent-x" id="custModalX" aria-label="Close" data-i18n-aria="aria_close">×</button></div>
+    <div class="ent-modal-b" id="custModalBody" data-no-i18n></div>
+    <div class="ent-modal-f"><button class="hashem-btn hashem-btn-ghost" id="custModalNo" data-no-i18n>Cancel</button><button class="hashem-btn hashem-btn-primary" id="custModalYes" data-no-i18n>Save</button></div>
   </div>
 </div>
 <div class="ent-modal-ov" id="nameModal" hidden>

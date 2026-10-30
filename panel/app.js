@@ -298,6 +298,7 @@ const PRO_TXT = {
   spoof: ['pro_t_spoof', 'Spoof Tunnel — Hashem Pro', 'pro_b_spoof', 'The Spoof Tunnel is a Hashem Pro feature, on both servers: an IP-spoofing pipe wrapped with WireGuard to cross whitelist-based Layer-3 firewalls.'],
   xray: ['pro_t_xray', 'Xray Tunnel — Hashem Pro', 'pro_b_xray', 'The Xray Tunnel is a Hashem Pro feature, on both servers: Reality, XHTTP, gRPC or mKCP, direct or reverse, next to any Xray panel.'],
   limits: ['pro_t_limits', 'Speed and volume limits — Hashem Pro', 'pro_b_limits', 'Limiting the speed and volume of each foreign server is a Hashem Pro feature. Limits already set keep working without it, and can always be removed.'],
+  customers: ['pro_t_customers', 'Customers — Hashem Pro', 'pro_b_customers', 'Selling tunnels to customers is a Hashem Pro feature. Customers already set up keep running without it, and can always be paused or removed.'],
 };
 function isSentinelLicensed() {
   const f = (_licenseData && _licenseData.is_valid && _licenseData.features) || [];
@@ -317,9 +318,11 @@ function proSync() {
   tag('navXrayPro', 'xray');
   tag('xrayPro', 'xray');
   tag('limitsPro', 'limits');
+  tag('navCustomersPro', 'customers');
+  tag('custPro', 'customers');
   if ($('navClusterPro')) $('navClusterPro').classList.toggle('hidden', clLicensed());
   if ($('navSentinelPro')) $('navSentinelPro').classList.toggle('hidden', isSentinelLicensed());
-  ['navPerfPro', 'navWatchdogPro', 'navBenchmarkPro', 'navSpoofPro', 'navXrayPro', 'navClusterPro', 'navDoctorPro', 'navSentinelPro'].forEach(id => {
+  ['navPerfPro', 'navWatchdogPro', 'navBenchmarkPro', 'navSpoofPro', 'navXrayPro', 'navCustomersPro', 'navClusterPro', 'navDoctorPro', 'navSentinelPro'].forEach(id => {
     const el = $(id); if (!el) return;
     const t = id === 'navSentinelPro' ? tr('pro_addon', 'Add-on license') : 'Hashem Pro';
     el.title = t; el.setAttribute('aria-label', t);
@@ -336,7 +339,7 @@ function goTab(name) {
   // Bagher lives in Setup (create) and Tunnel (run) like every other tunnel.
   if (name === 'sshfwd' || name === 'bagher') { openBagherSetup(); return; }
   // Hashem Pro tabs: the license window instead of the tab
-  const proTab = { doctor: 'diagnostics', perf: 'performance', watchdog: 'watchdog', benchmark: 'benchmark', spoof: 'spoof', xray: 'xray' }[name];
+  const proTab = { doctor: 'diagnostics', perf: 'performance', watchdog: 'watchdog', benchmark: 'benchmark', spoof: 'spoof', xray: 'xray', customers: 'customers' }[name];
   if (proTab && !isProLicensed(proTab)) {
     if (_licenseData === null) {
       loadLicense().then(() => { if (isProLicensed(proTab)) goTab(name); else openBagherLicModal(proTab); });
@@ -356,7 +359,7 @@ function goTab(name) {
     openBagherLicModal('cluster');
     return;
   }
-  ['dashboard','tunnel','cluster','setup','xray','logs','perf','watchdog','doctor','benchmark','spoof','update','settings','terminal'].forEach(t => { const el = $('tab-'+t); if (el) el.hidden = t !== name; });
+  ['dashboard','tunnel','cluster','setup','xray','customers','logs','perf','watchdog','doctor','benchmark','spoof','update','settings','terminal'].forEach(t => { const el = $('tab-'+t); if (el) el.hidden = t !== name; });
   const markTab = b => {
     const on = b.dataset.tab === name;
     b.classList.toggle('on', on);
@@ -377,6 +380,7 @@ function goTab(name) {
   if (name === 'benchmark') { loadBenchmark(); loadPathTest(); }
   if (name === 'spoof') loadSpoof();
   if (name === 'xray') loadXray();
+  if (name === 'customers') loadCustomers();
   if (name === 'update') loadVersion();
   if (name === 'logs') { refreshLogPeers(); loadLogs(); loadErrors(); armLogFollow(); }
   if (name === 'terminal') termOnShow();
@@ -501,6 +505,7 @@ const I18N = {
     spoof_sub: "A tunnel that forges its source IP on both servers to cross whitelist-based Layer-3 firewalls, wrapped with WireGuard for a real encrypted link. Test which spoof IPs get through first, then bring the tunnel up.",
     spoof_idle: "Not configured",
     nav_xray: "Xray",
+    nav_customers: "Customers",
     xray_title: "Xray Tunnel",
     xray_sub: "Forward ports from the Iran server to a foreign server over Xray: Reality, XHTTP, gRPC or mKCP, direct or reverse. It runs its own Xray-core next to any Xray panel (3x-ui, Marzban) and never touches its files, services or ports.",
     xray_idle: "No tunnel yet",
@@ -11229,4 +11234,377 @@ if (sModalEl) {
   sModalEl.onclick = (e) => {
     if (e.target === sModalEl) closeSentinelModal();
   };
+}
+
+// ---- Customers: tunnels sold to customers (customers.go) ----
+// Each customer has a plan (end date, volume, speed) and one or more foreign
+// servers; each foreign server gets a kit the customer runs there. The cards
+// redraw every 10 s while the tab is open.
+let _cust = null, custTimer = null, _custWiz = null;
+const custState = c => !c.cut ? ['ok', tr('', 'Active')]
+  : c.cut === 'expired' ? ['err', tr('', 'Plan ended')]
+  : c.cut === 'quota' ? ['err', tr('', 'Volume used up')]
+  : ['warn', tr('', 'Paused')];
+const custStatusURL = c => location.origin + '/_hs/' + c.token;
+const custDate = sec => new Date(sec * 1000).toLocaleDateString(currentLang === 'fa' ? 'fa-IR' : undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+function custLinkDot(l, c) {
+  if (c.cut || !l.active) return ['var(--mu)', tr('', 'Stopped')];
+  return l.linked ? ['var(--ok)', tr('', 'Connected')] : ['var(--wr)', tr('', 'Waiting for the foreign server')];
+}
+// custMap: this server on the left, a wire per foreign server with its state.
+function custMap(c) {
+  const links = c.links || [];
+  const rows = links.map(l => {
+    const [col, why] = custLinkDot(l, c);
+    return `<div class="cs-link">
+      <span class="cs-wire" style="--c:${col}" title="${esc(why)}" aria-hidden="true"></span>
+      <div class="cs-node"><span class="tv-ico far">${ICO_GLOBE}</span><b>${esc(l.name || tr('', 'Foreign server') + ' ' + l.id)}</b>
+        <small class="lm-num">${esc((l.ports || []).join(', '))}${l.udp ? ' · TCP+UDP' : ''} · ${esc(l.transport)}</small>
+        <span class="cs-state" style="--c:${col}">${esc(why)}</span></div>
+      <div class="cs-link-acts">
+        <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openCustKit(${c.id}, ${l.id})">${esc(tr('', 'Kit'))}</button>
+        <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openCustLink(${c.id}, ${l.id})" aria-label="${esc(tr('', 'Edit'))}">${esc(tr('', 'Edit'))}</button>
+        ${links.length > 1 ? `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="custLinkRemove(${c.id}, ${l.id})">${esc(tr('', 'Remove'))}</button>` : ''}
+      </div></div>`;
+  }).join('');
+  return `<div class="cs-map"><div class="cs-hub"><span class="tv-ico">${ICO_SRV}</span><span>${esc(tr('', 'This server'))}<small class="lm-num">${esc(c.address || (_cust && _cust.address) || '')}</small></span></div>
+    <div class="cs-links">${rows}</div></div>`;
+}
+function custRow(c) {
+  const [cls, label] = custState(c);
+  const used = c.used_rx + c.used_tx, q = c.quota_gb > 0 ? c.quota_gb * 1e9 : 0;
+  const pct = q ? Math.min(100, used / q * 100) : 0;
+  const meter = (p, k) => `<div class="lm-meter ${k}" aria-hidden="true"><i style="--p:${p.toFixed(1)}%"></i></div>`;
+  const dl = c.days_left;
+  const dpct = dl == null ? 0 : c.days > 0 ? Math.max(0, Math.min(100, dl / c.days * 100)) : 100;
+  const days = `<div class="lm-box"><div class="lm-k"><span>${esc(tr('', 'Days left'))}</span><b class="lm-num">${dl == null ? '∞' : esc(String(dl))}</b></div>` +
+    meter(dpct, dl == null ? 'inf' : dl <= 3 ? 'err' : dl <= 7 ? 'warn' : '') +
+    `<div class="lm-sub">${dl == null ? esc(tr('', 'No end date')) : esc(tr('', 'Until') + ' ' + custDate(c.expires_at))}</div></div>`;
+  const rate = c.rate_mbit > 0 ? c.rate_mbit : 0;
+  const live = Math.max(c.speed_rx, c.speed_tx) * 8 / 1e6, lp = rate ? Math.min(100, live / rate * 100) : 0;
+  const speed = `<div class="lm-box"><div class="lm-k"><span>${esc(tr('', 'Speed'))}</span><b class="lm-num">${rate ? esc(rate + ' Mbit/s') : esc(tr('', 'Unlimited'))}</b></div>` +
+    meter(lp, rate ? (lp >= 95 ? 'warn' : '') : 'inf') +
+    `<div class="lm-sub"><span class="lm-num">↓ ${esc(fmtMbit(c.speed_tx))} · ↑ ${esc(fmtMbit(c.speed_rx))}</span></div></div>`;
+  const vol = `<div class="lm-box"><div class="lm-k"><span>${esc(tr('', 'Volume'))}</span><b class="lm-num">${q ? esc(fmtGB(used) + ' / ' + fmtGB(q)) : esc(fmtGB(used))}</b></div>` +
+    meter(pct, q ? (c.cut === 'quota' || pct >= 100 ? 'err' : pct >= 90 ? 'warn' : '') : 'inf') +
+    `<div class="lm-sub">${esc((q ? '' : tr('', 'No volume limit') + ' · ') + tr('', 'counted since') + ' ' + limDate(c.period_start))}</div></div>`;
+  const acts = [
+    `<button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openCustRenew(${c.id})">${esc(tr('', 'Renew'))}</button>`,
+    c.cut === 'manual' ? `<button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="custAction('resume', ${c.id})">${esc(tr('', 'Resume'))}</button>`
+      : !c.cut ? `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="custAction('cut', ${c.id})">${esc(tr('', 'Pause'))}</button>` : '',
+    used > 0 ? `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="custAction('reset', ${c.id})">${esc(tr('', 'Reset usage'))}</button>` : '',
+    `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="copyTextSafe(${jsArg(custStatusURL(c))}, ${jsArg(tr('', 'Status page link copied'))}, ${jsArg(c.name)})">${esc(tr('', 'Status page'))}</button>`,
+    `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openCustLink(${c.id}, 0)">${esc(tr('', 'Add foreign server'))}</button>`,
+    `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openCustEdit(${c.id})">${esc(tr('', 'Edit plan'))}</button>`,
+    `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30 u-c-er" onclick="custAction('remove', ${c.id})">${esc(tr('', 'Remove'))}</button>`,
+  ].filter(Boolean);
+  return `<div class="lm-row cs-row${c.cut ? ' cut' : cls === 'warn' || (q && pct >= 90) || (dl != null && dl <= 3) ? ' warn' : ''}" id="cust-${c.id}">
+    <div class="lm-head"><div class="lm-name"><b>${esc(c.name)}</b>${c.note ? '<small>' + esc(c.note) + '</small>' : ''}</div>
+      <span class="badge ${cls}">${esc(label)}</span></div>
+    ${custMap(c)}
+    <div class="lm-grid">${days}${speed}${vol}</div>
+    <div class="lm-acts">${acts.join('')}</div></div>`;
+}
+function renderCustomers(d) {
+  _cust = d;
+  if ($('custPro')) $('custPro').classList.toggle('hidden', isProLicensed('customers'));
+  const err = $('custErr');
+  if (err) {
+    const msg = d.error ? tr('', 'Could not apply everything:') + ' ' + d.error : !d.frps_ok ? tr('', 'FRP is not installed on this server: set up any FRP tunnel first (Setup tab), then the customers\' tunnels start.') : '';
+    err.textContent = msg; err.classList.toggle('hidden', !msg);
+  }
+  const list = d.customers || [];
+  const active = list.filter(c => !c.cut).length, cut = list.length - active;
+  const soon = list.filter(c => !c.cut && c.days_left != null && c.days_left <= 7).length;
+  const billed = list.reduce((s, c) => s + c.used_rx + c.used_tx, 0);
+  const sum = $('custSummary');
+  if (sum) sum.innerHTML = list.length ? [
+    [String(list.length), tr('', 'Customers')], [String(active), tr('', 'Active')], [String(cut), tr('', 'Cut or paused')],
+    [String(soon), tr('', 'Ending within 7 days')], [fmtGB(billed), tr('', 'Used this period')],
+  ].map(([v, k]) => `<div><b class="lm-num">${esc(v)}</b><span>${esc(k)}</span></div>`).join('') : '';
+  const box = $('custList');
+  if (!box) return;
+  box.innerHTML = list.length ? '<div class="lm-list">' + list.map(custRow).join('') + '</div>'
+    : `<div class="cs-empty"><b>${esc(tr('', 'No customers yet'))}</b><p class="qs-hint">${esc(tr('', 'Sell a tunnel: the customer brings one or more foreign servers, you set the plan, and they run one command on each server. Their users connect to this server.'))}</p>
+      <button type="button" class="hashem-btn hashem-btn-primary" onclick="openCustWizard()">${esc(tr('', 'New customer'))}</button></div>`;
+}
+async function loadCustomers() {
+  try { renderCustomers(await api('/api/customers')); } catch (e) { reportErr('customers', e); }
+}
+(function initCustomers() {
+  if (!custTimer) custTimer = setInterval(() => {
+    const t = $('tab-customers');
+    if (t && !t.hidden && !document.hidden && !_custWiz) loadCustomers();
+  }, 10000);
+})();
+const custFind = id => ((_cust && _cust.customers) || []).find(c => c.id === id);
+
+// ---- one modal for the small forms (renew, plan, foreign server, kit) ----
+function custModal(title, html, yes, onYes) {
+  const ov = $('custModal');
+  $('custModalTitle').textContent = title;
+  $('custModalBody').innerHTML = html + '<div class="xr-err hidden" id="custModalErr" role="alert"></div>';
+  const y = $('custModalYes');
+  y.textContent = yes || tr('', 'Save');
+  y.classList.toggle('hidden', !onYes);
+  $('custModalNo').textContent = onYes ? tr('', 'Cancel') : tr('', 'Close');
+  const close = () => modalHide(ov);
+  y.onclick = async () => {
+    const e = $('custModalErr');
+    e.classList.add('hidden');
+    y.disabled = true;
+    try { if (await onYes() !== false) close(); } catch (er) { e.textContent = er.message; e.classList.remove('hidden'); } finally { y.disabled = false; }
+  };
+  $('custModalNo').onclick = close;
+  $('custModalX').onclick = close;
+  modalShow(ov, close);
+  const f = ov.querySelector('input, textarea, select');
+  if (f) f.focus();
+}
+const custNum = id => { const v = parseFloat(($(id) || {}).value); return isFinite(v) && v > 0 ? v : 0; };
+function custChips(forId, vals) {
+  return `<div class="lm-chips" data-for="${forId}">${vals.map(([v, l]) => `<button type="button" onclick="$('${forId}').value='${v}'">${esc(l)}</button>`).join('')}</div>`;
+}
+const custPlanFields = (c) => `<div class="xr-fields">
+    <div class="xr-field"><label class="qs-label" for="cfDays">${esc(tr('', 'Days'))}</label>
+      <input class="hashem-input" id="cfDays" type="number" min="0" max="3660" step="1" inputmode="numeric" value="${c.days ?? 30}">
+      ${custChips('cfDays', [['30', '30'], ['60', '60'], ['90', '90'], ['0', tr('', 'No end')]])}</div>
+    <div class="xr-field"><label class="qs-label" for="cfQuota">${esc(tr('', 'Volume (GB)'))}</label>
+      <input class="hashem-input" id="cfQuota" type="number" min="0" step="any" inputmode="decimal" placeholder="${esc(tr('', 'Unlimited'))}" value="${c.quota_gb > 0 ? c.quota_gb : ''}">
+      ${custChips('cfQuota', [['50', '50'], ['100', '100'], ['200', '200'], ['', tr('', 'Unlimited')]])}</div>
+    <div class="xr-field"><label class="qs-label" for="cfRate">${esc(tr('', 'Speed (Mbit/s)'))}</label>
+      <input class="hashem-input" id="cfRate" type="number" min="0" step="any" inputmode="decimal" placeholder="${esc(tr('', 'Unlimited'))}" value="${c.rate_mbit > 0 ? c.rate_mbit : ''}">
+      ${custChips('cfRate', [['20', '20'], ['50', '50'], ['100', '100'], ['', tr('', 'Unlimited')]])}</div>
+  </div>
+  <div class="qs-hint">${esc(tr('', 'One plan for all of the customer\'s foreign servers: the volume is their sum, the speed is shared. Only users\' traffic is counted.'))}</div>`;
+
+function openCustEdit(id) {
+  if (!isProLicensed('customers')) { openBagherLicModal('customers'); return; }
+  const c = custFind(id);
+  if (!c) return;
+  const html = `<div class="xr-fields">
+      <div class="xr-field"><label class="qs-label" for="cfName">${esc(tr('', 'Name'))}</label><input class="hashem-input" id="cfName" maxlength="60" value="${esc(c.name)}"></div>
+      <div class="xr-field"><label class="qs-label" for="cfAddr">${esc(tr('', 'Address in the kit'))}</label><input class="hashem-input lm-num" id="cfAddr" maxlength="253" placeholder="${esc((_cust && _cust.address) || '')}" value="${esc(c.address || '')}"></div>
+    </div>
+    <div class="xr-field"><label class="qs-label" for="cfNote">${esc(tr('', 'Note'))}</label><input class="hashem-input" id="cfNote" maxlength="500" value="${esc(c.note || '')}"></div>
+    <div class="xr-fields">
+      <div class="xr-field"><label class="qs-label" for="cfQuota">${esc(tr('', 'Volume (GB)'))}</label><input class="hashem-input" id="cfQuota" type="number" min="0" step="any" placeholder="${esc(tr('', 'Unlimited'))}" value="${c.quota_gb > 0 ? c.quota_gb : ''}"></div>
+      <div class="xr-field"><label class="qs-label" for="cfRate">${esc(tr('', 'Speed (Mbit/s)'))}</label><input class="hashem-input" id="cfRate" type="number" min="0" step="any" placeholder="${esc(tr('', 'Unlimited'))}" value="${c.rate_mbit > 0 ? c.rate_mbit : ''}"></div>
+    </div>
+    <div class="qs-hint">${esc(tr('', 'The end date changes with Renew. A bigger volume reconnects a customer cut for volume. A new address needs new kits on the foreign servers.'))}</div>`;
+  custModal(tr('', 'Edit plan') + ' — ' + c.name, html, tr('', 'Save'), async () => {
+    renderCustomers(await api('/api/customers', { action: 'update', id, name: $('cfName').value, note: $('cfNote').value,
+      address: $('cfAddr').value.trim(), quota_gb: custNum('cfQuota'), rate_mbit: custNum('cfRate') }));
+    toastOk(tr('', 'Plan saved'), c.name);
+  });
+}
+function openCustRenew(id) {
+  if (!isProLicensed('customers')) { openBagherLicModal('customers'); return; }
+  const c = custFind(id);
+  if (!c) return;
+  const from = c.expires_at > Date.now() / 1000 ? tr('', 'The new days are added after the current end date.') : tr('', 'The plan starts again from today.');
+  const html = `<div class="xr-field"><label class="qs-label" for="cfDays">${esc(tr('', 'Days'))}</label>
+      <input class="hashem-input" id="cfDays" type="number" min="1" max="3660" step="1" inputmode="numeric" value="${c.days || 30}">
+      ${custChips('cfDays', [['30', '30'], ['60', '60'], ['90', '90'], ['365', '365']])}</div>
+    <label class="xr-check"><input type="checkbox" id="cfReset" checked> ${esc(tr('', 'Start a new period: used volume back to 0'))}</label>
+    <div class="qs-hint">${esc(from)}</div>`;
+  custModal(tr('', 'Renew') + ' — ' + c.name, html, tr('', 'Renew'), async () => {
+    const days = parseInt($('cfDays').value, 10);
+    if (!(days >= 1 && days <= 3660)) throw new Error(tr('', 'Days: 1 to 3660'));
+    renderCustomers(await api('/api/customers', { action: 'renew', id, days, reset_usage: $('cfReset').checked }));
+    toastOk(tr('', 'Renewed'), c.name);
+  });
+}
+// a foreign server: lid 0 adds one
+function openCustLink(id, lid) {
+  if (!isProLicensed('customers')) { openBagherLicModal('customers'); return; }
+  const c = custFind(id);
+  if (!c) return;
+  const l = (c.links || []).find(x => x.id === lid) || { name: '', ports: [], udp: false, transport: 'tcp', ctrl_port: 0 };
+  const html = custLinkFields('cl', l) + (lid ? `<div class="qs-hint">${esc(tr('', 'A new control port or transport needs the kit again on the foreign server; new ports only need it if the server serves them.'))}</div>` : '');
+  custModal((lid ? tr('', 'Edit foreign server') : tr('', 'Add foreign server')) + ' — ' + c.name, html, lid ? tr('', 'Save') : tr('', 'Add'), async () => {
+    const body = { action: lid ? 'link-update' : 'link-add', id, link_id: lid, link: custLinkRead('cl') };
+    const d = await api('/api/customers', body);
+    renderCustomers(d);
+    toastOk(lid ? tr('', 'Foreign server saved') : tr('', 'Foreign server added'), c.name);
+    if (!lid) {
+      const nc = (d.customers || []).find(x => x.id === id);
+      const nl = nc && nc.links[nc.links.length - 1];
+      if (nl) setTimeout(() => openCustKit(id, nl.id), 50);
+    }
+  });
+}
+function custLinkFields(p, l) {
+  const tsel = ['tcp', 'websocket', 'kcp', 'quic'].map(t => `<option value="${t}"${l.transport === t ? ' selected' : ''}>${t.toUpperCase()}</option>`).join('');
+  return `<div class="xr-fields">
+      <div class="xr-field"><label class="qs-label" for="${p}Name">${esc(tr('', 'Foreign server name'))}</label><input class="hashem-input" id="${p}Name" maxlength="40" placeholder="${esc(tr('', 'e.g. Frankfurt'))}" value="${esc(l.name || '')}"></div>
+      <div class="xr-field"><label class="qs-label" for="${p}Ports">${esc(tr('', 'Users\' ports'))}</label><input class="hashem-input lm-num" id="${p}Ports" placeholder="443, 2083" value="${esc((l.ports || []).join(', '))}"></div>
+    </div>
+    <div class="xr-fields">
+      <div class="xr-field"><label class="qs-label" for="${p}Tr">${esc(tr('', 'Transport'))}</label><select class="hashem-input" id="${p}Tr">${tsel}</select></div>
+      <div class="xr-field"><label class="qs-label" for="${p}Ctrl">${esc(tr('', 'Control port'))}</label><input class="hashem-input lm-num" id="${p}Ctrl" type="number" min="1" max="65535" placeholder="${esc(tr('', 'Automatic'))}" value="${l.ctrl_port || ''}"></div>
+    </div>
+    <label class="xr-check"><input type="checkbox" id="${p}Udp"${l.udp ? ' checked' : ''}> ${esc(tr('', 'UDP too (games, calls, QUIC)'))}</label>`;
+}
+const custLinkRead = p => ({ name: $(p + 'Name').value, ports: $(p + 'Ports').value, transport: $(p + 'Tr').value,
+  ctrl_port: parseInt($(p + 'Ctrl').value, 10) || 0, udp: $(p + 'Udp').checked });
+
+async function custLinkRemove(id, lid) {
+  const c = custFind(id);
+  if (!c) return;
+  const l = (c.links || []).find(x => x.id === lid) || {};
+  if (!await entConfirm(tr('', 'Remove this foreign server?'), tr('', 'Its tunnel stops now and its ports are freed. The customer\'s other foreign servers keep working.'), tr('', 'Remove'))) return;
+  try {
+    renderCustomers(await api('/api/customers', { action: 'link-remove', id, link_id: lid }));
+    toastOk(tr('', 'Foreign server removed'), l.name || c.name);
+  } catch (e) { toastErr(tr('', 'Failed'), e.message); }
+}
+async function custAction(action, id) {
+  const c = custFind(id);
+  if (!c) return;
+  if (action !== 'cut' && action !== 'remove' && !isProLicensed('customers')) { openBagherLicModal('customers'); return; }
+  const ask = {
+    cut: [tr('', 'Pause this customer?'), tr('', 'Their tunnels stop and their users are cut off until you resume.'), tr('', 'Pause')],
+    reset: [tr('', 'Reset the used volume?'), tr('', 'The customer\'s used volume goes back to 0. A customer cut for volume comes back now.'), tr('', 'Reset usage')],
+    remove: [tr('', 'Remove this customer?'), tr('', 'Their tunnels stop for good and their ports are freed. This cannot be undone.'), tr('', 'Remove')],
+  }[action];
+  if (ask && !await entConfirm(...ask)) return;
+  try {
+    renderCustomers(await api('/api/customers', { action, id }));
+    toastOk({ cut: tr('', 'Paused'), resume: tr('', 'Resumed'), reset: tr('', 'Usage reset'), remove: tr('', 'Customer removed') }[action], c.name);
+  } catch (e) { toastErr(tr('', 'Failed'), e.message); }
+}
+
+// ---- the kit: what the customer runs on a foreign server ----
+async function openCustKit(id, lid) {
+  const c = custFind(id);
+  let k;
+  try { k = await api('/api/customers/kit?id=' + id + '&link=' + lid); } catch (e) { toastErr(tr('', 'Failed'), e.message); return; }
+  const l = ((c && c.links) || []).find(x => x.id === lid) || {};
+  const block = (bid, title, text, hint) => `<div class="cs-srv"><div class="cs-srv-h"><b>${esc(title)}</b>
+      <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="copyTextSafe($('${bid}').textContent, ${jsArg(tr('', 'Copied'))}, ${jsArg(title)})">${esc(tr('', 'Copy'))}</button></div>
+      <pre class="cs-code" id="${bid}">${esc(text)}</pre>${hint ? `<div class="qs-hint">${esc(hint)}</div>` : ''}</div>`;
+  const html = `<p class="qs-hint">${esc(tr('', 'Send this to the customer. On the foreign server, as root, they run the command below; their service must listen on the same ports there. Users then connect to this server.'))}</p>
+    <div class="cs-facts"><span>${esc(tr('', 'Server'))} <b class="lm-num">${esc(k.address)}</b></span><span>${esc(tr('', 'Control port'))} <b class="lm-num">${esc(String(k.ctrl_port))} · ${esc(k.transport)}</b></span><span>${esc(tr('', 'Users\' ports'))} <b class="lm-num">${esc((k.ports || []).join(', '))}</b></span></div>
+    ${block('ckOne', tr('', 'One command (recommended)'), k.oneliner, tr('', 'It installs FRP v{v} from its official release (checksum verified) and keeps the tunnel running. Running it again updates the tunnel.').replace('{v}', k.frp))}
+    ${block('ckToml', tr('', 'Manual setup: frpc.toml'), k.frpc_toml, tr('', 'For a foreign server that already runs frpc v{v}: run frpc -c with this file.').replace('{v}', k.frp))}
+    ${c ? block('ckStatus', tr('', 'Status page for the customer'), custStatusURL(c), tr('', 'Days left, volume used and server state, in Persian and English. Anyone with the link can see it.')) : ''}`;
+  custModal(tr('', 'Kit') + ' — ' + ((c && c.name) || '') + (l.name ? ' · ' + l.name : ''), html, '', null);
+}
+
+// ---- new customer: plan, foreign servers, review ----
+function openCustWizard() {
+  if (!isProLicensed('customers')) { openBagherLicModal('customers'); return; }
+  _custWiz = { step: 1, name: '', note: '', address: '', days: 30, quota_gb: 0, rate_mbit: 0, links: [{ name: '', ports: [], udp: false, transport: 'tcp', ctrl_port: 0 }] };
+  custWizRender();
+  const w = $('custWizard');
+  if (w && w.scrollIntoView) w.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function custWizClose() { _custWiz = null; $('custWizard').innerHTML = ''; loadCustomers(); }
+function custWizRender() {
+  const w = _custWiz;
+  const titles = ['Customer and plan', 'Foreign servers', 'Review'];
+  const nav = `<ol class="xr-wiz-nav">${titles.map((t, i) => `<li class="${i + 1 === w.step ? 'on' : i + 1 < w.step ? 'done' : ''}">${esc(tr('', t))}</li>`).join('')}</ol>`;
+  const body = [null, custWizStep1, custWizStep2, custWizStep3][w.step]();
+  $('custWizard').innerHTML = `<div class="xr-wiz">
+    <div class="xr-wiz-h"><b>${esc(tr('', 'New customer'))}</b>
+      <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="custWizClose()">${esc(tr('', 'Cancel'))}</button></div>
+    ${nav}${body}<div class="xr-err hidden" id="custWizErr" role="alert"></div></div>`;
+  const f = $('custWizard').querySelector('input');
+  if (f && w.step < 3) f.focus();
+}
+function custWizStep1() {
+  const w = _custWiz;
+  return `<div class="xr-fields">
+      <div class="xr-field"><label class="qs-label" for="cwName">${esc(tr('', 'Customer name'))}</label><input class="hashem-input" id="cwName" maxlength="60" placeholder="${esc(tr('', 'e.g. Ali (shop)'))}" value="${esc(w.name)}"></div>
+      <div class="xr-field"><label class="qs-label" for="cwNote">${esc(tr('', 'Note (only you see it)'))}</label><input class="hashem-input" id="cwNote" maxlength="500" placeholder="${esc(tr('', 'e.g. paid by card, Telegram @ali'))}" value="${esc(w.note)}"></div>
+    </div>
+    ${custPlanFields(w)}
+    <details class="xr-adv"><summary>${esc(tr('', 'Address in the kit'))}</summary><div class="xr-field cs-adv">
+      <input class="hashem-input lm-num" id="cwAddr" maxlength="253" placeholder="${esc((_cust && _cust.address) || '')}" value="${esc(w.address)}">
+      <div class="qs-hint">${esc(tr('', 'What the foreign servers dial: this server\'s public IP by default, or a domain that points to it.'))}</div></div></details>
+    <div class="xr-wiz-foot"><span></span><button type="button" class="hashem-btn hashem-btn-primary" onclick="custWizGo(2)">${esc(tr('', 'Next'))}</button></div>`;
+}
+function custWizStep2() {
+  const w = _custWiz;
+  const rows = w.links.map((l, i) => `<div class="cs-srv"><div class="cs-srv-h"><b>${esc(tr('', 'Foreign server') + ' ' + (i + 1))}</b>
+      ${w.links.length > 1 ? `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="custWizDrop(${i})">${esc(tr('', 'Remove'))}</button>` : ''}</div>
+      ${custLinkFields('cw' + i, l)}</div>`).join('');
+  return `<p class="qs-hint">${esc(tr('', 'One entry per foreign server the customer owns. Users connect to these ports on this server; the customer\'s service listens on the same ports on the foreign server. Each port can be sold once on this server.'))}</p>
+    <div class="cs-srvs">${rows}</div>
+    <div><button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="custWizAdd()">${esc(tr('', 'Add another foreign server'))}</button></div>
+    <div class="xr-wiz-foot"><button type="button" class="hashem-btn hashem-btn-ghost" onclick="custWizGo(1)">${esc(tr('', 'Back'))}</button><button type="button" class="hashem-btn hashem-btn-primary" onclick="custWizGo(3)">${esc(tr('', 'Next'))}</button></div>`;
+}
+function custWizStep3() {
+  const w = _custWiz;
+  const plan = [
+    [tr('', 'Days'), w.days > 0 ? String(w.days) : tr('', 'No end')],
+    [tr('', 'Volume'), w.quota_gb > 0 ? w.quota_gb + ' GB' : tr('', 'Unlimited')],
+    [tr('', 'Speed'), w.rate_mbit > 0 ? w.rate_mbit + ' Mbit/s' : tr('', 'Unlimited')],
+  ];
+  const srv = w.links.map((l, i) => `<li><b>${esc(l.name || tr('', 'Foreign server') + ' ' + (i + 1))}</b> <span class="lm-num">${esc(String(l.ports))}</span> · ${esc(l.transport.toUpperCase())}${l.udp ? ' · TCP+UDP' : ''}</li>`).join('');
+  return `<div class="cs-review"><div class="cs-facts">${plan.map(([k, v]) => `<span>${esc(k)} <b class="lm-num">${esc(v)}</b></span>`).join('')}</div>
+      <b>${esc(w.name)}</b>${w.note ? `<span class="qs-hint">${esc(w.note)}</span>` : ''}
+      <ul class="xr-list">${srv}</ul>
+      <p class="qs-hint">${esc(tr('', 'On Create the tunnels start on this server right away and wait for the foreign servers. Next you get the kit to send the customer.'))}</p></div>
+    <div class="xr-wiz-foot"><button type="button" class="hashem-btn hashem-btn-ghost" onclick="custWizGo(2)">${esc(tr('', 'Back'))}</button><button type="button" class="hashem-btn hashem-btn-primary" id="custWizCreate" onclick="custWizCreate()">${esc(tr('', 'Create'))}</button></div>`;
+}
+function custWizRead() {
+  const w = _custWiz;
+  if (w.step === 1) {
+    w.name = $('cwName').value.trim(); w.note = $('cwNote').value.trim(); w.address = $('cwAddr').value.trim();
+    const d = parseInt($('cfDays').value, 10);
+    w.days = isFinite(d) && d > 0 ? d : 0;
+    w.quota_gb = custNum('cfQuota'); w.rate_mbit = custNum('cfRate');
+  }
+  if (w.step === 2) w.links = w.links.map((_, i) => custLinkRead('cw' + i));
+}
+function custWizProblem() {
+  const w = _custWiz;
+  if (w.step === 1) {
+    if (!w.name) return tr('', 'Enter the customer\'s name.');
+    if (w.days > 3660) return tr('', 'Days: 1 to 3660');
+  }
+  if (w.step === 2) {
+    const seen = {};
+    for (const [i, l] of w.links.entries()) {
+      const ps = String(l.ports).split(/[\s,]+/).filter(Boolean);
+      if (!ps.length) return tr('', 'Enter the users\' ports of foreign server {n}.').replace('{n}', i + 1);
+      for (const p of ps) {
+        const n = +p;
+        if (!(n >= 1 && n <= 65535 && String(n) === p)) return tr('', 'Not a port: {p}').replace('{p}', p);
+        if (seen[n]) return tr('', 'Port {n} is listed twice: each port can be sold once on this server.').replace('{n}', n);
+        seen[n] = 1;
+      }
+    }
+  }
+  return '';
+}
+function custWizGo(step) {
+  custWizRead();
+  if (step > _custWiz.step) {
+    const msg = custWizProblem();
+    if (msg) { const e = $('custWizErr'); e.textContent = msg; e.classList.remove('hidden'); return; }
+  }
+  _custWiz.step = step;
+  custWizRender();
+}
+function custWizAdd() { custWizRead(); _custWiz.links.push({ name: '', ports: [], udp: false, transport: 'tcp', ctrl_port: 0 }); custWizRender(); }
+function custWizDrop(i) { custWizRead(); _custWiz.links.splice(i, 1); custWizRender(); }
+async function custWizCreate() {
+  const w = _custWiz, btn = $('custWizCreate');
+  btn.disabled = true;
+  try {
+    const d = await api('/api/customers', { action: 'create', name: w.name, note: w.note, address: w.address, days: w.days,
+      quota_gb: w.quota_gb, rate_mbit: w.rate_mbit, links: w.links.map(l => ({ ...l, ports: String(l.ports) })) });
+    _custWiz = null;
+    $('custWizard').innerHTML = '';
+    renderCustomers(d);
+    toastOk(tr('', 'Customer created'), w.name);
+    const c = (d.customers || []).find(x => x.id === d.created);
+    if (c && c.links.length) openCustKit(c.id, c.links[0].id);
+  } catch (e) {
+    const er = $('custWizErr'); er.textContent = e.message; er.classList.remove('hidden');
+    btn.disabled = false;
+  }
 }
