@@ -138,6 +138,21 @@ XK=$'v=2\nengine=xray\nname=hsell-4-4\nserver=203.0.113.7\nport=31002\ntransport
 out=$(bash "$SH" config "$(mkkit "$XK")" 2>&1) || F "xray kcp config: $out"
 grep -qF '"password": "d6bccc0cce627f41a3995745"' <<< "$out" || F "xray kcp: no mKCP password"
 bad "a bad mKCP password" "${XK/kcppw=d6bc/kcppw=\"d6bc}"
+# Xray direct: Reality hands strangers' handshakes to the SNI, so it must be
+# public and is pinned to the address it had at install
+XD="${XR/engine=xray/engine=xray-direct}pk=sDhQDB0cMDj4z6R2nKcGFFdqPEw8yW2mZsS9n7h1aEc"$'\n'
+out=$(bash "$SH" config "$(mkkit "$XD")" 2>&1) || F "xray-direct config: $out"
+grep -qF '"target": "203.0.113.7:443", "xver": 0, "serverNames": ["www.digikala.com"]' <<< "$out" || F "xray-direct target not pinned: $out"
+bad "an IP as the SNI" "${XD/sni=www.digikala.com/sni=127.0.0.1}"
+bad "a LAN name as the SNI" "${XD/sni=www.digikala.com/sni=router.lan}"
+bad "a single-label SNI" "${XD/sni=www.digikala.com/sni=intranet}"
+for a in 127.0.0.1 10.1.2.3 192.168.1.1 172.20.0.1 169.254.169.254 100.64.0.1 0.0.0.0 ::1 fd00::1 fe80::1 ::ffff:127.0.0.1; do
+    printf '#!/bin/sh\necho "203.0.113.8     STREAM x"\necho "%s     STREAM x"\n' "$a" > "$T/bin/getent"
+    bad "an SNI resolving to $a" "$XD"
+done
+printf '#!/bin/sh\nexit 2\n' > "$T/bin/getent"
+bad "an SNI that does not resolve" "$XD"
+printf '#!/bin/sh\necho "203.0.113.7     STREAM 203.0.113.7"\n' > "$T/bin/getent"
 # install a Backhaul tunnel, then the same link sold as Xray: one tunnel, its new engine
 : > "$T/calls.log"
 out=$(bash "$SH" install "$(mkkit "$BH")" 2>&1) || F "backhaul install: $out"
@@ -197,17 +212,32 @@ grep -q "does not match its checksum" <<< "$out" || F "bad backhaul archive mess
 
 # Bagher: a locked-down user, its key line, a reply code; remove takes the line away
 mkdir -p "$T/lib/hc" "$T/home/hcust" "$T/sshd"
+printf '#!/bin/sh\nexit 0\n' > "$T/bin/ss"  # nothing listens
 printf '#!/bin/sh\n[ "$1" = "-v" ] && echo 0.71.0\n' > "$T/lib/hc/frpc"; chmod +x "$T/lib/hc/frpc"
 cat > "$T/bin/getent" <<EOF
 #!/bin/sh
 case "\$1" in
-  passwd) [ "\$2" = hcust ] && echo "hcust:x:998:998::$T/home/hcust:/usr/sbin/nologin" ;;
+  passwd) [ "\$2" = hcust ] && grep -q "^useradd" "$T/calls.log" && echo "hcust:x:998:998::\${GETENT_HOME:-/var/lib/hashem-customer/hcust}:\${GETENT_SHELL:-/usr/sbin/nologin}" ;;
   *) echo "203.0.113.7     STREAM 203.0.113.7" ;;
 esac
 EOF
 chmod +x "$T/bin/getent"
 for c in useradd usermod chown; do printf '#!/bin/sh\necho "%s $*" >> %s/calls.log\n' "$c" "$T" > "$T/bin/$c"; chmod +x "$T/bin/$c"; done
-printf '#!/bin/sh\n[ "$1" = "-T" ] && echo "port 2222"\nexit 0\n' > "$T/bin/sshd"; chmod +x "$T/bin/sshd"
+cat > "$T/bin/sshd" <<EOF
+#!/bin/sh
+echo "sshd \$*" >> "$T/calls.log"
+[ "\$1" = -t ] && exit \${SSHD_T_FAIL:-0}
+[ "\$1" = -T ] || exit 0
+echo "port 2222"
+if [ "\$2" = -C ] && [ -s "$T/sshd.d/hashem-customer.conf" ] && [ -z "\$SSHD_NO_INCLUDE" ]; then
+    printf 'allowtcpforwarding remote\nallowstreamlocalforwarding no\nauthorizedkeysfile %s\n' "\$HASHEM_CUSTOMER_AUTH_KEYS"
+else
+    printf 'allowtcpforwarding yes\nallowstreamlocalforwarding yes\nauthorizedkeysfile .ssh/authorized_keys\n'
+fi
+EOF
+chmod +x "$T/bin/sshd"
+mkdir -p "$T/sshd.d"
+export HASHEM_SSHD_DROPIN="$T/sshd.d/hashem-customer.conf" HASHEM_CUSTOMER_AUTH_KEYS="$T/hcust.keys"
 echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl root@fo" > "$T/sshd/ssh_host_ed25519_key.pub"
 export HASHEM_SSH_DIR="$T/sshd"
 BG=$'v=2\nengine=bagher\nname=hsell-5-1\nserver=203.0.113.7\nport=31500\ntransport=ssh\ntoken=BbCdEfGhIjKlMnOpQrStUvWxYz012345\nudp=1\nports=443\nsshpub=AAAAC3NzaC1lZDI1NTE5AAAAIEu8Pp9xvOHGCZnNqY2UtFzrW1PZ3Zp6YyUq9o3gJmJk\n'
@@ -219,10 +249,14 @@ bad "a quote in the Bagher key" "${BG/sshpub=AAAAC3/sshpub=\"AAAC3}"
 : > "$T/calls.log"
 out=$(bash "$SH" install "$(mkkit "$BG")" 2>&1) || F "bagher install: $out"
 U=hcust-203-0-113-7-$(h6 203.0.113.7)-5-1
-AK="$T/home/hcust/.ssh/authorized_keys"
+AK="$T/hcust.keys"
 [[ "$(cat "$AK" 2>/dev/null)" == "command=\"/bin/false\",restrict,port-forwarding,permitlisten=\"127.0.0.1:31500\",permitopen=\"127.0.0.1:31500\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEu8Pp9xvOHGCZnNqY2UtFzrW1PZ3Zp6YyUq9o3gJmJk $U" ]] \
     || F "bagher authorized_keys: $(cat "$AK" 2>&1)"
-[[ "$(stat -c %a "$AK" 2>/dev/null)" == 600 ]] || F "authorized_keys is not 0600"
+[[ "$(stat -c %a "$AK" 2>/dev/null)" == 644 ]] || F "the keys file is not 0644 (root's)"
+grep -q "useradd --system --create-home --home-dir /var/lib/hashem-customer/hcust" "$T/calls.log" || F "bagher user: $(cat "$T/calls.log")"
+for want in "Match User hcust" "AuthorizedKeysFile $AK" "AllowTcpForwarding remote" "AllowStreamLocalForwarding no" "PermitOpen none" "ForceCommand /bin/false"; do
+    grep -qF -- "$want" "$HASHEM_SSHD_DROPIN" || F "sshd rules lack $want: $(cat "$HASHEM_SSHD_DROPIN" 2>&1)"
+done
 grep -q "usermod -p \* hcust" "$T/calls.log" || F "the user is left locked (sshd refuses it without PAM)"
 code=$(grep -oE 'hsr1\.[A-Za-z0-9_-]+' <<< "$out")
 [[ -n "$code" ]] || F "no reply code: $out"
@@ -236,6 +270,24 @@ grep -q "ExecStart=$T/lib/hc/frpc -c $T/conf/$U.toml" "$T/sd/$U.service" || F "b
 echo "ssh-ed25519 AAAAOTHER other-seller ${U}0" >> "$AK"
 bash "$SH" remove "$U" >/dev/null 2>&1 || F "remove the bagher tunnel"
 [[ "$(cat "$AK")" == "ssh-ed25519 AAAAOTHER other-seller ${U}0" ]] || F "remove: authorized_keys is now: $(cat "$AK")"
+# sshd that does not read the drop-in, or refuses it: no tunnel, no rules left behind
+rm -f "$HASHEM_SSHD_DROPIN" "$AK"; : > "$T/calls.log"
+out=$(SSHD_NO_INCLUDE=1 bash "$SH" install "$(mkkit "$BG")" 2>&1) && F "installed with sshd not applying the rules"
+grep -q "Include" <<< "$out" || F "no Include hint: $out"
+[[ ! -e "$HASHEM_SSHD_DROPIN" && ! -s "$AK" ]] || F "rules or key left after sshd ignored them"
+out=$(SSHD_T_FAIL=1 bash "$SH" install "$(mkkit "$BG")" 2>&1) && F "installed with sshd -t failing"
+[[ ! -e "$HASHEM_SSHD_DROPIN" ]] || F "a drop-in sshd -t refused was left"
+# a user of that name that is not the tunnels' is never taken over
+out=$(GETENT_SHELL=/bin/bash bash "$SH" install "$(mkkit "$BG")" 2>&1) && F "took over an existing login user"
+grep -q "not the tunnels'" <<< "$out" || F "existing user: $out"
+# the control port is another service's: the key could open it
+printf '#!/bin/sh\necho "LISTEN 0 511 127.0.0.1:31500 0.0.0.0:* users:((\\"redis-server\\",pid=9,fd=6))"\n' > "$T/bin/ss"; chmod +x "$T/bin/ss"
+out=$(bash "$SH" install "$(mkkit "$BG")" 2>&1) && F "installed on a port another service holds"
+grep -q "already in use" <<< "$out" || F "busy port: $out"
+printf '#!/bin/sh\necho "LISTEN 0 128 127.0.0.1:31500 0.0.0.0:* users:((\\"sshd\\",pid=9,fd=6))"\n' > "$T/bin/ss"
+bash "$SH" install "$(mkkit "$BG")" >/dev/null 2>&1 || F "a reinstall refused the tunnel's own sshd listener"
+rm -f "$T/bin/ss"
+bash "$SH" remove all >/dev/null 2>&1 || true
 unset HASHEM_SSH_DIR
 
 # hashem.sh customers_teardown

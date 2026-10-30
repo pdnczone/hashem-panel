@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -686,9 +687,16 @@ func TestCustomersLabDial(t *testing.T) {
 	}
 	ak := filepath.Join(r.dir, "authorized_keys")
 	_ = os.WriteFile(ak, auth, 0o600)
+	// and the installer's Match block for the user (here root)
+	rulesCmd := exec.Command("bash", r.installer, "sshdrules")
+	rulesCmd.Env = append(os.Environ(), "HASHEM_CUSTOMER_SSH_USER=root", "HASHEM_CUSTOMER_AUTH_KEYS="+ak)
+	rules, err := rulesCmd.Output()
+	if err != nil || !bytes.Contains(rules, []byte("Match User root")) {
+		t.Fatalf("sshd rules: %v %s", err, rules)
+	}
 	sshdConf := filepath.Join(r.dir, "sshd_config")
-	_ = os.WriteFile(sshdConf, []byte(fmt.Sprintf("Port 2222\nListenAddress %s\nHostKey %s\nAuthorizedKeysFile %s\nPidFile none\nUsePAM no\nStrictModes no\nPermitRootLogin prohibit-password\nPasswordAuthentication no\n",
-		foIP, filepath.Join(hk, "ssh_host_ed25519_key"), ak)), 0o600)
+	_ = os.WriteFile(sshdConf, []byte(fmt.Sprintf("Port 2222\nListenAddress %s\nHostKey %s\nPidFile none\nUsePAM no\nStrictModes no\nPermitRootLogin prohibit-password\nPasswordAuthentication no\n%s",
+		foIP, filepath.Join(hk, "ssh_host_ed25519_key"), rules)), 0o600)
 	r.runForeign("sshd", sshd, "-D", "-e", "-f", sshdConf)
 	fp := filepath.Join(r.dir, "bg.toml")
 	_ = os.WriteFile(fp, []byte(conf), 0o600)
@@ -713,8 +721,8 @@ func TestCustomersLabDial(t *testing.T) {
 	if _, err := r.user(9006, "tcp", "0", "1"); err == nil {
 		t.Errorf("Bagher connected to a server whose host key is not the reply code's\n%s", r.logs(units[1]))
 	}
-	if l, _ := os.ReadFile(filepath.Join(r.dir, units[1]+".log")); !strings.Contains(string(l), "key mismatch") && !strings.Contains(string(l), "knownhosts") {
-		t.Logf("relay log with a wrong host key:\n%s", l)
+	if l, _ := os.ReadFile(filepath.Join(r.dir, units[1]+".log")); !strings.Contains(string(l), "knownhosts: key mismatch") {
+		t.Errorf("the relay did not refuse the wrong host key (no knownhosts: key mismatch):\n%s", l)
 	}
 	r.post(fmt.Sprintf(`{"action":"link-reply","id":1,"link_id":2,"reply":%q}`, good))
 	r.waitUp(9005, "Xray direct", 60*time.Second, "client-1", units[0])
@@ -765,6 +773,22 @@ func TestCustomersLabDial(t *testing.T) {
 	if c, err := cl.Dial("tcp", "127.0.0.1:9000"); err == nil {
 		_ = c.Close()
 		t.Error("the link's key reached another service on the customer's server (permitopen)")
+	}
+	if c, err := cl.Dial("tcp", "127.0.0.1:7806"); err == nil {
+		_ = c.Close()
+		t.Error("the link's key forwarded to its own port (sshd allows remote forwarding only)")
+	}
+	sock := filepath.Join(r.dir, "svc.sock")
+	if sl, err := net.Listen("unix", sock); err == nil {
+		defer sl.Close()
+		if c, err := cl.Dial("unix", sock); err == nil {
+			_ = c.Close()
+			t.Error("the link's key reached a Unix socket on the customer's server")
+		}
+	}
+	if ln, err := cl.ListenUnix(filepath.Join(r.dir, "seller.sock")); err == nil {
+		_ = ln.Close()
+		t.Error("the link's key made a Unix socket on the customer's server")
 	}
 	if ln, err := cl.Listen("tcp", "127.0.0.1:9999"); err == nil {
 		_ = ln.Close()

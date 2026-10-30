@@ -28,6 +28,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	crand "crypto/rand"
 	"crypto/sha256"
@@ -182,8 +183,13 @@ type customerLink struct {
 	// Backhaul wss/wssmux: the relay's self-signed certificate (PEM).
 	TLSCert string `json:"tls_cert,omitempty"`
 	TLSKey  string `json:"tls_key,omitempty"`
-	// Remote is the foreign server this one dials (xray-direct, bagher).
-	Remote string `json:"remote,omitempty"`
+	// Remote is the foreign server this one dials (xray-direct, bagher);
+	// RemoteIP its IPv4 address, resolved when the link is saved. The relay
+	// dials RemoteIP and the cap matches it: a name the customer controls
+	// could otherwise move the link (an AAAA record, another A record) off
+	// the address the cap polices.
+	Remote   string `json:"remote,omitempty"`
+	RemoteIP string `json:"remote_ip,omitempty"`
 	// Bagher: this link's SSH key (the kit carries the public half), and
 	// what the customer's reply code said: sshd's port, the user and its
 	// host keys (pinned: no key is trusted on first use).
@@ -198,6 +204,22 @@ type customerLink struct {
 // foreign server's data arrives from Remote's port, not on a control port.
 func (l customerLink) dials() bool {
 	return l.Engine == custEngineXrayDirect || l.Engine == custEngineBagher
+}
+
+// peerHost is the address a dialing link connects to.
+func (l customerLink) peerHost() string {
+	if l.RemoteIP != "" {
+		return l.RemoteIP
+	}
+	return l.Remote
+}
+
+// peerIPs: the address the cap polices for a dialing link.
+func (l customerLink) peerIPs() []string {
+	if ip := net.ParseIP(l.peerHost()); ip != nil && ip.To4() != nil {
+		return []string{ip.To4().String()}
+	}
+	return nil
 }
 
 // peerPort is the foreign server's port a dialing link connects to.
@@ -219,12 +241,19 @@ func (l customerLink) ready() bool {
 // ctrlUDP: the control port is (also) UDP.
 func (l customerLink) ctrlUDP() bool {
 	switch l.Engine {
-	case custEngineXray:
+	case custEngineXray, custEngineXrayDirect:
 		return l.Transport == "kcp"
-	case custEngineBackhaul, custEngineBagher, custEngineXrayDirect:
+	case custEngineBackhaul, custEngineBagher:
 		return false
 	}
 	return l.Transport == "kcp" || l.Transport == "quic"
+}
+
+// sessionless: no TCP session shows the link up while it is idle (a UDP
+// control channel; an Xray direct link over XHTTP or gRPC connects for
+// users only), so a running relay reads "running", not "down".
+func (l customerLink) sessionless() bool {
+	return l.ctrlUDP() || (l.Engine == custEngineXrayDirect && (l.Transport == "xhttp" || l.Transport == "grpc"))
 }
 
 // ctrlLocal: the control port is a port of this server (xray-direct's is
@@ -530,7 +559,7 @@ func custXrayIran(l customerLink) (XrayLink, error) {
 	if l.Engine == custEngineXrayDirect {
 		// this server dials the foreign server's VLESS inbound; the users'
 		// ports are the same as in reverse mode
-		x.Mode, x.Remote = xrayModeDirect, l.Remote
+		x.Mode, x.Remote = xrayModeDirect, l.peerHost()
 	}
 	x.TunnelPort, x.Ports, x.UDP, x.ProbePort, x.Disabled, x.Expert = l.CtrlPort, append([]int(nil), l.Ports...), l.UDP, 0, false, nil
 	return x, nil
@@ -626,7 +655,7 @@ func custUnitExec(cid int, l customerLink) (env, exec string) {
 			user = "hcust"
 		}
 		return "", fmt.Sprintf("%s sell-bagher -frps %s -conf %s -host %s -port %d -user %s -frp-port %d -key %s -known %s",
-			custEngineBin(l.Engine), custEngineBin(custEngineFRP), conf, l.Remote, l.peerPort(), user, l.CtrlPort,
+			custEngineBin(l.Engine), custEngineBin(custEngineFRP), conf, l.peerHost(), l.peerPort(), user, l.CtrlPort,
 			custCertPath(cid, l.ID, ".ssh"), custCertPath(cid, l.ID, ".known"))
 	}
 	return "", custEngineBin(l.Engine) + " -c " + conf
@@ -932,7 +961,7 @@ func custTCArgs(ifaces []custIfc, list []customer) [][]string {
 				ctrl = append(ctrl, l.CtrlPort)
 				continue
 			}
-			for _, ip := range custPeerIPs(l.Remote) {
+			for _, ip := range l.peerIPs() {
 				peers = append(peers, [2]string{ip, strconv.Itoa(l.peerPort())})
 			}
 		}
@@ -976,45 +1005,23 @@ func custTCArgs(ifaces []custIfc, list []customer) [][]string {
 	return cmds
 }
 
-// custPeerIPs are the IPv4 addresses of a foreign server this one dials
-// (cached 5 minutes: the tick asks every 10 s). Swappable for tests.
-var custPeerIPs = func(host string) []string {
+// custResolveRemote: the IPv4 address of a foreign server this one dials.
+// Swappable for tests.
+var custResolveRemote = func(host string) (string, error) {
 	if ip := net.ParseIP(host); ip != nil {
-		if ip.To4() != nil {
-			return []string{ip.To4().String()}
+		if ip.To4() == nil {
+			return "", fmt.Errorf("an IPv4 address")
 		}
-		return nil
+		return ip.To4().String(), nil
 	}
-	custPeerCache.Lock()
-	defer custPeerCache.Unlock()
-	if e, ok := custPeerCache.m[host]; ok && time.Since(e.at) < 5*time.Minute {
-		return e.ips
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
+	if err != nil || len(ips) == 0 {
+		return "", fmt.Errorf("%s has no IPv4 address here (DNS)", host)
 	}
-	var ips []string
-	if addrs, err := net.LookupIP(host); err == nil {
-		for _, a := range addrs {
-			if v4 := a.To4(); v4 != nil {
-				ips = append(ips, v4.String())
-			}
-		}
-	}
-	sort.Strings(ips)
-	if custPeerCache.m == nil {
-		custPeerCache.m = map[string]custPeerEntry{}
-	}
-	custPeerCache.m[host] = custPeerEntry{ips, time.Now()}
-	return ips
+	return ips[0].To4().String(), nil
 }
-
-type custPeerEntry struct {
-	ips []string
-	at  time.Time
-}
-
-var custPeerCache = struct {
-	sync.Mutex
-	m map[string]custPeerEntry
-}{}
 
 // custIfc is an interface the caps go on and its local IPv4 addresses (the
 // filters match only traffic to them: never routed or forwarded traffic).
@@ -1463,25 +1470,36 @@ func custSyncUnits(list []customer, chainOK bool) error {
 		}
 	}
 	// each engine's binary copy, for the engines a wanted unit runs
+	// (each copy once: Bagher's frps is the FRP engine's, and both kinds of
+	// unit restart when it changes)
+	type binRes struct {
+		changed bool
+		err     error
+	}
+	copied := map[string]binRes{}
+	ensure := func(e string) binRes {
+		r, ok := copied[e]
+		if !ok {
+			r.changed, r.err = custEnsureBin(e)
+			copied[e] = r
+			if r.err != nil {
+				errs = append(errs, r.err.Error())
+			}
+		}
+		return r
+	}
 	binChanged, binErr := map[string]bool{}, map[string]error{}
 	for u, w := range want {
 		e := engineOf[u]
 		if _, done := binErr[e]; !w || done {
 			continue
 		}
-		binChanged[e], binErr[e] = custEnsureBin(e)
-		if binErr[e] != nil {
-			errs = append(errs, binErr[e].Error())
+		r := ensure(e)
+		if e == custEngineBagher && r.err == nil {
+			f := ensure(custEngineFRP)
+			r = binRes{r.changed || f.changed, f.err}
 		}
-		if e == custEngineBagher && binErr[e] == nil {
-			// its frps is the FRP engine's copy
-			ch, err := custEnsureBin(custEngineFRP)
-			binChanged[e] = binChanged[e] || ch
-			if err != nil {
-				binErr[e] = err
-				errs = append(errs, err.Error())
-			}
-		}
+		binChanged[e], binErr[e] = r.changed, r.err
 	}
 	if reload {
 		_ = runSystemctl("daemon-reload")
@@ -1540,7 +1558,7 @@ func custWriteLinkFiles(cid int, l customerLink) (bool, error) {
 		// the host keys of the customer's reply code, as known_hosts
 		var kh strings.Builder
 		for _, k := range l.HostKeys {
-			fmt.Fprintf(&kh, "%s %s\n", knownHostsEntry(net.JoinHostPort(l.Remote, strconv.Itoa(l.peerPort()))), k)
+			fmt.Fprintf(&kh, "%s %s\n", knownHostsEntry(net.JoinHostPort(l.peerHost(), strconv.Itoa(l.peerPort()))), k)
 		}
 		keep[custCertPath(cid, l.ID, ".known")] = kh.String()
 	}
@@ -1649,6 +1667,15 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 		if !custValidAddress(l.Remote) {
 			return l, fmt.Errorf("the foreign server's address: an IPv4 address or a domain")
 		}
+		// saving resolves it again; a failed lookup keeps the last address
+		ip, err := custResolveRemote(l.Remote)
+		if err != nil && old != nil && old.Remote == l.Remote && old.RemoteIP != "" {
+			ip, err = old.RemoteIP, nil
+		}
+		if err != nil {
+			return l, fmt.Errorf("the foreign server's address: %v", err)
+		}
+		l.RemoteIP = ip
 	}
 	var err error
 	if l.Name, err = custCleanText(in.Name, 40); err != nil {
@@ -1721,7 +1748,11 @@ func custBuildLink(in custLinkInput, cid, lid int, old *customerLink, claims []p
 			if !l.ctrlLocal() {
 				break // the foreign server's port: nothing to check here
 			}
-			if why := free(proto, l.CtrlPort, []int{oldCtrl}); why != "" {
+			var mine []int
+			if old != nil && old.ctrlLocal() {
+				mine = []int{oldCtrl} // only a port this server's own link held
+			}
+			if why := free(proto, l.CtrlPort, mine); why != "" {
 				return l, fmt.Errorf("control port %d is %s", l.CtrlPort, why)
 			}
 		}
@@ -2017,7 +2048,7 @@ func custLinkUp(l customerLink, linked map[int]bool, peers map[string]bool) bool
 	if !l.dials() {
 		return linked[l.CtrlPort]
 	}
-	for _, ip := range custPeerIPs(l.Remote) {
+	for _, ip := range l.peerIPs() {
 		if peers[net.JoinHostPort(ip, strconv.Itoa(l.peerPort()))] {
 			return true
 		}
@@ -2030,7 +2061,7 @@ func custPeerList(links []customerLink) []string {
 	var out []string
 	for _, l := range links {
 		if l.dials() {
-			for _, ip := range custPeerIPs(l.Remote) {
+			for _, ip := range l.peerIPs() {
 				out = append(out, net.JoinHostPort(ip, strconv.Itoa(l.peerPort())))
 			}
 		}
@@ -2088,7 +2119,7 @@ func customersView() map[string]any {
 			}
 			lv.Active = active[lv.Unit+".service"]
 			lv.Linked = lv.Active && custLinkUp(l, linked, peers)
-			lv.UDPCtrl = l.ctrlUDP()
+			lv.UDPCtrl = l.sessionless()
 			lv.AwaitReply = !l.ready()
 			lv.SSHKey, lv.SSHPub, lv.HostKeys = "", "", nil
 			v.Links = append(v.Links, lv)
@@ -2745,8 +2776,8 @@ func custPublicView(c customer, sp [2]float64, now time.Time) custPublic {
 		st := "down"
 		if c.Cut == "" && custLinkUp(l, linked, peers) {
 			st = "up"
-		} else if c.Cut == "" && l.ctrlUDP() {
-			st = "running" // a UDP control channel: no session to see
+		} else if c.Cut == "" && l.sessionless() {
+			st = "running" // no session to see
 		}
 		p.Links = append(p.Links, st)
 	}
