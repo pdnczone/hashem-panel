@@ -450,7 +450,7 @@ func TestCustomersLabEngines(t *testing.T) {
 	r.post(fmt.Sprintf(`{"action":"create","name":"engines","days":30,"rate_mbit":%d,"address":%q,"links":[
 		{"name":"bh","engine":"backhaul","transport":"tcp","ports":"9000","udp":true,"ctrl_port":7701},
 		{"name":"bhs","engine":"backhaul","transport":"wssmux","ports":"9002","ctrl_port":7702},
-		{"name":"xr","engine":"xray","transport":"reality","ports":"9003","udp":true,"ctrl_port":7703,"sni":"lab.example"},
+		{"name":"xr","engine":"xray","transport":"reality","ports":"9003","udp":true,"ctrl_port":7703,"sni":"lab.hashem.dev"},
 		{"name":"xk","engine":"xray","transport":"kcp","ports":"9004","ctrl_port":7704}]}`, rate, r.hubFo))
 	// Reality borrows the lab's own TLS site (no internet here)
 	custs.Lock()
