@@ -8980,6 +8980,20 @@ update_all() {
     watchdog_timer_ensure >/dev/null 2>&1 || true
     PANEL_VER=$("$PANEL_BIN" --version 2>/dev/null || echo "unknown")
     echo -e "${GREEN}[OK] Update complete — script + panel are latest (panel: ${PANEL_VER}). Re-run the script to use the new menu.${NC}"
+    node_migrate_hint
+}
+
+# node_migrate_hint: once after an update, an Iran server with foreign
+# servers is told it can manage them all from its panel (nodes). Nothing is
+# changed here; the panel's Nodes page has the offer.
+node_migrate_hint() {
+    local d="$PANEL_CONFIG_DIR" mark="$PANEL_CONFIG_DIR/node_migrate_hint"
+    [[ -f $mark || -f $d/node.json ]] && return 0
+    grep -q '"never": *true' "$d/node_migrate.json" 2>/dev/null && return 0
+    if [[ -s $d/peers.json ]] || { grep -q '"role": *"master"' "$d/peer_link.json" 2>/dev/null && grep -q '"remote_public": *"[^"]' "$d/setup.json" 2>/dev/null; }; then
+        echo -e "${CYAN}[i] New: manage all your foreign servers from this panel. Open the panel → Nodes → \"Yes, move to nodes\". Running tunnels are not touched.${NC}"
+        : >"$mark" 2>/dev/null || true
+    fi
 }
 
 cli_carrier() {

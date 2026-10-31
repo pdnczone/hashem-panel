@@ -149,6 +149,17 @@ func TestNodeHelperProcess(t *testing.T) {
 			os.Exit(3)
 		}
 		os.Stdout.WriteString("OK " + s.Central + "\n")
+	case "migrate": // a foreign server of a central's tunnel: NODE_HELPER_CODE is the offer, NODE_HELPER_LIC unused
+		_ = savePeerConfig(PeerConfig{Role: "worker", PeerSecret: os.Getenv("NODE_HELPER_TOKEN"), PeerURL: "http://192.0.2.1"})
+		nodeMigrateFetch = func() ([]byte, error) { return []byte(os.Getenv("NODE_HELPER_CODE")), nil }
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		central, err := nodeMigrateTry(ctx)
+		if err != nil {
+			os.Stdout.WriteString("ERR " + err.Error() + "\n")
+			os.Exit(3)
+		}
+		os.Stdout.WriteString("OK " + central + "\n")
 	case "serve":
 		wait, _ := time.ParseDuration(os.Getenv("NODE_HELPER_WAIT"))
 		done := make(chan string, 1)
