@@ -33,6 +33,7 @@ type joinedHub struct {
 	Active  bool   `json:"active"`
 	Session bool   `json:"session"`
 	First   bool   `json:"first,omitempty"`
+	Conf    string `json:"-"` // its client config (holds its token: setup_plan.go link proofs)
 }
 
 func hubsFile() string { return filepath.Join(configDir, "hubs.json") }
@@ -54,6 +55,7 @@ func readJoinedHubs() []joinedHub {
 			IranGre string `json:"iran_gre"`
 			Dial    string `json:"dial"`
 			Ports   []int  `json:"ports"`
+			Conf    string `json:"conf"`
 		} `json:"hubs"`
 	}
 	if json.Unmarshal(data, &v) != nil {
@@ -62,7 +64,7 @@ func readJoinedHubs() []joinedHub {
 	out := make([]joinedHub, 0, len(v.Hubs))
 	for _, h := range v.Hubs {
 		out = append(out, joinedHub{ID: h.ID, Name: h.Name, IranPub: h.IranPub, Engine: h.Engine, Svc: h.Svc,
-			GreIf: h.GreIf, Port: h.Port, IranGre: h.IranGre, Dial: h.Dial, Ports: h.Ports})
+			GreIf: h.GreIf, Port: h.Port, IranGre: h.IranGre, Dial: h.Dial, Ports: h.Ports, Conf: h.Conf})
 	}
 	return out
 }

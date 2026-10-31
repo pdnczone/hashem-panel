@@ -22,6 +22,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -259,8 +261,17 @@ func nodeTunLabel(id, max int) string {
 }
 
 func nodeTunPlan(ctx context.Context, id int, ports string, relay int) (setupPlan, error) {
+	return nodeTunPlanProof(ctx, id, ports, relay, "")
+}
+
+// nodeTunPlanProof: with a nonce, each tunnel in the plan carries the proof
+// of its token (setup_plan.go).
+func nodeTunPlanProof(ctx context.Context, id int, ports string, relay int, nonce string) (setupPlan, error) {
 	var p setupPlan
 	v := url.Values{}
+	if nonce != "" {
+		v.Set("proof", nonce)
+	}
 	if ports != "" {
 		v.Set("ports", ports)
 	}
@@ -335,6 +346,16 @@ func (q *nodeTunReq) check() error {
 	}
 	if q.Engine == "frp" {
 		q.AcceptUDP = false
+		// FRP takes single ports only (ranges and 8080=80 are Backhaul's)
+		n := 0
+		for _, f := range strings.Split(q.Ports, ",") {
+			if strings.TrimSpace(f) != "" {
+				n++
+			}
+		}
+		if len(parsePorts(q.Ports)) != n {
+			return nodeErr{"E-NODE-01", "ports: FRP takes single port numbers (ranges and mappings are for Backhaul)"}
+		}
 	}
 	for _, id := range []int{q.Server, q.Client} {
 		if id == 0 {
@@ -380,6 +401,14 @@ func nodeTunDraftFor(ctx context.Context, q nodeTunReq) (nodeTunDraft, error) {
 	d.ClientMode = "foreign"
 	if c.Exists || len(c.Uplinks) > 0 {
 		d.ClientMode = "join-hub"
+	}
+	for _, x := range []struct {
+		id int
+		p  setupPlan
+	}{{q.Server, s}, {q.Client, c}} {
+		if x.p.Exists && x.p.Side == "" {
+			problem("%s has a tunnel config but no running tunnel: remove it there first (Tunnel page)", nodeTunName(x.id))
+		}
 	}
 	if s.Side == "foreign" || len(s.Uplinks) > 0 {
 		problem("%s is a foreign server (it dials an Iran server): pick an Iran server as the server end", nodeTunName(q.Server))
@@ -481,8 +510,23 @@ func nodeTunBundleCheck(bundle string, q nodeTunReq, d nodeTunDraft) error {
 		return errors.New("the server end's bundle has other GRE addresses than planned")
 	case !slices.Equal(slices.Compact(want), slices.Compact(got)):
 		return errors.New("the server end's bundle has other ports than planned")
+	case nodeTunTransport(q.Engine, b.Transport) != nodeTunTransport(q.Engine, q.Transport):
+		return fmt.Errorf("the server end's bundle has transport %q, not %q", b.Transport, q.Transport)
+	case q.Engine != "frp" && b.UDP != q.AcceptUDP:
+		return errors.New("the server end's bundle forwards UDP otherwise than planned")
 	}
 	return nil
+}
+
+// nodeTunTransport is t with the engine's default filled in.
+func nodeTunTransport(engine, t string) string {
+	if t != "" {
+		return t
+	}
+	if engine == "frp" {
+		return "tcp"
+	}
+	return "tcpmux"
 }
 
 // nodeTunFindPeer finds the server end of a tunnel to clientIP on server id
@@ -613,8 +657,11 @@ func nodeTunKeep(q nodeTunReq, role, clientIP, why string) {
 	nodesF.Left = append(nodesF.Left, nodeTunLeft{ID: nodesF.LeftNext, Server: q.Server, Client: q.Client, ServerRole: role,
 		ClientIP: clientIP, Error: why, At: time.Now().Unix()})
 	nodesF.LeftNext++
-	if len(nodesF.Left) > nodeTunLeftMax {
-		nodesF.Left = nodesF.Left[len(nodesF.Left)-nodeTunLeftMax:]
+	if n := len(nodesF.Left) - nodeTunLeftMax; n > 0 {
+		for _, l := range nodesF.Left[:n] {
+			log.Printf("nodes: forgetting the oldest left-over tunnel end (server %d, to %s): remove it on that server if it is still there", l.Server, l.ClientIP)
+		}
+		nodesF.Left = nodesF.Left[n:]
 	}
 	if err := nodesSaveLocked(); err != nil {
 		log.Printf("nodes: cannot save a left-over tunnel: %v", err)
@@ -635,8 +682,10 @@ type nodeTunLink struct {
 	ClientIP string `json:"client_ip"`
 }
 
-// nodeTunLinks reads every online server's plan and pairs the ends. Servers
-// that claim the same address are not paired (one of them is not honest).
+// nodeTunLinks reads every online server's plan and pairs the ends: by
+// address, and only when both ends prove they hold the same tunnel token
+// (an HMAC of a fresh nonce). Servers that claim the same address are not
+// paired at all (one of them is not honest).
 func nodeTunLinks(ctx context.Context) ([]nodeTunLink, []string) {
 	ids := []int{0}
 	nodesMu.Lock()
@@ -651,11 +700,14 @@ func nodeTunLinks(ctx context.Context) ([]nodeTunLink, []string) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	var errs []string
+	var nb [16]byte
+	_, _ = rand.Read(nb[:])
+	nonce := hex.EncodeToString(nb[:])
 	for _, id := range ids {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			p, err := nodeTunPlan(ctx, id, "", 0)
+			p, err := nodeTunPlanProof(ctx, id, "", 0, nonce)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -691,7 +743,8 @@ func nodeTunLinks(ctx context.Context) ([]nodeTunLink, []string) {
 					continue
 				}
 				for _, u := range c.Uplinks {
-					if u.IranPub == s.Public {
+					// both ends hold the same token: a claimed address alone is not enough
+					if u.IranPub == s.Public && p.Proof != "" && p.Proof == u.Proof {
 						links = append(links, nodeTunLink{Server: sid, Client: cid, PeerID: p.ID, Hub: u.Hub, Name: p.Name,
 							Engine: p.Engine, ServerIP: s.Public, ClientIP: c.Public})
 					}
