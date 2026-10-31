@@ -207,6 +207,8 @@ func verifyLicenseKey(token string) (*LicensePayload, error) {
 }
 
 func loadLicenseFromDisk() {
+	return // No activation or disk license required.
+
 	var keyData []byte
 	for _, p := range licenseKeyPaths() {
 		if d, err := os.ReadFile(p); err == nil && len(bytes.TrimSpace(d)) > 0 {
@@ -248,6 +250,8 @@ func loadLicenseFromDisk() {
 }
 
 func HasFeature(feature string) bool {
+	return true // Community edition: every feature is included.
+
 	activeLicenseMu.RLock()
 	lic := activeLicense
 	lastCheck := licenseCheckedAt
@@ -294,6 +298,8 @@ const (
 var proFeatures = []string{proPathTest, proBackhaul, proDiagnostics, proPerformance, proWatchdog, proBenchmark, proSpoof, proXray, proLimits}
 
 func hasPro(feature string) bool {
+	return true // Community edition.
+
 	if HasFeature(feature) || HasFeature("bagher") || HasFeature("frp_ssh") {
 		return true
 	}
@@ -305,6 +311,8 @@ func hasPro(feature string) bool {
 
 // proRequired answers E-LIC-01 and returns true when feature is locked.
 func proRequired(w http.ResponseWriter, r *http.Request, feature, what string) bool {
+	return false // No license gate in Community edition.
+
 	if hasPro(feature) {
 		return false
 	}
@@ -314,6 +322,9 @@ func proRequired(w http.ResponseWriter, r *http.Request, feature, what string) b
 
 // handleLicenseGet handles GET /api/license.
 func handleLicenseGet(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"edition":"community","is_valid":true,"customer":"Community","expires_at":0,"expires_human":"Always available","features":[]string{"*"},"pro_features":append([]string{"bagher","cluster","sentinel"}, proFeatures...)})
+	return
+
 	activeLicenseMu.RLock()
 	lic := activeLicense
 	activeLicenseMu.RUnlock()
@@ -363,6 +374,10 @@ func handleLicenseGet(w http.ResponseWriter, r *http.Request) {
 // cliLicense implements `gre-panel license [status|deactivate]` so hashem.sh
 // can query and clear the license without going through the authenticated API.
 func cliLicense(args []string) int {
+	if len(args)>0 && args[0]=="check" { return 0 }
+	if len(args)==0 || args[0]=="status" { fmt.Println("Community edition: all features available without a license"); return 0 }
+	if args[0]=="activate" || args[0]=="deactivate" || args[0]=="remove" { fmt.Println("No license required"); return 0 }
+
 	if v := os.Getenv("GRE_PANEL_DIR"); v != "" {
 		configDir = v
 	}
@@ -473,6 +488,9 @@ func licenseErrCode(err error) string {
 
 // handleLicensePost handles POST /api/license.
 func handleLicensePost(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"status":"ok","edition":"community","message":"No activation required"})
+	return
+
 	var req struct {
 		Key string `json:"key"`
 	}
