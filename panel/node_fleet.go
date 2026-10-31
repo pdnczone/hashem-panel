@@ -57,7 +57,9 @@ type nodeAlertEvent struct {
 func nodeAlertsObserve(now time.Time, links []linkSnap) {
 	// kept while the channel is down too (a cut is when they matter); the
 	// central decides about degraded ones with its own setting
-	ev := nodeAlertTrk.observe(now, links, alertConfig{MinGapSec: 120, NotifyDegrad: true})
+	// every change, no gap: the central filters and spaces them (a gap here
+	// let a degraded event the central drops hide the down right after it)
+	ev := nodeAlertTrk.observe(now, links, alertConfig{MinGapSec: 0, NotifyDegrad: true})
 	if len(ev) == 0 {
 		return
 	}
@@ -118,6 +120,12 @@ func nodeAlertsForward(s *nodeSession, name string) {
 	if !cfg.Enabled || (!cfg.Telegram && cfg.WebhookURL == "") {
 		return
 	}
+	nodeAlertBusy.Lock()
+	busy := nodeAlertBusy.m[s.id]
+	nodeAlertBusy.Unlock()
+	if busy {
+		return // the last batch is still going: these wait for the next pull
+	}
 	nodeAlertPull.Lock()
 	mark, ok := nodeAlertPull.seq[s.id]
 	nodeAlertPull.Unlock()
@@ -155,7 +163,8 @@ func nodeAlertsForward(s *nodeSession, name string) {
 	}
 	evs := make([]alertEvent, 0, len(res.Events))
 	for _, e := range res.Events {
-		if ev, ok := nodeAlertClean(e.alertEvent); ok && isAlertWorthy(ev.From, ev.To, cfg.NotifyDegrad) && nodeAlertAllow(s.id, time.Now()) {
+		if ev, ok := nodeAlertClean(e.alertEvent); ok && isAlertWorthy(ev.From, ev.To, cfg.NotifyDegrad) &&
+			nodeAlertGapOK(s.id, ev.Link, cfg, time.Now()) && nodeAlertAllow(s.id, time.Now()) {
 			evs = append(evs, ev)
 		}
 	}
@@ -214,6 +223,31 @@ func nodeAlertClean(e alertEvent) (alertEvent, bool) {
 		e.At = time.Now().UTC().Format(time.RFC3339)
 	}
 	return e, true
+}
+
+// nodeAlertGapOK spaces one node's alerts per link by the central's gap
+// (a flapping link), as the central does for its own links.
+var nodeAlertGaps = struct {
+	sync.Mutex
+	at map[string]time.Time
+}{at: map[string]time.Time{}}
+
+func nodeAlertGapOK(id int, link string, cfg alertConfig, now time.Time) bool {
+	gap := time.Duration(cfg.MinGapSec) * time.Second
+	if gap <= 0 {
+		gap = 120 * time.Second
+	}
+	k := strconv.Itoa(id) + "\x00" + link
+	nodeAlertGaps.Lock()
+	defer nodeAlertGaps.Unlock()
+	if last, ok := nodeAlertGaps.at[k]; ok && now.Sub(last) < gap {
+		return false
+	}
+	if len(nodeAlertGaps.at) > 10000 {
+		nodeAlertGaps.at = map[string]time.Time{}
+	}
+	nodeAlertGaps.at[k] = now
+	return true
 }
 
 // nodeAlertAllow: at most nodeAlertPerNode an hour per node and
@@ -638,11 +672,16 @@ func nodeBackupPruneAll() {
 	}
 	for _, d := range dirs {
 		id, err := strconv.Atoi(d.Name())
-		if err != nil || !known[id] {
+		if err != nil || id < 1 {
 			_ = os.RemoveAll(filepath.Join(configDir, "node-backups", d.Name()))
 			continue
 		}
+		// a removed node's copies stay their 14 days: restoring it on a new
+		// server is when they are needed
 		nodeBackupPrune(nodeBackupDir(id))
+		if !known[id] {
+			_ = os.Remove(nodeBackupDir(id)) // only when empty
+		}
 	}
 }
 

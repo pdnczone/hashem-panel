@@ -112,7 +112,7 @@ so the totals are not doubled.
   the copy is only readable with that key. Save each node's key
   (its Watchdog page: export the backup key) somewhere safe: without it a
   lost node's copies cannot be opened. A node without Watchdog (Pro) has no
-  backups to copy.
+  backups to copy. A removed node's copies stay their 14 days.
 - **Customers**: the customers of every server in one list; **Open** goes
   to that server's Customers page.
 - **Alerts**: when Telegram or a webhook alert is set up on the central,

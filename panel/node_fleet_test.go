@@ -198,12 +198,18 @@ func TestNodeBackupPull(t *testing.T) {
 	if l := nodeBackupsList(); len(l) != 3 || l[2].Name == "hashem-backup-a.enc" {
 		t.Fatalf("kept: %+v", l)
 	}
-	// a removed node's copies go
+	// a removed node's copies stay their 14 days; an empty folder goes
 	_ = os.MkdirAll(nodeBackupDir(77), 0700)
+	_ = os.WriteFile(filepath.Join(nodeBackupDir(77), "hashem-backup-x.enc"), []byte("Salted__"), 0600)
+	_ = os.MkdirAll(nodeBackupDir(78), 0700)
 	nodeBackupPruneAll()
-	if _, err := os.Stat(nodeBackupDir(77)); err == nil {
-		t.Fatal("a removed node's copies stayed")
+	if _, err := os.Stat(filepath.Join(nodeBackupDir(77), "hashem-backup-x.enc")); err != nil {
+		t.Fatal("a removed node's copy went at once")
 	}
+	if _, err := os.Stat(nodeBackupDir(78)); err == nil {
+		t.Fatal("an empty folder stayed")
+	}
+	_ = os.RemoveAll(nodeBackupDir(77))
 	_ = os.RemoveAll(nodeBackupDir(1))
 	_, _ = nodeBackupPull(context.Background(), 1)
 	// older than 14 days: dropped
@@ -318,4 +324,16 @@ func nodeAPIJSONErrOf(e error) error {
 	defer func() { nodeAPIFn = old }()
 	nodeAPIFn = func(context.Context, int, string, string, any) (int, []byte, error) { return 0, nil, e }
 	return nodeAPIJSON(context.Background(), 1, "GET", "/api/x", nil, nil)
+}
+
+// A link's alerts from one node are spaced by the central's gap.
+func TestNodeAlertGap(t *testing.T) {
+	now := time.Now()
+	cfg := alertConfig{MinGapSec: 120}
+	if !nodeAlertGapOK(5, "de", cfg, now) || nodeAlertGapOK(5, "de", cfg, now.Add(time.Minute)) {
+		t.Fatal("within the gap")
+	}
+	if !nodeAlertGapOK(5, "fi", cfg, now) || !nodeAlertGapOK(6, "de", cfg, now) || !nodeAlertGapOK(5, "de", cfg, now.Add(3*time.Minute)) {
+		t.Fatal("another link, node or time")
+	}
 }
