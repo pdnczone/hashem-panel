@@ -59,6 +59,10 @@ page; `hashem update` prints the same hint once).
   could try to join while the move is open; that is why the move is short,
   and why a joined server waits for your approval. If you want no window at
   all, add the servers with **Add a server** instead.
+- If a server shows as joined but is not yours, or never connects, remove
+  it and add the real one with **Add a server**: the move does not offer a
+  server twice. A foreign server that belongs to someone else (a shared
+  tunnel) should not be moved: whoever runs the central can manage it.
 - **Not now** asks again in 7 days; **Don't ask again** never asks (the
   Nodes page keeps a **Move them** button).
 - Running tunnels are not touched, and every server keeps its own panel. A

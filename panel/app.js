@@ -11903,7 +11903,7 @@ function nodeRow(n) {
     ${n.held ? `<div class="warnbox u-mt-8">${esc(tr('', 'Joined by the move to nodes. Check it is your server (its address and machine ID); this panel\'s license is copied to it only after you approve it.'))}</div>` : ''}
     <div class="lm-acts">
       ${n.held ? `<button type="button" class="hashem-btn hashem-btn-primary u-btn-30" onclick="nodeApprove(${Number(n.id)})">${esc(tr('', 'Approve'))}</button>` : ''}
-      ${n.online ? `<button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openNodeHere(${Number(n.id)})">${esc(tr('', 'Open'))}</button>` : ''}
+      ${n.online && !n.held ? `<button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openNodeHere(${Number(n.id)})">${esc(tr('', 'Open'))}</button>` : ''}
       <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openNodeRename(${n.id})">${esc(tr('', 'Rename'))}</button>
       <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30 u-c-er" onclick="nodeRemove(${n.id})">${esc(tr('', 'Remove'))}</button>
     </div></div>`;

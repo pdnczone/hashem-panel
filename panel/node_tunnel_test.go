@@ -119,10 +119,10 @@ func nodeTunTest(t *testing.T) *nodeTunFake {
 		1: {Public: "198.51.100.1", RelayPort: 7001, GreUsed: []string{"10.10.10.2"}, Pro: pro()},
 		2: {Public: "192.0.2.7", RelayPort: 7001, GreUsed: []string{"10.11.0.1"}, Pro: pro()},
 	}}
-	old := nodeAPIFn
-	nodeAPIFn = f.call
+	old, oldRetry := nodeAPIFn, nodeTunFindRetry
+	nodeAPIFn, nodeTunFindRetry = f.call, 0
 	t.Cleanup(func() {
-		nodeAPIFn = old
+		nodeAPIFn, nodeTunFindRetry = old, oldRetry
 		nodeTun.Lock()
 		nodeTun.jobs, nodeTun.busy = nil, nil
 		nodeTun.Unlock()
@@ -597,5 +597,39 @@ func TestNodeTunStaleConfig(t *testing.T) {
 	d, _ := nodeTunDraftFor(context.Background(), nodeTunReq{Server: 1, Client: 2, Engine: "frp", Ports: "443"})
 	if !strings.Contains(strings.Join(d.Problems, ";"), "no running tunnel") {
 		t.Fatalf("problems: %v", d.Problems)
+	}
+}
+
+func TestNodeTunUDPAndPorts(t *testing.T) {
+	for _, c := range []struct {
+		q    nodeTunReq
+		mark bool
+	}{
+		{nodeTunReq{Engine: "backhaul", AcceptUDP: true}, true}, // tcpmux: a companion
+		{nodeTunReq{Engine: "backhaul", Transport: "wss", AcceptUDP: true}, true},
+		{nodeTunReq{Engine: "backhaul", Transport: "tcp", AcceptUDP: true}, false}, // inside the tunnel
+		{nodeTunReq{Engine: "backhaul", Transport: "udp", AcceptUDP: true}, false},
+		{nodeTunReq{Engine: "backhaul"}, false},
+	} {
+		if got := nodeTunUDPMark(c.q); got != c.mark {
+			t.Errorf("%+v: %v", c.q, got)
+		}
+	}
+	for ports, ok := range map[string]bool{"443 2083": true, "443, 443": true, "443,2083": true, "1000-1002": false, "8080=80": false} {
+		err := (&nodeTunReq{Server: 0, Client: 1, Engine: "frp", Ports: ports}).check()
+		if got := err == nil || !strings.Contains(err.Error(), "single port"); got != ok {
+			t.Errorf("%q: %v", ports, err)
+		}
+	}
+}
+
+// A server that joined by the move cannot be used for a tunnel before approval.
+func TestNodeTunHeld(t *testing.T) {
+	nodeTunTest(t)
+	nodesMu.Lock()
+	nodeFindLocked(2).Held = true
+	nodesMu.Unlock()
+	if err := (&nodeTunReq{Server: 1, Client: 2, Engine: "frp", Ports: "443"}).check(); err == nil || !strings.Contains(err.Error(), "approve") {
+		t.Fatalf("a held node: %v", err)
 	}
 }
