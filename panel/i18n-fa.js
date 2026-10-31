@@ -3213,6 +3213,8 @@ window.FA_TEXT = {
 "The node view was closed: open the node again.": "نمای نود بسته شد: نود را دوباره باز کنید.",
 "Node": "نود",
 "Download failed": "دانلود نشد",
+"joined once and was removed: add it with Add a server": "یک بار وصل شد و حذف شد: آن را با «افزودن سرور» اضافه کنید",
+"waiting: it joins by itself once it runs this version (hashem update on it; if it was updated more than 14 days ago, hashem node move on it)": "در انتظار: با به‌روز شدن به این نسخه خودش وصل می‌شود (hashem update روی آن سرور؛ اگر بیش از ۱۴ روز پیش به‌روز شده، hashem node move روی آن)",
 "Joined by the move to nodes. Check it is your server (its address and machine ID); this panel's license is copied to it only after you approve it.": "با انتقال به سیستم نود وصل شده. مطمئن شوید سرور خودتان است (آدرس و شناسه ماشین آن)؛ لایسنس این پنل فقط بعد از تأیید شما روی آن کپی می‌شود.",
 "Approve": "تأیید",
 "Each one joins by itself, proven by its tunnel token. Tunnels are not touched. The move closes by itself after 7 days or when all have joined.": "هر کدام خودش وصل می‌شود و توکن تانلش هویتش را ثابت می‌کند. به تانل‌ها دست زده نمی‌شود. انتقال بعد از ۷ روز یا وقتی همه وصل شدند خودش بسته می‌شود.",

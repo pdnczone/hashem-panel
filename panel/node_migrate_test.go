@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -267,5 +268,43 @@ func TestNodeMigrateOfferRouteOnly(t *testing.T) {
 	}
 	if _, pattern := mux.Handler(httptest.NewRequest("GET", peerRoutePrefix+"/api/peer/node-offer", nil)); !strings.Contains(pattern, "node-offer") {
 		t.Fatalf("not on the Peer Link route: %q", pattern)
+	}
+}
+
+// A foreign server looks for an offer for 14 days after it first looks, or
+// after `node move`; not forever.
+func TestNodeMigrateWatchWindow(t *testing.T) {
+	old := configDir
+	configDir = t.TempDir()
+	t.Cleanup(func() { configDir = old })
+	now := time.Now()
+	if !nodeMigrateWatching(now) {
+		t.Fatal("the first look")
+	}
+	if !nodeMigrateWatching(now.Add(13 * 24 * time.Hour)) {
+		t.Fatal("within 14 days")
+	}
+	if nodeMigrateWatching(now.Add(15 * 24 * time.Hour)) {
+		t.Fatal("after 14 days")
+	}
+	_ = os.WriteFile(nodeMigrateWatchFile(), []byte(strconv.FormatInt(now.Add(-20*24*time.Hour).Unix(), 10)), 0600)
+	if nodeMigrateWatching(now) {
+		t.Fatal("an old start")
+	}
+	if err := nodeMigrateWatchReset(); err != nil || !nodeMigrateWatching(now) {
+		t.Fatal("node move")
+	}
+	_ = os.WriteFile(nodeMigrateWatchFile(), []byte("garbage"), 0600)
+	if nodeMigrateWatching(now) {
+		t.Fatal("a bad file means not looking")
+	}
+}
+
+// A list that could not be read does not close the move as "all joined".
+func TestNodeMigrateEmptyListKeepsOpen(t *testing.T) {
+	nodeMigrateTest(t)
+	st := nodeMigrateState{Open: true, OpenedAt: time.Now().Unix()}
+	if !nodeMigrateCloseLocked(&st, nil) || !st.Open {
+		t.Fatal("closed on an empty list")
 	}
 }

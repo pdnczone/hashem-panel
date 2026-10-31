@@ -518,7 +518,13 @@ func nodeInviteLocked(name, central string, now time.Time) (nodeCode, nodeInvite
 		return nodeCode{}, nodeInvite{}, err
 	}
 	nodeInvitesPruneLocked(now)
-	if len(nodesF.Invites) >= nodeInvitesMax {
+	manual := 0 // a move's offers (node_migrate.go) do not use up the codes
+	for _, iv := range nodesF.Invites {
+		if iv.Peer == "" {
+			manual++
+		}
+	}
+	if manual >= nodeInvitesMax {
 		return nodeCode{}, nodeInvite{}, fmt.Errorf("at most %d open join codes: cancel some first", nodeInvitesMax)
 	}
 	if len(nodesF.Nodes) >= nodesMax {

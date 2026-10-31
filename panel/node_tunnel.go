@@ -711,7 +711,7 @@ func nodeTunLinks(ctx context.Context) ([]nodeTunLink, []string) {
 	nodesMu.Lock()
 	nodesLoadLocked()
 	for _, rec := range nodesF.Nodes {
-		if nodeSessions[rec.ID] != nil {
+		if nodeSessions[rec.ID] != nil && !rec.Held { // not approved yet: not used for tunnels
 			ids = append(ids, rec.ID)
 		}
 	}

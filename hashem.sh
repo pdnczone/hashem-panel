@@ -8992,8 +8992,8 @@ node_migrate_hint() {
     local d="$PANEL_CONFIG_DIR" mark="$PANEL_CONFIG_DIR/node_migrate_hint"
     [[ -f $mark || -f $d/node.json ]] && return 0
     grep -q '"never": *true' "$d/node_migrate.json" 2>/dev/null && return 0
-    if [[ -s $d/peers.json ]] || { grep -q '"role": *"master"' "$d/peer_link.json" 2>/dev/null &&
-        { [[ -f $d/first_tunnel.json ]] || ip link show gre-tunnel >/dev/null 2>&1 || [[ -f /etc/frp/frps.toml ]]; }; }; then
+    if grep -q '"id"' "$d/peers.json" 2>/dev/null || { grep -q '"role": *"master"' "$d/peer_link.json" 2>/dev/null &&
+        { [[ -f $d/first_tunnel.json ]] || ip link show gre-tunnel >/dev/null 2>&1 || [[ -f ${FRP_CONF_DIR:-/etc/frp}/frps.toml ]]; }; }; then
         echo -e "${CYAN}[i] New: manage all your foreign servers from this panel. Open the panel → Nodes → \"Yes, move to nodes\". Running tunnels are not touched.${NC}"
         : >"$mark" 2>/dev/null || true
     fi
@@ -10375,7 +10375,7 @@ Usage:
   hashem settings [show | 2fa off | terminal on|off | terminal-allow [IP ...] | idle MIN]  # panel settings
   hashem license [status | activate KEY | machine-id | deactivate]
   hashem cluster [status | pool add PORT [--mode M] | pool rm|mode ... | member add|rm|drain|resume PORT LINK | join-code | add-hub CODE | events | rules]
-  hashem node-join <hn1.code | -> [--name N] | node [status | leave]   # this server as a node of a central panel
+  hashem node-join <hn1.code | -> [--name N] | node [status | leave | move]   # this server as a node of a central panel (move: look for the Iran panel's move offer again)
   hashem join-hub --bundle hsh1_...|bh1_...|gh1_... | leave-hub --id N | hubs   # foreign side: serve several Iran hubs
   hashem optimize | restore | tune-status
   hashem carrier [status|mode auto|direct|fou:P|wss:P|set direct|fou:P|wss:P|next] # multi-carrier failover

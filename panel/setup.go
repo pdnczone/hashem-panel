@@ -320,7 +320,8 @@ func tunnelExists() bool {
 	}
 	// FRP, and Backhaul without GRE (its first tunnel has no gre-tunnel)
 	for _, f := range []string{filepath.Join(frpDir, "frps.toml"), filepath.Join(frpDir, "frpc.toml"),
-		filepath.Join(backhaulDir, "config.toml"), filepath.Join(backhaulDir, "server.toml"), filepath.Join(backhaulDir, "client.toml")} {
+		filepath.Join(backhaulDir, "config.toml"), filepath.Join(backhaulDir, "server.toml"), filepath.Join(backhaulDir, "client.toml"),
+		filepath.Join(configDir, "server.toml"), filepath.Join(configDir, "client.toml")} { // where old installs kept Backhaul's
 		if _, err := os.Stat(f); err == nil {
 			return true
 		}

@@ -75,6 +75,10 @@ check "dispatch has node-join" 1 "$(grep -c '^        node-join) shift; cli_node
 # the move-to-nodes hint after an update: once, only on an Iran panel with
 # foreign servers, never on a node or after "Don't ask again"
 PANEL_CONFIG_DIR="$T/conf"; mkdir -p "$PANEL_CONFIG_DIR"
+ip() { return 1; }          # hermetic: no gre-tunnel on this host
+FRP_CONF_DIR="$T/no-frp"    # ... and no frps.toml
+echo '{"peers":[]}' > "$PANEL_CONFIG_DIR/peers.json"
+check "an empty peer list: no hint" "" "$(node_migrate_hint)"
 check "no foreign servers: no hint" "" "$(node_migrate_hint)"
 echo '{"peers":[{"id":2}]}' > "$PANEL_CONFIG_DIR/peers.json"
 check "an Iran panel: the hint" 1 "$(node_migrate_hint | grep -c 'move to nodes')"

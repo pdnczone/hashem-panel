@@ -244,6 +244,9 @@ func buildSetupPlan(wanted string, relay int) setupPlan {
 	if p.Side == "" {
 		p.Side = ft.Side
 	}
+	if p.Side != "" {
+		p.Exists = true // a server whose side is known has a tunnel, whatever file it lives in
+	}
 	gre := map[string]bool{ft.LocalGre: true, ft.PeerGre: true}
 	peers := loadPeers()
 	for _, x := range peers {

@@ -155,7 +155,7 @@ func TestNodeHelperProcess(t *testing.T) {
 	case "migrate": // a foreign server of a central's tunnel: NODE_HELPER_CODE is the offer, NODE_HELPER_LIC unused
 		_ = savePeerConfig(PeerConfig{Role: "worker", PeerSecret: os.Getenv("NODE_HELPER_TOKEN"), PeerURL: "http://192.0.2.1"})
 		firstTunnelInfo = func() firstTunnel { return firstTunnel{Exists: true, Side: "foreign", RemotePub: "192.0.2.1"} }
-		nodeMigrateFetch = func() ([]byte, string, error) {
+		nodeMigrateFetch = func(context.Context) ([]byte, string, error) {
 			reached := os.Getenv("NODE_HELPER_REACHED")
 			if reached == "" { // where the offer says, as on the real path
 				var o nodeMigrateOffer

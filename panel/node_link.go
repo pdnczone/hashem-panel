@@ -692,6 +692,14 @@ func nodeJoin(ctx context.Context, code, name string) (nodeSelf, error) {
 		return nodeSelf{}, err
 	}
 	defer nc.c.Close()
+	// the role again before the code is used: another join (or becoming a
+	// central) during the dial wins, and the central keeps no ghost node
+	nodesMu.Lock()
+	now, err := nodeSelfLoad()
+	nodesMu.Unlock()
+	if err != nil || now.Role != cur.Role || now.JoinedAt != cur.JoinedAt {
+		return nodeSelf{}, errors.New("this panel's role changed while joining: try again")
+	}
 	if err := nc.send(nodeFrame{T: "enroll", Proto: nodeProto, Secret: c.Secret, Name: name, Version: panelVersion}); err != nil {
 		return nodeSelf{}, err
 	}
@@ -710,6 +718,7 @@ func nodeJoin(ctx context.Context, code, name string) (nodeSelf, error) {
 	defer nodesMu.Unlock()
 	// the role again: another join (or becoming a central) during the dial wins
 	if now, err := nodeSelfLoad(); err != nil || now.Role != cur.Role || now.JoinedAt != cur.JoinedAt {
+		log.Printf("nodes: joined %s as node %d, but this panel's role changed meanwhile: remove node %d on that central", c.URL, f.NodeID, f.NodeID)
 		return nodeSelf{}, errors.New("this panel's role changed while joining: try again")
 	}
 	return s, nodeSelfSave(s)

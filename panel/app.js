@@ -12050,14 +12050,16 @@ function migrateCard(m, compact) {
   const peers = m.peers || [];
   const list = `<ul class="qs-hint">${peers.map(p => `<li><b>${esc(p.name)}</b> <span class="lm-num">${esc(p.ip || '')}</span> · ${p.joined
     ? esc(tr('', 'joined'))
-    : esc(m.open ? tr('', 'waiting: it joins by itself once it runs this version (hashem update on it)') : tr('', 'will join'))}</li>`).join('')}</ul>`;
+    : p.ever ? esc(tr('', 'joined once and was removed: add it with Add a server'))
+    : esc(m.open ? tr('', 'waiting: it joins by itself once it runs this version (hashem update on it; if it was updated more than 14 days ago, hashem node move on it)') : tr('', 'will join'))}</li>`).join('')}</ul>`;
+  const left = peers.filter(p => !p.ever).length;
   if (m.open) {
     return `<div class="lm-row"><div class="lm-head"><div class="lm-name"><b>${esc(tr('', 'Moving your foreign servers here'))}</b>
       <small>${esc(tr('', 'Each one joins by itself, proven by its tunnel token. Tunnels are not touched. The move closes by itself after 7 days or when all have joined.'))}</small></div>
       <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="migrateDo('migrate-stop')">${esc(tr('', 'Stop'))}</button></div>${list}</div>`;
   }
   if (!m.offer) {
-    return compact ? '' : `<div class="lm-row"><div class="lm-head"><div class="lm-name"><b>${esc(tr('', 'Move your foreign servers here'))}</b>
+    return compact || !left ? '' : `<div class="lm-row"><div class="lm-head"><div class="lm-name"><b>${esc(tr('', 'Move your foreign servers here'))}</b>
       <small>${esc(tr('', '{n} foreign servers have a tunnel with this panel.').replace('{n}', peers.length))}</small></div>
       <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="migrateDo('migrate-start')">${esc(tr('', 'Move them'))}</button></div></div>`;
   }
@@ -12095,7 +12097,7 @@ async function migrateBannerLoad() {
 let _ntLinks = null, _ntLinkErrs = [], _ntOpen = {}, _ntJobsRunning = false;
 const ntName = id => id === 0 ? tr('', 'This server (the central)') : ((nodeFind(id) || {}).name || ('#' + id));
 function ntServerOpts(sel) {
-  const ids = [0].concat(((_nodes && _nodes.nodes) || []).filter(n => n.online).map(n => n.id));
+  const ids = [0].concat(((_nodes && _nodes.nodes) || []).filter(n => n.online && !n.held).map(n => n.id));
   return ids.map(id => `<option value="${Number(id)}"${id === sel ? ' selected' : ''}>${esc(ntName(id))}</option>`).join('');
 }
 function ntJobRow(j) {
