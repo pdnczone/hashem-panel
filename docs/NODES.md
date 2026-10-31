@@ -37,6 +37,33 @@ makes it standalone again.
   dials again by itself (every few seconds up to once a minute).
 - Every node keeps its full local panel.
 
+## Manage a node from the central
+
+Pick the node in the server picker at the top of the page (or **Open** on its
+row). Every page then shows that server: dashboard, tunnels, setup,
+customers, cluster, logs, diagnostics, updates and its license. The central
+sends each call over the node's channel and the node runs it with its own
+checks, so it is exactly as if you used the node's panel. Its audit log
+records each change as `via_central`.
+
+Not relayed (they stay on the panel you are logged in to): the terminal, the
+login, password, 2FA, HTTPS and access settings, and the node list. For a
+node's own, open its panel.
+
+## Licenses on nodes
+
+A Pro key active on the central is copied to each node that has no key of
+its own, and activated there by the node's own license check:
+
+- a key that is not locked to one machine goes to every node, and to each
+  new node when it joins;
+- a key locked to a machine goes only to that machine. Each node's machine
+  ID is on its row, and you can activate a node's own key from its License
+  page through the picker;
+- a node that has its own key keeps it; a renewal on the central replaces
+  only the copy the central gave; removing the key on the central removes
+  only that copy.
+
 ## Remove or leave
 
 - **Remove** on the central: the node is told, and becomes a standalone panel

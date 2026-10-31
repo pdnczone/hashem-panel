@@ -497,6 +497,7 @@ func nodeInfoLoop(s *nodeSession) {
 			return
 		}
 		var info nodeInfo
+		syncLic := false
 		if json.Unmarshal(raw, &info) == nil {
 			info = nodeInfoClean(info)
 			now := time.Now()
@@ -505,6 +506,7 @@ func nodeInfoLoop(s *nodeSession) {
 				if rec := nodeFindLocked(s.id); rec != nil {
 					changed := rec.Info.Version != info.Version || rec.Info.License.Active != info.License.Active
 					rec.Info, rec.LastSeen = info, now.Unix()
+					syncLic = true
 					if changed || now.Sub(saved) > nodeSeenFlush {
 						if nodesSaveLocked() == nil {
 							saved = now
@@ -513,6 +515,9 @@ func nodeInfoLoop(s *nodeSession) {
 				}
 			}
 			nodesMu.Unlock()
+			if syncLic {
+				nodeLicenseSync(s, info)
+			}
 		}
 		select {
 		case <-s.done:
@@ -813,6 +818,8 @@ func nodeHandleReq(f nodeFrame) (json.RawMessage, error) {
 	switch f.Method {
 	case "info":
 		return json.Marshal(nodeInfoFn())
+	case "http":
+		return nodeServeHTTP(f.Body)
 	}
 	return nil, fmt.Errorf("this node (%s) does not know %q: update it", panelVersion, f.Method)
 }
@@ -860,7 +867,7 @@ func nodeInfoClean(i nodeInfo) nodeInfo {
 		return string(r[:len(r)-1])
 	}
 	i.Version, i.Hostname, i.PublicIP, i.Side = cut(i.Version, 64), cut(i.Hostname, 128), cut(i.PublicIP, 64), cut(i.Side, 16)
-	i.MachineHash, i.License.Customer = cut(i.MachineHash, 64), cut(i.License.Customer, 128)
+	i.MachineHash, i.License.Customer, i.License.KeyHash = cut(i.MachineHash, 64), cut(i.License.Customer, 128), cut(i.License.KeyHash, 32)
 	if len(i.License.Features) > 32 {
 		i.License.Features = i.License.Features[:32]
 	}
@@ -892,11 +899,16 @@ func nodeLocalInfo() nodeInfo {
 		Tunnels: len(loadPeers()), CPUPct: nodeCPUPct(), MemPct: mem, DiskPct: pctOf(diskPct("/")),
 		UptimeSec: int64(time.Since(panelStartedAt).Seconds()), MachineHash: getMachineHash(), At: time.Now().Unix(),
 	}
+	mu.Lock()
+	key := cfg.LicenseKey
+	mu.Unlock()
 	activeLicenseMu.RLock()
 	if l := activeLicense; l != nil {
 		info.License = nodeLicense{Active: true, Customer: l.Customer, Expires: l.ExpiresAt,
-			Locked: l.MachineHash != "" && l.MachineHash != "*", Features: append([]string(nil), l.Features...)}
+			Locked: l.MachineHash != "" && l.MachineHash != "*", Features: append([]string(nil), l.Features...),
+			KeyHash: nodeKeyHash(key)}
 	}
 	activeLicenseMu.RUnlock()
+	info.License.Reported = true
 	return info
 }

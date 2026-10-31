@@ -770,6 +770,8 @@ func main() {
 	mux.HandleFunc("GET "+base+"/api/nodes", requireAuth(handleNodesGet))
 	mux.HandleFunc("POST "+base+"/api/nodes", requireAuth(requireCSRF(handleNodesPost)))
 	mux.HandleFunc("GET "+nodeLinkPath, handleNodeLink)
+	mux.HandleFunc("GET "+base+"/api/node/{id}/{path...}", requireAuth(handleNodeRelay))
+	mux.HandleFunc("POST "+base+"/api/node/{id}/{path...}", requireAuth(requireCSRF(handleNodeRelay)))
 	mux.HandleFunc("GET "+base+"/api/bagher", requireAuth(handleSSHFwdGet))
 	mux.HandleFunc("POST "+base+"/api/bagher", requireAuth(requireCSRF(handleSSHFwdPost)))
 	mux.HandleFunc("GET "+base+"/api/license", requireAuth(handleLicenseGet))

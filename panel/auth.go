@@ -314,6 +314,10 @@ func authed(r *http.Request) bool {
 
 func requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if nodeRelayed(r) { // from this node's central, over its channel (node_relay.go)
+			next(w, r)
+			return
+		}
 		c, err := r.Cookie("gre_session")
 		if err != nil || c.Value == "" {
 			writeAPIError(w, r, "E-AUTH-01", "")
