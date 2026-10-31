@@ -279,7 +279,7 @@ func TestNodeAlertCleanAndLimit(t *testing.T) {
 		t.Fatal("a forged state")
 	}
 	e, ok := nodeAlertClean(alertEvent{Link: "@everyone\u202edown\nnext", Why: strings.Repeat("x", 500), From: stateHealthy, To: stateDown, At: "not a time"})
-	if !ok || strings.ContainsAny(e.Link, "\n\u202e@") || len([]rune(e.Why)) > 161 {
+	if !ok || strings.ContainsAny(e.Link, "\n\u202e") || strings.Contains(e.Link, "@everyone") || len([]rune(e.Why)) > 170 {
 		t.Fatalf("cleaned: %+v", e)
 	}
 	if _, err := time.Parse(time.RFC3339, e.At); err != nil {

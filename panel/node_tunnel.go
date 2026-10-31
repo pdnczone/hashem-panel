@@ -740,10 +740,13 @@ func nodeTunLinksPlans(ctx context.Context) ([]nodeTunLink, []string, map[int]se
 	var nb [16]byte
 	_, _ = rand.Read(nb[:])
 	nonce := hex.EncodeToString(nb[:])
+	lim := make(chan struct{}, nodeFleetParallel)
 	for _, id := range ids {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
+			lim <- struct{}{}
+			defer func() { <-lim }()
 			p, err := nodeTunPlanProof(ctx, id, "", 0, nonce)
 			mu.Lock()
 			defer mu.Unlock()
