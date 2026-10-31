@@ -442,7 +442,7 @@ function goTab(name) {
   if (name === 'spoof') loadSpoof();
   if (name === 'xray') loadXray();
   if (name === 'customers') loadCustomers();
-  if (name === 'nodes') { _ntLinks = null; loadNodes().then(loadNodeTunnels); }
+  if (name === 'nodes') { _ntLinks = null; loadNodes().then(() => { loadNodeTunnels(); nodeFleetLoad(); }); }
   if (name === 'update') loadVersion();
   if (name === 'logs') { refreshLogPeers(); loadLogs(); loadErrors(); armLogFollow(); }
   if (name === 'terminal') termOnShow();
@@ -7734,7 +7734,11 @@ if ($('docCopyBtn')) $('docCopyBtn').onclick = () => { if (doctorData) copyTextS
 // boot: if already logged in, status works; else show login
 (async () => {
   if (NV) { // a node's view: the central's own login, HTTPS, 2FA and terminal are not this page's
-    try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); alertsRefresh(); histRefresh(); advisorRefresh(); }
+    try {
+      await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); alertsRefresh(); histRefresh(); advisorRefresh();
+      const tb = new URLSearchParams(location.search).get('tab'); // opened from the central on a page (its customers list)
+      if (tb && /^[a-z-]{2,20}$/.test(tb) && $('tab-' + tb)) goTab(tb);
+    }
     catch(e) { showApp(); toastErr(tr('', 'Failed'), e.message); }
     return;
   }
@@ -12093,6 +12097,92 @@ async function migrateBannerLoad() {
   } catch (_) { /* offline */ }
 }
 
+// ---- the overview of every server (node_fleet.go) ----
+let _nodeFleet = null;
+async function nodeFleetLoad() {
+  const card = $('nodeFleetCard');
+  if (!card || !_nodes || _nodes.role !== 'central') { if (card) card.hidden = true; return; }
+  card.hidden = false;
+  try { _nodeFleet = await api('/api/nodes', { action: 'fleet' }); } catch (e) { _nodeFleet = { servers: [], totals: {}, errors: [e.message] }; }
+  nodeFleetRender();
+}
+function nodeFleetRender() {
+  const body = $('nodeFleetBody'), f = _nodeFleet;
+  if (!body || !f) return;
+  const t = f.totals || {};
+  const pct = v => (typeof v === 'number' && v >= 0) ? v.toFixed(0) + '%' : '—';
+  const sum = `<div class="cs-sum">${[
+    [String(f.online || 0) + ' / ' + String((f.servers || []).length), tr('', 'Servers online')],
+    [fmtRate(t.speed_down || 0), tr('', 'Download')], [fmtRate(t.speed_up || 0), tr('', 'Upload')],
+    [fmtBytes((t.up || 0) + (t.down || 0)), tr('', 'Total transferred')],
+  ].map(([v, k]) => `<div><b class="lm-num">${esc(v)}</b><span>${esc(k)}</span></div>`).join('')}</div>`;
+  const rows = (f.servers || []).map(s => {
+    const st = !s.online ? ['err', tr('', 'Offline')] : s.held ? ['warn', tr('', 'not approved')] : s.error ? ['err', tr('', 'Not read')]
+      : !s.role ? ['info', tr('', 'Not set up')] : s.health === 'healthy' ? ['ok', tr('', 'Healthy')] : s.health === 'degraded' ? ['warn', tr('', 'Degraded')] : s.health === 'down' ? ['err', tr('', 'Down')] : ['info', s.role ? String(s.health || '—') : tr('', 'Not set up')];
+    const tr0 = s.traffic || {};
+    return `<div class="lm-row${s.online ? '' : ' cut'}"><div class="lm-head"><div class="lm-name"><b>${esc(s.name)}</b>
+      <small class="lm-num">${esc([s.public || '', s.role || '', s.version ? displayVer(s.version) : ''].filter(Boolean).join(' · '))}</small></div>
+      <span class="badge ${st[0]}">${esc(st[1])}</span></div>
+      ${s.error ? `<div class="xr-err">${esc(s.error)}</div>` : ''}
+      <div class="qs-hint lm-num">${esc(tr('', 'Tunnels'))} ${Number(s.tunnels || 0)} · ↓ ${esc(fmtRate(tr0.speed_down || 0))} ↑ ${esc(fmtRate(tr0.speed_up || 0))}
+        · CPU ${esc(pct(s.cpu_pct))} · RAM ${esc(pct(s.mem_pct))} · ${esc(tr('', 'Disk'))} ${esc(pct(s.disk_pct))}${s.license_ok ? '' : ' · ' + esc(tr('', 'No license'))}${s.online && !s.counted && s.traffic ? ' · ' + esc(tr('', 'its traffic is counted at its Iran server')) : ''}</div>
+      ${s.id && s.online && !s.held ? `<div class="lm-acts"><button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openNodeHere(${Number(s.id)})">${esc(tr('', 'Open'))}</button></div>` : ''}
+    </div>`;
+  }).join('');
+  const errs = (f.errors || []).length ? `<div class="qs-hint">${esc(tr('', 'Not read'))}: ${esc(f.errors.join(' · '))}</div>` : '';
+  body.innerHTML = sum + `<div class="lm-list">${rows}</div>` + errs;
+}
+function nodeFleetUpdateOpen() {
+  const nodes = ((_nodes && _nodes.nodes) || []).filter(n => n.online && !n.held);
+  if (!nodes.length) { toastErr(tr('', 'Failed'), tr('', 'No node is online.')); return; }
+  const html = `<div class="qs-hint">${esc(tr('', 'The chosen nodes are updated one at a time, each waited for until it is back on its new version. The first failure stops the rest. Update this server (the central) on its own Update page.'))}</div>
+    <div class="lm-list">${nodes.map(n => `<label class="lm-row"><input type="checkbox" class="fu-pick" value="${Number(n.id)}" checked> <b>${esc(n.name)}</b>
+      <small class="lm-num">${esc(displayVer((n.info && n.info.version) || n.link_version || ''))}</small></label>`).join('')}</div>`;
+  custModal(tr('', 'Update nodes'), html, tr('', 'Update'), async () => {
+    const ids = [...document.querySelectorAll('.fu-pick')].filter(x => x.checked).map(x => Number(x.value));
+    if (!ids.length) throw new Error(tr('', 'Pick at least one node.'));
+    await api('/api/nodes', { action: 'fleet-update', ids });
+    toastOk(tr('', 'Updating the nodes'), tr('', 'Follow it under Tunnels between servers.'));
+    loadNodes();
+  });
+}
+async function nodeFleetBackupsOpen() {
+  let d;
+  try { d = await api('/api/nodes', { action: 'fleet-backups' }); } catch (e) { toastErr(tr('', 'Failed'), e.message); return; }
+  const nodes = ((_nodes && _nodes.nodes) || []).filter(n => n.online && !n.held);
+  const name = id => (nodeFind(id) || {}).name || ('#' + id);
+  const list = (d.backups || []).map(b => `<div class="lm-row"><div class="lm-head"><div class="lm-name"><b>${esc(name(b.node))}</b>
+      <small class="lm-num">${esc(b.name)} · ${esc(fmtBytes(b.size))} · ${esc(nodeAgo(b.time))}</small></div>
+      <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="download('/api/nodes/backup?node=${Number(b.node)}&f=${encodeURIComponent(b.name)}')">${esc(tr('', 'Download'))}</button></div></div>`).join('');
+  const now = nodes.map(n => `<button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="nodeFleetBackupNow(${Number(n.id)})">${esc(n.name)}</button>`).join(' ');
+  custModal(tr('', 'Node backups'), `<div class="qs-hint">${esc(tr('', 'This panel keeps a copy of each node\'s newest backup (made and encrypted by that node\'s Watchdog, with its own key) for {n} days. It checks every 6 hours.').replace('{n}', d.keep_days || 14))}</div>
+    <div class="lm-list">${list || `<div class="qs-hint">${esc(tr('', 'No backups yet.'))}</div>`}</div>
+    ${now ? `<div class="qs-hint u-mt-8">${esc(tr('', 'Copy the newest backup now'))}:</div><div class="lm-acts">${now}</div>` : ''}`);
+}
+async function nodeFleetBackupNow(id) {
+  try {
+    const r = await api('/api/nodes', { action: 'fleet-backup-now', id });
+    toastOk(r.name ? tr('', 'Backup copied') : tr('', 'Nothing new'), r.name || tr('', 'The newest backup is kept already, or the node makes none (its Watchdog, Pro).'));
+    nodeFleetBackupsOpen();
+  } catch (e) { toastErr(tr('', 'Failed'), e.message); }
+}
+async function nodeFleetCustomersOpen() {
+  let d;
+  try { d = await api('/api/nodes', { action: 'fleet-customers' }); } catch (e) { toastErr(tr('', 'Failed'), e.message); return; }
+  const name = id => id === 0 ? tr('', 'This server (the central)') : ((nodeFind(id) || {}).name || ('#' + id));
+  const rows = (d.customers || []).map(c => {
+    const st = c.cut ? ['err', c.cut === 'expired' ? tr('', 'Expired') : c.cut === 'quota' ? tr('', 'Volume used up') : tr('', 'Cut')] : ['ok', tr('', 'Running')];
+    return `<div class="lm-row"><div class="lm-head"><div class="lm-name"><b>${esc(c.name)}</b>
+      <small class="lm-num">${esc(name(c.server))} · ${esc(fmtBytes((c.used_rx || 0) + (c.used_tx || 0)))}${c.quota_gb ? ' / ' + esc(String(c.quota_gb)) + ' GB' : ''}${c.expires_at ? ' · ' + esc(tr('', 'until')) + ' ' + esc(custDate(c.expires_at)) : ''}</small></div>
+      <span class="badge ${st[0]}">${esc(st[1])}</span></div>
+      <div class="lm-acts"><button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="${c.server ? `custModalClose(); openNodeHere(${Number(c.server)}, 'customers')` : `custModalClose(); goTab('customers')`}">${esc(tr('', 'Open'))}</button></div></div>`;
+  }).join('');
+  custModal(tr('', 'Customers of every server'), `<div class="lm-list">${rows || `<div class="qs-hint">${esc(tr('', 'No customers on these servers.'))}</div>`}</div>
+    ${(d.errors || []).length ? `<div class="qs-hint">${esc(tr('', 'Not read'))}: ${esc(d.errors.join(' · '))}</div>` : ''}`);
+}
+function custModalClose() { const ov = $('custModal'); if (ov) modalHide(ov); }
+const displayVer = v => String(v || '').replace(/^v?/, 'v');
+
 // ---- tunnels between servers (node_tunnel.go): made and removed from here ----
 let _ntLinks = null, _ntLinkErrs = [], _ntOpen = {}, _ntJobsRunning = false;
 const ntName = id => id === 0 ? tr('', 'This server (the central)') : ((nodeFind(id) || {}).name || ('#' + id));
@@ -12103,7 +12193,7 @@ function ntServerOpts(sel) {
 function ntJobRow(j) {
   const st = j.state === 'done' ? ['ok', tr('', 'Done')] : j.state === 'failed' ? ['err', tr('', 'Failed')] : ['info', tr('', 'Working…')];
   const open = j.id in _ntOpen ? _ntOpen[j.id] : j.state !== 'done';
-  const what = j.kind === 'remove' ? tr('', 'Removing a tunnel') : tr('', 'Making a tunnel');
+  const what = j.kind === 'remove' ? tr('', 'Removing a tunnel') : j.kind === 'update' ? tr('', 'Updating nodes') : tr('', 'Making a tunnel');
   return `<details class="lm-row"${open ? ' open' : ''} ontoggle="_ntOpen[${Number(j.id)}] = this.open"><summary class="lm-head"><div class="lm-name"><b>${esc(what)}</b>
     <small>${esc(ntName(j.server))} → ${esc(ntName(j.client))}</small></div><span class="badge ${st[0]}">${esc(st[1])}</span></summary>
     <pre class="cs-code">${esc(j.log || '')}</pre></details>`;
@@ -12267,6 +12357,7 @@ async function nodeViewOpen() {
   f.title = tr('', 'Node');
   const q = new URLSearchParams({ nv: String(id), lang: currentLang || 'en', t: document.documentElement.dataset.t || 'dark' });
   if (document.documentElement.dataset.acc) q.set('acc', document.documentElement.dataset.acc);
+  if (_nodeViewTab) { q.set('tab', _nodeViewTab); _nodeViewTab = ''; }
   f.src = BASE + '/?' + q.toString();
   box.appendChild(f);
 }
@@ -12310,7 +12401,8 @@ async function nodeViewEnded() {
   try { sessionStorage.setItem('hashemNodeEnded', String(Date.now())); } catch (_) { /* private mode: no cap across the reload */ }
   setTimeout(() => location.reload(), r ? 0 : 3000); // not answering: give a restart a moment
 }
-function openNodeHere(id) { nodePickSet(id); }
+let _nodeViewTab = '';
+function openNodeHere(id, tab) { _nodeViewTab = tab || ''; nodePickSet(id); }
 (function initNodePick() {
   if (NV) {
     // what this page cannot do for a node: the central's login, access,

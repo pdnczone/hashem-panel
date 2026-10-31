@@ -197,6 +197,9 @@ type nodeSession struct {
 
 var nodeSessions = map[int]*nodeSession{} // nodesMu
 
+// nodeInfoLoops: the running info loops (a test waits for them to end).
+var nodeInfoLoops sync.WaitGroup
+
 func (s *nodeSession) close() {
 	s.once.Do(func() {
 		close(s.done)
@@ -486,7 +489,11 @@ func nodeServeHello(nc *nodeConn, f nodeFrame, key, addr string) {
 		nodeSessionEnd(s)
 		return
 	}
-	go nodeInfoLoop(s)
+	nodeInfoLoops.Add(1)
+	go func() {
+		defer nodeInfoLoops.Done()
+		nodeInfoLoop(s)
+	}()
 	for {
 		fr, err := nc.recv(0, nodeFrameMax)
 		if err != nil {
@@ -519,6 +526,7 @@ func nodeServeHello(nc *nodeConn, f nodeFrame, key, addr string) {
 // nodeSessionEnd drops s (if it is still the node's session).
 func nodeSessionEnd(s *nodeSession) {
 	s.close()
+	nodeAlertsForget(s)
 	nodesMu.Lock()
 	if nodeSessions[s.id] == s {
 		delete(nodeSessions, s.id)
@@ -578,6 +586,15 @@ func nodeInfoLoop(s *nodeSession) {
 			nodesMu.Unlock()
 			if syncLic {
 				nodeLicenseSync(s, info)
+				nodesMu.Lock()
+				name, held := "", true
+				if rec := nodeFindLocked(s.id); rec != nil {
+					name, held = rec.Name, rec.Held
+				}
+				nodesMu.Unlock()
+				if !held { // not approved yet: its alerts are not passed on
+					nodeAlertsForward(s, name)
+				}
 			}
 		}
 		select {
@@ -872,7 +889,7 @@ func nodeRunOnce(s nodeSelf) string {
 			log.Printf("nodes: the central removed this node; it is standalone again (tunnels untouched)")
 			return "bye"
 		case "req":
-			if fr.Method == "info" { // small and quick: never waits behind relayed calls
+			if fr.Method == "info" || fr.Method == "alerts" { // small and quick: never waits behind relayed calls
 				body, err := nodeHandleReq(fr)
 				nodeSendRes(nc, fr.ID, body, err)
 				continue
@@ -919,6 +936,8 @@ func nodeHandleReq(f nodeFrame) (json.RawMessage, error) {
 	switch f.Method {
 	case "info":
 		return json.Marshal(nodeInfoFn())
+	case "alerts":
+		return nodeAlertsSince(f.Body)
 	case "http":
 		return nodeServeHTTP(f.Body)
 	}

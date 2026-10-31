@@ -114,9 +114,10 @@ type nodeRequest struct {
 	HostKey  string `json:"host_key"`
 	// tunnels between servers (node_tunnel.go)
 	nodeTunReq
-	PeerID int `json:"peer_id"`
-	Hub    int `json:"hub"`
-	Left   int `json:"left"`
+	PeerID int   `json:"peer_id"`
+	Hub    int   `json:"hub"`
+	Left   int   `json:"left"`
+	IDs    []int `json:"ids"` // fleet-update: the nodes, in order
 }
 
 func handleNodesPost(w http.ResponseWriter, r *http.Request) {
@@ -343,6 +344,79 @@ func handleNodesPost(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			LogSecurityAudit("node_"+strings.ReplaceAll(req.Action, "-", "_"), cfg.Username, ClientIP(r), "")
 		}
+	case "fleet": // the overview of every server (node_fleet.go)
+		if !isCentral() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), nodeTunPlanTO)
+		v := nodeFleetOverview(ctx)
+		cancel()
+		writeJSON(w, v)
+		return
+	case "fleet-customers":
+		if !isCentral() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), nodeTunPlanTO)
+		list, errs := nodeFleetCustomers(ctx)
+		cancel()
+		writeJSON(w, map[string]any{"customers": list, "errors": errs})
+		return
+	case "fleet-backups":
+		if !isCentral() {
+			return
+		}
+		writeJSON(w, map[string]any{"backups": nodeBackupsList(), "keep_days": int(nodeBackupKeep.Hours() / 24)})
+		return
+	case "fleet-backup-now":
+		if !isCentral() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+		name, berr := nodeBackupPull(ctx, req.ID)
+		cancel()
+		if berr != nil {
+			writeAPIError(w, r, "E-NODE-04", berr.Error())
+			return
+		}
+		writeJSON(w, map[string]any{"status": "ok", "name": name, "backups": nodeBackupsList()})
+		return
+	case "fleet-update":
+		if !isCentral() {
+			return
+		}
+		var ids []int // in the order asked, once each
+		for _, id := range req.IDs {
+			if !slices.Contains(ids, id) {
+				ids = append(ids, id)
+			}
+		}
+		if len(ids) == 0 || len(ids) > nodesMax {
+			writeAPIError(w, r, "E-NODE-01", errNodeFleetIDs.Error())
+			return
+		}
+		nodesMu.Lock()
+		for _, id := range ids {
+			rec := nodeFindLocked(id)
+			if rec == nil || id < 1 {
+				err = errNodeUnknown(id)
+			} else if rec.Held {
+				err = nodeErr{"E-NODE-01", fmt.Sprintf("node %d is not approved yet", id)}
+			}
+		}
+		nodesMu.Unlock()
+		if err != nil {
+			writeAPIError(w, r, nodeErrCode(err), err.Error())
+			return
+		}
+		jid, jerr := nodeJobStart("update", ids[0], ids[len(ids)-1], ids, func(j *nodeTunJob) error { return nodeFleetUpdate(context.Background(), j, ids) })
+		if jerr != nil {
+			writeAPIError(w, r, nodeErrCode(jerr), jerr.Error())
+			return
+		}
+		LogSecurityAudit("node_fleet_update", cfg.Username, ClientIP(r), fmt.Sprintf("ids=%v", ids))
+		writeJSON(w, map[string]any{"status": "ok", "job": jid})
+		return
 	case "tunnel-forget": // a left-over server end removed by hand on its server
 		if !isCentral() {
 			return

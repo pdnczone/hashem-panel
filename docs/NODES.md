@@ -96,6 +96,28 @@ with a token tied to your login on the central, so even a node that was
 broken into cannot act as the central. What a node sends is never shown as a
 web page of the central: files it sends are downloads.
 
+## All servers
+
+On the central, the Nodes page shows **All servers**: each server's health,
+tunnels, speeds, CPU, RAM and disk, read live from it, and the totals.
+A tunnel between two of your servers is counted once, at its Iran server,
+so the totals are not doubled.
+
+- **Update nodes**: pick the nodes; they are updated one at a time, each
+  waited for until it is back on its new version. The first failure stops
+  the rest. The central itself is updated on its own Update page.
+- **Backups**: the central keeps a copy of each node's newest backup for
+  14 days (checked every 6 hours, or **now** per node). The node's
+  Watchdog makes the backup and encrypts it with that node's own key, so
+  the copy is only readable with that key. A node without Watchdog (Pro)
+  has no backups to copy.
+- **Customers**: the customers of every server in one list; **Open** goes
+  to that server's Customers page.
+- **Alerts**: when Telegram or a webhook alert is set up on the central,
+  the nodes' tunnel and resource alerts are sent with it too, named by the
+  node. Each node keeps its own alerts as well. A node that joined by a
+  move sends none until you approve it.
+
 ## Tunnels between servers
 
 On the Nodes page, **New tunnel** makes a tunnel between two of your servers

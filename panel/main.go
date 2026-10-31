@@ -775,6 +775,7 @@ func main() {
 	// Nodes: the central's list and join codes; the channel nodes dial
 	mux.HandleFunc("GET "+base+"/api/nodes", requireAuth(handleNodesGet))
 	mux.HandleFunc("POST "+base+"/api/nodes", requireAuth(requireCSRF(handleNodesPost)))
+	mux.HandleFunc("GET "+base+"/api/nodes/backup", requireAuth(handleNodeBackupGet))
 	mux.HandleFunc("GET "+nodeLinkPath, handleNodeLink)
 	// a node shown in its sandboxed frame: the token is its only credential
 	for _, m := range []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"} {
@@ -815,6 +816,7 @@ func main() {
 	go startMeshLoop()
 	go startNodeLoop()
 	go startNodeMigrateWatch()
+	go startNodeBackups()
 	go startLimitsLoop()
 	go func() {
 		cc := loadCarrierConfig()
