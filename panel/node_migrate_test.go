@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // nodeMigrateTest: a standalone Iran panel with its first tunnel (token
@@ -94,6 +95,12 @@ func TestNodeMigrateOfferAndJoin(t *testing.T) {
 	if out, err := c.CombinedOutput(); err == nil || !strings.Contains(string(out), "not made with this tunnel's token") {
 		t.Fatalf("a forged offer: %v\n%s", err, out)
 	}
+	// a central at another address than where the Iran panel answered
+	c = nodeHelper(t, nd, "migrate", string(fb2(o)), 0)
+	c.Env = append(c.Env, "NODE_HELPER_TOKEN=peer3-token", "NODE_HELPER_REACHED=192.0.2.250")
+	if out, err := c.CombinedOutput(); err == nil || !strings.Contains(string(out), "where the Iran panel answered") {
+		t.Fatalf("another address: %v\n%s", err, out)
+	}
 	// the real one: it joins, under the peer's name
 	ob, _ := json.Marshal(o)
 	c = nodeHelper(t, nd, "migrate", string(ob), 0)
@@ -153,6 +160,8 @@ func TestNodeMigratePeersOnlyReal(t *testing.T) {
 	}
 }
 
+func fb2(o nodeMigrateOffer) []byte { b, _ := json.Marshal(o); return b }
+
 func TestNodeMigrateLaterNever(t *testing.T) {
 	nodeMigrateTest(t)
 	self := nodeSelf{}
@@ -174,5 +183,89 @@ func TestNodeMigrateLaterNever(t *testing.T) {
 	}
 	if v := nodeMigrateView(nodeSelf{Role: nodeRoleNode}); v != nil {
 		t.Fatal("a node is offered the move")
+	}
+}
+
+// The move closes by itself: after its 7 days, or when every foreign server
+// has joined; a server that joined once is not offered again after removal.
+func TestNodeMigrateWindow(t *testing.T) {
+	central := nodeMigrateTest(t)
+	self := nodeSelf{}
+	if err := nodeMigrateAction(self, "migrate-start"); err != nil {
+		t.Fatal(err)
+	}
+	self, _ = nodeSelfLoad()
+	st := nodeMigrateLoad()
+	st.OpenedAt = time.Now().Add(-8 * 24 * time.Hour).Unix()
+	_ = nodeMigrateSave(st)
+	if w := nodeMigrateOfferCall(t, central, "peer3-token"); w.Code != http.StatusNotFound {
+		t.Fatalf("after 7 days: %d", w.Code)
+	}
+	if v := nodeMigrateView(self); v["open"] != false || v["offer"] != false || nodeMigrateLoad().Open {
+		t.Fatalf("not closed: %v", v)
+	}
+	// open again; peer 3 joined once and was removed since: no offer for it
+	_ = nodeMigrateAction(self, "migrate-start")
+	nodesMu.Lock()
+	nodesF.Migrated = append(nodesF.Migrated, "peer:3")
+	nodesMu.Unlock()
+	if w := nodeMigrateOfferCall(t, central, "peer3-token"); w.Code != http.StatusNotFound {
+		t.Fatalf("a server that joined once: %d", w.Code)
+	}
+	if w := nodeMigrateOfferCall(t, central, "main-token"); w.Code != 200 {
+		t.Fatalf("the other server: %d", w.Code)
+	}
+	// every server joined: closed
+	nodesMu.Lock()
+	nodesF.Migrated = append(nodesF.Migrated, "main")
+	nodesMu.Unlock()
+	if v := nodeMigrateView(self); v["open"] != false {
+		t.Fatalf("all joined, still open: %v", v)
+	}
+}
+
+// A server that joined by the move gets no license copy until approved.
+func TestNodeMigrateHeldNoLicense(t *testing.T) {
+	nodeTestCentral(t)
+	oldLic, oldKey := activeLicense, cfg.LicenseKey
+	t.Cleanup(func() {
+		activeLicenseMu.Lock()
+		activeLicense = oldLic
+		activeLicenseMu.Unlock()
+		mu.Lock()
+		cfg.LicenseKey = oldKey
+		mu.Unlock()
+	})
+	activeLicenseMu.Lock()
+	activeLicense = &LicensePayload{Customer: "test", ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	activeLicenseMu.Unlock()
+	mu.Lock()
+	cfg.LicenseKey = "central-key"
+	mu.Unlock()
+	nodesMu.Lock()
+	nodesF.Nodes = append(nodesF.Nodes, nodeRecord{ID: 1, Name: "moved", Key: "K1", Peer: "main", Held: true})
+	nodesMu.Unlock()
+	// a held node: returns before any call (the session has no connection)
+	nodeLicenseSync(&nodeSession{id: 1}, nodeInfo{Proto: 1, License: nodeLicense{Reported: true}})
+	nodesMu.Lock()
+	pushed := nodeFindLocked(1).LicensePushed
+	nodesMu.Unlock()
+	if pushed != "" {
+		t.Fatal("a held node got the key")
+	}
+}
+
+// The offer is only on the Peer Link route, not under the panel's base path.
+func TestNodeMigrateOfferRouteOnly(t *testing.T) {
+	mux := http.NewServeMux()
+	mountPeerRoutes(mux, "/base")
+	r := httptest.NewRequest("GET", "/base/api/peer/node-offer", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code == 200 {
+		t.Fatalf("served under the base path: %d", w.Code)
+	}
+	if _, pattern := mux.Handler(httptest.NewRequest("GET", peerRoutePrefix+"/api/peer/node-offer", nil)); !strings.Contains(pattern, "node-offer") {
+		t.Fatalf("not on the Peer Link route: %q", pattern)
 	}
 }

@@ -503,7 +503,10 @@ func nodeLicenseSync(s *nodeSession, info nodeInfo) {
 	activeLicenseMu.RUnlock()
 	nodesMu.Lock()
 	pushed := ""
-	if rec := nodeFindLocked(s.id); rec != nil {
+	if rec := nodeFindLocked(s.id); rec != nil && rec.Held {
+		nodesMu.Unlock()
+		return // joined by the move and not approved yet (node_migrate.go)
+	} else if rec != nil {
 		pushed = rec.LicensePushed
 	}
 	nodesMu.Unlock()

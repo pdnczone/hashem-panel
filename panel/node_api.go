@@ -173,6 +173,22 @@ func handleNodesPost(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]any{"status": "ok", "token": nodeViewNew(c.Value, req.ID)})
 		return
+	case "approve": // a server that joined by the move (node_migrate.go)
+		if !isCentral() {
+			return
+		}
+		nodesMu.Lock()
+		nodesLoadLocked()
+		if rec := nodeFindLocked(req.ID); rec == nil {
+			err = errNodeUnknown(req.ID)
+		} else {
+			rec.Held = false
+			err = nodesSaveLocked()
+		}
+		nodesMu.Unlock()
+		if err == nil {
+			LogSecurityAudit("node_approved", cfg.Username, ClientIP(r), fmt.Sprintf("id=%d", req.ID))
+		}
 	case "rename":
 		if !isCentral() {
 			return

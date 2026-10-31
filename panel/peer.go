@@ -278,7 +278,9 @@ func mountPeerRoutes(mux *http.ServeMux, base string) {
 		{"POST", "/api/peer/wrap-request", handlePeerWrapRequest},
 	}
 	for _, rt := range routes {
-		mux.HandleFunc(rt.method+" "+base+rt.path, requirePeerAuth(rt.h))
+		if rt.path != "/api/peer/node-offer" { // a foreign server's only: not under the base path
+			mux.HandleFunc(rt.method+" "+base+rt.path, requirePeerAuth(rt.h))
+		}
 		guard := requirePeerSecretHidden
 		switch rt.path {
 		case "/api/peer/handshake", "/api/peer/ping", "/api/peer/swap-request", "/api/peer/wrap-request", "/api/peer/node-offer":
