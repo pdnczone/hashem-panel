@@ -50,7 +50,7 @@ const (
 // Region blocking is removed so Sentinel works smoothly anywhere.
 func CheckSentinelEligibility(serverRole, countryCode string) (bool, string) {
 	if !(HasFeature("sentinel") || HasFeature("*") || HasFeature("all")) {
-		return false, "License missing required 'sentinel' feature"
+		return false, "Sentinel is included in Community edition"
 	}
 	return true, ""
 }
