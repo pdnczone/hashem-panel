@@ -8,6 +8,9 @@ package main
 // It only reads.
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -25,6 +28,7 @@ type setupPlanPeer struct {
 	PeerGre   string `json:"peer_gre,omitempty"`
 	FrpPort   int    `json:"frp_port,omitempty"`
 	Engine    string `json:"engine,omitempty"`
+	Proof     string `json:"proof,omitempty"` // ?proof=nonce: setupPlanProof of its token
 }
 
 // setupPlanUplink is a tunnel this server dials as the foreign side: the
@@ -33,6 +37,7 @@ type setupPlanUplink struct {
 	Hub     int    `json:"hub"` // 1: the first tunnel; 2 and up: leave-hub id
 	IranPub string `json:"iran_pub"`
 	Engine  string `json:"engine,omitempty"`
+	Proof   string `json:"proof,omitempty"`
 }
 
 type setupPlan struct {
@@ -68,7 +73,76 @@ var setupPlanListening = func(port int) bool {
 func handleSetupPlan(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	relay, _ := strconv.Atoi(q.Get("relay"))
-	writeJSON(w, buildSetupPlan(q.Get("ports"), relay))
+	p := buildSetupPlan(q.Get("ports"), relay)
+	if n := q.Get("proof"); len(n) >= 16 && len(n) <= 64 {
+		setupPlanProve(&p, n)
+	}
+	writeJSON(w, p)
+}
+
+// ---- link proofs ----
+//
+// Both ends of a tunnel hold its token. With ?proof=<nonce> the plan gives,
+// for each tunnel, an HMAC of the central's nonce made with that tunnel's
+// token: the central pairs two ends only when their proofs are equal, so a
+// server that claims another's address cannot be paired with (or have
+// removed) a tunnel it is not an end of. The token itself is never sent.
+
+func setupPlanProof(token, nonce string) string {
+	if token == "" {
+		return ""
+	}
+	m := hmac.New(sha256.New, []byte(token))
+	m.Write([]byte("hashem-link-proof:" + nonce))
+	return hex.EncodeToString(m.Sum(nil)[:16])
+}
+
+// confToken is the token in an FRP (auth.token) or Backhaul (token) config.
+func confToken(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if k = strings.TrimSpace(k); ok && (k == "auth.token" || k == "token") {
+			return strings.Trim(strings.TrimSpace(v), `"' `)
+		}
+	}
+	return ""
+}
+
+// setupPlanTokens: the tokens of this server's tunnels (test hook).
+var setupPlanTokens = func() (peers map[int]string, uplinks map[int]string) {
+	peers, uplinks = map[int]string{}, map[int]string{}
+	for _, p := range loadPeers() {
+		peers[p.ID] = p.Token
+	}
+	if _, tok := currentIranBundle(); tok != "" {
+		peers[0] = tok // the first tunnel of an Iran server
+	}
+	for _, f := range []string{filepath.Join(frpDir, "frpc.toml"), filepath.Join(backhaulDir, "client.toml")} {
+		if tok := confToken(f); tok != "" {
+			uplinks[1] = tok
+			break
+		}
+	}
+	for _, h := range readJoinedHubs() {
+		if h.ID >= 2 && h.Conf != "" {
+			uplinks[h.ID] = confToken(h.Conf)
+		}
+	}
+	return peers, uplinks
+}
+
+func setupPlanProve(p *setupPlan, nonce string) {
+	peers, uplinks := setupPlanTokens()
+	for i := range p.Peers {
+		p.Peers[i].Proof = setupPlanProof(peers[p.Peers[i].ID], nonce)
+	}
+	for i := range p.Uplinks {
+		p.Uplinks[i].Proof = setupPlanProof(uplinks[p.Uplinks[i].Hub], nonce)
+	}
 }
 
 // ---- the first tunnel ----
@@ -108,37 +182,41 @@ var firstTunnelInfo = func() firstTunnel {
 	if b, err := os.ReadFile(firstTunnelFile()); err == nil {
 		_ = json.Unmarshal(b, &rec)
 	}
-	ft := firstTunnel{Exists: tunnelExists()}
-	if !ft.Exists {
-		return ft
+	if !tunnelExists() {
+		return firstTunnel{}
 	}
-	st := currentLocal()
+	return firstTunnelFrom(currentLocal(), rec)
+}
+
+// firstTunnelFrom: the live state first; the record only where the live
+// state has no answer, and only when it is about the same side.
+func firstTunnelFrom(st tunnelStatus, rec firstTunnelRec) firstTunnel {
+	ft := firstTunnel{Exists: true}
 	switch r := strings.ToLower(st.Role); {
 	case strings.Contains(r, "iran") || r == "master":
 		ft.Side = "iran"
 	case strings.Contains(r, "foreign") || strings.Contains(r, "kharej"):
 		ft.Side = "foreign"
-	default:
-		ft.Side = rec.Side
 	}
+	same := rec.Side != "" && rec.Side == ft.Side
 	ft.Engine = st.Engine
-	// the other server: gre-tunnel's outer remote, then the record (when it
-	// is about the same side), then a public address in the engine's config
+	// the other server: gre-tunnel's outer remote, then a public address in
+	// the engine's config, then the record
 	pub := func(s string) bool { return validPublicIP(s, 0) }
 	switch {
 	case pub(st.GrePeer):
 		ft.RemotePub = st.GrePeer
-	case rec.Side == ft.Side && pub(rec.RemotePub):
-		ft.RemotePub = rec.RemotePub
 	case pub(st.RemotePub):
 		ft.RemotePub = st.RemotePub
+	case same && pub(rec.RemotePub):
+		ft.RemotePub = rec.RemotePub
 	}
 	if in := strings.SplitN(st.Gre.Inner, "/", 2)[0]; in != "" {
 		ft.LocalGre, ft.PeerGre = in, grePeerInner(st.Gre.Inner)
-	} else if rec.Side == ft.Side {
+	} else if same {
 		ft.LocalGre, ft.PeerGre = rec.LocalGre, rec.PeerGre
 	}
-	if ft.Engine == "" && rec.Side == ft.Side {
+	if ft.Engine == "" && same {
 		ft.Engine = rec.Engine
 	}
 	return ft

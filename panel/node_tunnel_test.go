@@ -45,7 +45,19 @@ func (f *nodeTunFake) call(_ context.Context, id int, method, path string, body 
 	}
 	switch p {
 	case "/api/setup/plan":
-		b, _ := json.Marshal(pl)
+		cp := *pl
+		if _, q, _ := strings.Cut(path, "?"); strings.HasPrefix(q, "proof=") { // every tunnel here shares one token
+			n := strings.TrimPrefix(q, "proof=")
+			cp.Peers = append([]setupPlanPeer{}, pl.Peers...)
+			cp.Uplinks = append([]setupPlanUplink{}, pl.Uplinks...)
+			for i := range cp.Peers {
+				cp.Peers[i].Proof = setupPlanProof("tok", n)
+			}
+			for i := range cp.Uplinks {
+				cp.Uplinks[i].Proof = setupPlanProof("tok", n)
+			}
+		}
+		b, _ := json.Marshal(cp)
 		return 200, b, nil
 	case "/api/setup":
 		m := f.body[fmt.Sprintf("%d %s", id, p)]
@@ -500,5 +512,90 @@ func TestSetupPlan(t *testing.T) {
 	p = buildSetupPlan("", 0)
 	if len(p.Uplinks) != 2 || p.Uplinks[0].Hub != 1 || p.Uplinks[0].IranPub != "203.0.113.5" || p.Uplinks[1].Hub != 2 || len(p.Peers) != 0 {
 		t.Fatalf("uplinks: %+v peers %+v", p.Uplinks, p.Peers)
+	}
+}
+
+// The live state wins over the record; the record fills in only for the same side.
+func TestFirstTunnelFrom(t *testing.T) {
+	rec := firstTunnelRec{Side: "foreign", RemotePub: "203.0.113.1", LocalGre: "10.10.10.1", PeerGre: "10.10.10.2", Engine: "frp"}
+	for _, c := range []struct {
+		name string
+		st   tunnelStatus
+		want firstTunnel
+	}{
+		{"gre-tunnel's remote", tunnelStatus{Role: "foreign", GrePeer: "198.51.100.9", Gre: greState{Inner: "10.12.0.1/30"}, Engine: "frp"},
+			firstTunnel{Exists: true, Side: "foreign", RemotePub: "198.51.100.9", LocalGre: "10.12.0.1", PeerGre: "10.12.0.2", Engine: "frp"}},
+		{"Backhaul without GRE: its config before the record", tunnelStatus{Role: "foreign", RemotePub: "198.51.100.7", Engine: "backhaul"},
+			firstTunnel{Exists: true, Side: "foreign", RemotePub: "198.51.100.7", LocalGre: "10.10.10.1", PeerGre: "10.10.10.2", Engine: "backhaul"}},
+		{"a private remote: the record", tunnelStatus{Role: "foreign", RemotePub: "10.10.10.2"},
+			firstTunnel{Exists: true, Side: "foreign", RemotePub: "203.0.113.1", LocalGre: "10.10.10.1", PeerGre: "10.10.10.2", Engine: "frp"}},
+		{"the record of the other side is not used", tunnelStatus{Role: "iran"},
+			firstTunnel{Exists: true, Side: "iran"}},
+	} {
+		if got := firstTunnelFrom(c.st, rec); got != c.want {
+			t.Errorf("%s: %+v, want %+v", c.name, got, c.want)
+		}
+	}
+}
+
+// Two ends are paired only when they prove the same token.
+func TestNodeTunLinksProof(t *testing.T) {
+	f := nodeTunTest(t)
+	f.plans[1].Peers = []setupPlanPeer{{ID: 4, RemotePub: "192.0.2.7"}}
+	f.plans[2].Uplinks = []setupPlanUplink{{Hub: 1, IranPub: "198.51.100.1"}}
+	proofs := map[int]string{1: "tok-a", 2: "tok-a"}
+	old := f.call
+	nodeAPIFn = func(ctx context.Context, id int, method, path string, body any) (int, []byte, error) {
+		st, b, err := old(ctx, id, method, path, body)
+		_, q, _ := strings.Cut(path, "?")
+		if n := strings.TrimPrefix(q, "proof="); strings.HasPrefix(q, "proof=") && st == 200 {
+			var p setupPlan
+			_ = json.Unmarshal(b, &p)
+			for i := range p.Peers {
+				p.Peers[i].Proof = setupPlanProof(proofs[id], n)
+			}
+			for i := range p.Uplinks {
+				p.Uplinks[i].Proof = setupPlanProof(proofs[id], n)
+			}
+			b, _ = json.Marshal(p)
+		}
+		return st, b, err
+	}
+	if links, _ := nodeTunLinks(context.Background()); len(links) != 1 {
+		t.Fatalf("the same token: %+v", links)
+	}
+	proofs[2] = "tok-b" // a server that only claims the address
+	if links, _ := nodeTunLinks(context.Background()); len(links) != 0 {
+		t.Fatalf("another token: %+v", links)
+	}
+	if setupPlanProof("", "n") != "" || setupPlanProof("x", "n1") == setupPlanProof("x", "n2") {
+		t.Fatal("proofs")
+	}
+}
+
+func TestNodeTunBundleTransport(t *testing.T) {
+	d := nodeTunDraft{Server: setupPlan{Public: "198.51.100.1"}, FrpPort: 7001, LocalGre: "10.12.0.2", PeerGre: "10.12.0.1"}
+	q := nodeTunReq{Engine: "frp", Ports: "443"}
+	if err := nodeTunBundleCheck(MakeBundle("198.51.100.1", 7001, "10.12.0.2", "10.12.0.1", "tok", []int{443}), q, d); err != nil {
+		t.Fatal(err)
+	}
+	if err := nodeTunBundleCheck(MakeBundle("198.51.100.1", 7001, "10.12.0.2", "10.12.0.1", "tok", []int{443}, "kcp"), q, d); err == nil {
+		t.Fatal("another transport")
+	}
+	if (&nodeTunReq{Server: 1, Client: 0, Engine: "frp", Ports: "1000-1002"}).check() == nil {
+		t.Fatal("a port range for FRP")
+	}
+	if err := (&nodeTunReq{Server: 0, Client: 0, Engine: "backhaul", Ports: "8080=80"}).check(); err == nil || !strings.Contains(err.Error(), "two different") {
+		t.Fatalf("backhaul mapping: %v", err)
+	}
+}
+
+// A config without a running tunnel is a problem before anything is made.
+func TestNodeTunStaleConfig(t *testing.T) {
+	f := nodeTunTest(t)
+	f.plans[2].Exists = true
+	d, _ := nodeTunDraftFor(context.Background(), nodeTunReq{Server: 1, Client: 2, Engine: "frp", Ports: "443"})
+	if !strings.Contains(strings.Join(d.Problems, ";"), "no running tunnel") {
+		t.Fatalf("problems: %v", d.Problems)
 	}
 }

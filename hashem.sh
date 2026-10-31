@@ -6248,6 +6248,7 @@ remove_tunnel() {
 # Non-interactive core: stop/disable units, drop interface, remove FRP files.
 # Panel files/services are never touched here.
 remove_tunnel_force() {
+    rm -f "${PANEL_CONFIG_DIR}/first_tunnel.json" 2>/dev/null # the panel's record of the first tunnel (setup_plan.go)
         echo -e "${CYAN}[*] Removing all tunnel components...${NC}"
         # Stop & disable services
         frps_wss_front_remove ""
@@ -6312,6 +6313,7 @@ remove_base_tunnel() {
     fi
     local d="${HASHEM_SYSTEMD_DIR:-/etc/systemd/system}" u
     echo -e "${CYAN}[*] Removing the first tunnel; the other tunnels keep running...${NC}"
+    rm -f "${PANEL_CONFIG_DIR}/first_tunnel.json" 2>/dev/null
     frps_wss_front_remove ""
     backhaul_udp_remove backhaul-server
     for u in frps frpc backhaul-server backhaul-client backhaul "$TUNNEL_NAME"; do
