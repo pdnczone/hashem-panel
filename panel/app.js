@@ -22,8 +22,11 @@ if (NV) document.documentElement.classList.add('nv');
 // the user working in a node's view keeps the central's login from going idle
 if (NV) {
   let sent = 0;
-  ['pointerdown', 'keydown'].forEach(ev => window.addEventListener(ev, () => {
+  // click, not pointerdown: a tap activates only when it ends
+  ['click', 'keydown'].forEach(ev => window.addEventListener(ev, () => {
     if (Date.now() - sent < 20000) return;
+    const ua = navigator.userActivation;
+    if (ua && !ua.isActive) return; // the central's page would not count it: try the next one
     sent = Date.now();
     try { window.parent.postMessage({ hnv: 'active' }, NV_ORIGIN); } catch (_) { /* not framed */ }
   }, { passive: true, capture: true }));
