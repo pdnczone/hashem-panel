@@ -56,7 +56,27 @@ with a token tied to your login on the central, so even a node that was
 broken into cannot act as the central. What a node sends is never shown as a
 web page of the central: files it sends are downloads.
 
-## Licenses on nodes
+## Tunnels between servers
+
+On the Nodes page, **New tunnel** makes a tunnel between two of your servers
+(this panel counts as one of them). Pick the Iran server (users connect to
+it), the foreign server, the engine and the ports, then **Check**: the
+central asks both servers for a free control port and a free pair of GRE
+addresses, and says what it will do. **Make the tunnel** then:
+
+1. sets up the Iran end (its first tunnel, or one more) and takes the bundle
+   it makes, as in Setup today;
+2. sets up the foreign end with that bundle. A foreign server that already
+   has a tunnel joins as one more Iran hub (Cluster, Pro on that server).
+
+If the foreign end fails, the Iran end is removed again. If that fails too,
+the Iran end is listed as **left over**, with a button to remove it. The
+list shows every tunnel whose two ends are your servers; **Remove both
+ends** removes the foreign end first, then the Iran end.
+
+To change a tunnel's engine or carrier, open the Iran server (the picker)
+and use its Tunnel page: it tells the foreign server, as it does today.
+
 
 A Pro key active on the central is copied to each node that has no key of
 its own, and activated there by the node's own license check:

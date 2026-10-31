@@ -320,6 +320,7 @@ type setupMeta struct {
 	IranGre    string `json:"iran_gre"`
 	ForeignGre string `json:"foreign_gre"`
 	Ports      string `json:"ports"`
+	Engine     string `json:"engine"`
 }
 
 func readSetupMeta() setupMeta {

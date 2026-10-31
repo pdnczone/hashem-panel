@@ -281,6 +281,7 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 | `E-NODE-04` | 502 | the node or server cannot be reached | Check the address and that the server is up; the detail has the network error. |
 | `E-NODE-05` | 500 | cannot save the node settings | The detail names the file: check free space and /etc/gre-panel permissions. |
 | `E-NODE-06` | 403 | not available through the central | Open the node's own panel for this (terminal, logins and the panel's access settings stay local). |
+| `E-NODE-07` | 409 | a tunnel job on these servers is running | Wait for it to finish (its log is on the Nodes page), then try again. |
 
 ## E-SSHFWD-xx — SSHFWD
 
@@ -319,4 +320,4 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 | `E-ACCESS-02` | 401 | current password is incorrect | Verify your current password before changing access settings. |
 | `E-ACCESS-03` | 409 | port conflict detected | The requested port is reserved or used by a tunnel/proxy. Pick a free port. |
 
-Total: 168 codes.
+Total: 169 codes.

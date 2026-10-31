@@ -3130,6 +3130,19 @@
           <div class="xr-err hidden" id="nodeErr" role="alert"></div>
           <div id="nodeBody"><div class="ent-skel u-h-14"></div></div>
         </div>
+        <div class="tunnel-card u-mb-20" id="ntCard" hidden>
+          <div class="tc-header u-bb-ln u-pb-16 u-mb-16">
+            <div>
+              <span class="tc-title u-fs-18 u-fw-700">Tunnels between servers</span>
+              <div class="qs-hint u-mt-4">Make a tunnel between two of these servers from here: both ends are set up in order. Each server keeps its own Tunnel page for anything else.</div>
+            </div>
+            <div class="lm-acts">
+              <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="_ntLinks = null; loadNodeTunnels()">Refresh</button>
+              <button type="button" class="hashem-btn hashem-btn-primary u-btn-30" onclick="openNodeTunnel()">New tunnel</button>
+            </div>
+          </div>
+          <div id="ntBody"></div>
+        </div>
       </section>
       <!-- Customers: tunnels sold to customers (customers.go; loadCustomers in app.js) -->
       <section id="tab-customers" role="tabpanel" hidden>

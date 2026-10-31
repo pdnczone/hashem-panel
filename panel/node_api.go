@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -70,10 +71,12 @@ func handleNodesGet(w http.ResponseWriter, r *http.Request) {
 		for _, iv := range nodesF.Invites {
 			invites = append(invites, map[string]any{"name": iv.Name, "created": iv.Created, "expires": iv.Expires})
 		}
+		left := append([]nodeTunLeft{}, nodesF.Left...)
 		loadErr := nodesEr
 		nodesMu.Unlock()
 		sort.Slice(list, func(i, j int) bool { return list[i].ID < list[j].ID })
 		out["nodes"], out["invites"], out["jobs"] = list, invites, nodeSSHJobsView()
+		out["tunnel_jobs"], out["left"] = nodeTunJobsView(), left
 		if loadErr != "" {
 			out["error"] = "nodes.json cannot be read: " + loadErr
 		}
@@ -103,6 +106,11 @@ type nodeRequest struct {
 	Password string `json:"password"`
 	SSHKey   string `json:"ssh_key"`
 	HostKey  string `json:"host_key"`
+	// tunnels between servers (node_tunnel.go)
+	nodeTunReq
+	PeerID int `json:"peer_id"`
+	Hub    int `json:"hub"`
+	Left   int `json:"left"`
 }
 
 func handleNodesPost(w http.ResponseWriter, r *http.Request) {
@@ -234,6 +242,84 @@ func handleNodesPost(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, res)
 		return
+	case "tunnel-plan", "tunnel-create": // a tunnel between two servers (node_tunnel.go)
+		if !isCentral() {
+			return
+		}
+		q := req.nodeTunReq
+		if cerr := q.check(); cerr != nil {
+			writeAPIError(w, r, nodeErrCode(cerr), cerr.Error())
+			return
+		}
+		if req.Action == "tunnel-plan" {
+			ctx, cancel := context.WithTimeout(r.Context(), 2*nodeTunPlanTO)
+			d, derr := nodeTunDraftFor(ctx, q)
+			cancel()
+			if derr != nil {
+				writeAPIError(w, r, "E-NODE-04", derr.Error())
+				return
+			}
+			writeJSON(w, d)
+			return
+		}
+		id, jerr := nodeTunStart("create", q.Server, q.Client, func(j *nodeTunJob) error { return nodeTunCreate(context.Background(), j, q) })
+		if jerr != nil {
+			writeAPIError(w, r, nodeErrCode(jerr), jerr.Error())
+			return
+		}
+		LogSecurityAudit("node_tunnel_create", cfg.Username, ClientIP(r), fmt.Sprintf("server=%d client=%d engine=%s ports=%s", q.Server, q.Client, q.Engine, q.Ports))
+		writeJSON(w, map[string]any{"status": "ok", "job": id})
+		return
+	case "tunnel-list":
+		if !isCentral() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), nodeTunPlanTO)
+		links, errs := nodeTunLinks(ctx)
+		cancel()
+		writeJSON(w, map[string]any{"links": links, "errors": errs})
+		return
+	case "tunnel-remove":
+		if !isCentral() {
+			return
+		}
+		q := nodeTunRemoveReq{Server: req.Server, Client: req.Client, PeerID: req.PeerID, Hub: req.Hub, Left: req.Left}
+		if q.Left > 0 {
+			nodesMu.Lock()
+			nodesLoadLocked()
+			i := slices.IndexFunc(nodesF.Left, func(l nodeTunLeft) bool { return l.ID == q.Left })
+			if i >= 0 {
+				q.Server, q.Client, q.PeerID = nodesF.Left[i].Server, nodesF.Left[i].Client, nodesF.Left[i].PeerID
+			}
+			nodesMu.Unlock()
+			if i < 0 {
+				writeAPIError(w, r, "E-NODE-01", "no such left-over tunnel")
+				return
+			}
+		} else if q.Server == q.Client || q.Server < 0 || q.Client < 0 || q.PeerID < 0 || q.Hub < 1 {
+			writeAPIError(w, r, "E-NODE-01", "bad tunnel")
+			return
+		}
+		id, jerr := nodeTunStart("remove", q.Server, q.Client, func(j *nodeTunJob) error { return nodeTunRemove(context.Background(), j, q) })
+		if jerr != nil {
+			writeAPIError(w, r, nodeErrCode(jerr), jerr.Error())
+			return
+		}
+		LogSecurityAudit("node_tunnel_remove", cfg.Username, ClientIP(r), fmt.Sprintf("server=%d client=%d peer=%d hub=%d left=%d", q.Server, q.Client, q.PeerID, q.Hub, q.Left))
+		writeJSON(w, map[string]any{"status": "ok", "job": id})
+		return
+	case "tunnel-forget": // a left-over server end removed by hand on its server
+		if !isCentral() {
+			return
+		}
+		nodesMu.Lock()
+		nodesLoadLocked()
+		n := len(nodesF.Left)
+		nodesF.Left = slices.DeleteFunc(nodesF.Left, func(l nodeTunLeft) bool { return l.ID == req.Left })
+		if len(nodesF.Left) != n {
+			err = nodesSaveLocked()
+		}
+		nodesMu.Unlock()
 	default:
 		writeAPIError(w, r, "E-NODE-01", "unknown action")
 		return

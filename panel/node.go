@@ -86,9 +86,10 @@ type nodeInvite struct {
 }
 
 type nodesFile struct {
-	Nodes   []nodeRecord `json:"nodes"`
-	Invites []nodeInvite `json:"invites,omitempty"`
-	NextID  int          `json:"next_id,omitempty"` // ids are never given out twice
+	Nodes   []nodeRecord  `json:"nodes"`
+	Invites []nodeInvite  `json:"invites,omitempty"`
+	NextID  int           `json:"next_id,omitempty"` // ids are never given out twice
+	Left    []nodeTunLeft `json:"left,omitempty"`    // server ends of tunnels whose making failed half-way (node_tunnel.go)
 }
 
 // nodeInfo is what a node reports about itself (the "info" call).
