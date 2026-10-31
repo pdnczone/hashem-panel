@@ -271,6 +271,16 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 | `E-CUST-05` | 409 | not possible in the customer's current state | The detail says what to do first (renew, reset the usage, or set an address). |
 | `E-CUST-06` | 500 | cannot save customers.json | Disk write failed: check free space and /etc/gre-panel permissions. |
 
+## E-NODE-xx — NODE
+
+| Code | HTTP | Meaning | What to do |
+| --- | --- | --- | --- |
+| `E-NODE-01` | 400 | bad nodes request | The detail names the field; fix it and try again. |
+| `E-NODE-02` | 409 | not possible in this panel's role | The detail says what to do first (leave the central, remove the nodes, or make this panel the central). |
+| `E-NODE-03` | 404 | unknown node | Refresh the page; it may have been removed. |
+| `E-NODE-04` | 502 | the node or server cannot be reached | Check the address and that the server is up; the detail has the network error. |
+| `E-NODE-05` | 500 | cannot save the node settings | The detail names the file: check free space and /etc/gre-panel permissions. |
+
 ## E-SSHFWD-xx — SSHFWD
 
 | Code | HTTP | Meaning | What to do |
@@ -308,4 +318,4 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 | `E-ACCESS-02` | 401 | current password is incorrect | Verify your current password before changing access settings. |
 | `E-ACCESS-03` | 409 | port conflict detected | The requested port is reserved or used by a tunnel/proxy. Pick a free port. |
 
-Total: 162 codes.
+Total: 167 codes.

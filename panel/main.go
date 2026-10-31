@@ -530,7 +530,7 @@ func main() {
 			fmt.Println(panelVersion)
 			return
 		case "--help", "-h", "help":
-			fmt.Println("Usage: gre-panel [password <new-password> | info | version | tls [status|issue|renew|remove|ip|custom] | settings [show|2fa off|terminal on|off|idle N] | doctor [check|fix] | tls-proxy | pathtest | cluster [status|pool|member|join-code|add-hub|events|rules|reset] | license [status|activate|deactivate]]")
+			fmt.Println("Usage: gre-panel [password <new-password> | info | version | tls [status|issue|renew|remove|ip|custom] | settings [show|2fa off|terminal on|off|idle N] | doctor [check|fix] | tls-proxy | pathtest | cluster [status|pool|member|join-code|add-hub|events|rules|reset] | license [status|activate|deactivate] | node [status|join CODE|leave]]")
 			return
 		case "tls-proxy":
 			os.Exit(tlsProxyCmd(os.Args[2:]))
@@ -554,6 +554,8 @@ func main() {
 			os.Exit(cliSettings(os.Args[2:]))
 		case "doctor":
 			os.Exit(cliDoctor(os.Args[2:]))
+		case "node":
+			os.Exit(cliNode(os.Args[2:]))
 		}
 	}
 	if v := os.Getenv("GRE_PANEL_DIR"); v != "" {
@@ -764,6 +766,10 @@ func main() {
 	mux.HandleFunc("POST "+base+"/api/cluster/join-hub", requireAuth(requireCSRF(handleClusterJoinHub)))
 	mux.HandleFunc("POST "+base+"/api/cluster/leave-hub", requireAuth(requireCSRF(handleClusterLeaveHub)))
 	mountMeshRoutes(mux)
+	// Nodes: the central's list and join codes; the channel nodes dial
+	mux.HandleFunc("GET "+base+"/api/nodes", requireAuth(handleNodesGet))
+	mux.HandleFunc("POST "+base+"/api/nodes", requireAuth(requireCSRF(handleNodesPost)))
+	mux.HandleFunc("GET "+nodeLinkPath, handleNodeLink)
 	mux.HandleFunc("GET "+base+"/api/bagher", requireAuth(handleSSHFwdGet))
 	mux.HandleFunc("POST "+base+"/api/bagher", requireAuth(requireCSRF(handleSSHFwdPost)))
 	mux.HandleFunc("GET "+base+"/api/license", requireAuth(handleLicenseGet))
@@ -797,6 +803,7 @@ func main() {
 	go startRescueMonitor()
 	go startClusterMonitor()
 	go startMeshLoop()
+	go startNodeLoop()
 	go startLimitsLoop()
 	go func() {
 		cc := loadCarrierConfig()

@@ -10358,6 +10358,7 @@ Usage:
   hashem settings [show | 2fa off | terminal on|off | terminal-allow [IP ...] | idle MIN]  # panel settings
   hashem license [status | activate KEY | machine-id | deactivate]
   hashem cluster [status | pool add PORT [--mode M] | pool rm|mode ... | member add|rm|drain|resume PORT LINK | join-code | add-hub CODE | events | rules]
+  hashem node-join <hn1.code> [--name N] | node [status | leave]   # this server as a node of a central panel
   hashem join-hub --bundle hsh1_...|bh1_...|gh1_... | leave-hub --id N | hubs   # foreign side: serve several Iran hubs
   hashem optimize | restore | tune-status
   hashem carrier [status|mode auto|direct|fou:P|wss:P|set direct|fou:P|wss:P|next] # multi-carrier failover
@@ -11386,6 +11387,46 @@ lb_prefix_ports() {
     echo "$out"
 }
 
+# node: this server as a node of a central panel (docs/PLAN_NODES.md).
+cli_node() {
+    local bin="${PANEL_BIN:-/usr/local/bin/gre-panel}"
+    if ! panel_supports "node \\["; then
+        echo -e "${RED}[!] This panel has no node support yet: update it first (hashem update).${NC}"
+        return 1
+    fi
+    "$bin" node "$@"
+}
+
+# node-join CODE [--name N]: install the panel if it is missing (or too old
+# for nodes), then join the central that made CODE. Tunnels are not touched.
+cli_node_join() {
+    local code="" name="" a
+    while [[ $# -gt 0 ]]; do
+        a="$1"
+        case "$a" in
+            --name) name="${2:-}"; shift 2 ;;
+            -h|--help) echo "Usage: hashem node-join <hn1.code> [--name NAME]"; return 0 ;;
+            *) [[ -z "$code" ]] && code="$a"; shift ;;
+        esac
+    done
+    if [[ "$code" != hn1.* ]]; then
+        echo -e "${RED}[!] Usage: hashem node-join <hn1.code> [--name NAME] (the central's Nodes page gives the line)${NC}"
+        return 1
+    fi
+    if [[ ! -x "$PANEL_BIN" ]]; then
+        echo -e "${CYAN}[*] Installing the Hashem panel on this server...${NC}"
+        install_panel_smart || return 1
+    elif ! panel_supports "node \\["; then
+        echo -e "${CYAN}[*] Updating the panel: this version has no node support...${NC}"
+        install_panel || return 1
+    fi
+    if ! panel_supports "node \\["; then
+        echo -e "${RED}[!] The installed panel has no node support (is the update channel on a release that has it?).${NC}"
+        return 1
+    fi
+    if [[ -n "$name" ]]; then "$PANEL_BIN" node join "$code" --name "$name"; else "$PANEL_BIN" node join "$code"; fi
+}
+
 cli_cluster() {
     local bin="${PANEL_BIN:-/usr/local/bin/gre-panel}"
     if [[ ! -x "$bin" ]]; then
@@ -11678,6 +11719,8 @@ if [[ $# -gt 0 ]]; then
         license|lic) shift; cli_license "$@" ;;
         cluster|mesh) shift; cli_cluster "$@" ;;
         join-hub) shift; cli_join_hub "$@" ;;
+        node) shift; cli_node "$@" ;;
+        node-join) shift; cli_node_join "$@" ;;
         leave-hub) shift; cli_leave_hub "$@" ;;
         hubs) cli_hubs ;;
         carrier-kernel-init) carrier_init_kernel ;;
