@@ -359,7 +359,7 @@ function goTab(name) {
     openBagherLicModal('cluster');
     return;
   }
-  ['dashboard','tunnel','cluster','setup','xray','customers','logs','perf','watchdog','doctor','benchmark','spoof','update','settings','terminal'].forEach(t => { const el = $('tab-'+t); if (el) el.hidden = t !== name; });
+  ['dashboard','tunnel','cluster','nodes','setup','xray','customers','logs','perf','watchdog','doctor','benchmark','spoof','update','settings','terminal'].forEach(t => { const el = $('tab-'+t); if (el) el.hidden = t !== name; });
   const markTab = b => {
     const on = b.dataset.tab === name;
     b.classList.toggle('on', on);
@@ -381,6 +381,7 @@ function goTab(name) {
   if (name === 'spoof') loadSpoof();
   if (name === 'xray') loadXray();
   if (name === 'customers') loadCustomers();
+  if (name === 'nodes') loadNodes();
   if (name === 'update') loadVersion();
   if (name === 'logs') { refreshLogPeers(); loadLogs(); loadErrors(); armLogFollow(); }
   if (name === 'terminal') termOnShow();
@@ -506,6 +507,7 @@ const I18N = {
     spoof_idle: "Not configured",
     nav_xray: "Xray",
     nav_customers: "Customers",
+    nav_nodes: "Nodes",
     xray_title: "Xray Tunnel",
     xray_sub: "Forward ports from the Iran server to a foreign server over Xray: Reality, XHTTP, gRPC or mKCP, direct or reverse. It runs its own Xray-core next to any Xray panel (3x-ui, Marzban) and never touches its files, services or ports.",
     xray_idle: "No tunnel yet",
@@ -11791,4 +11793,158 @@ async function custWizCreate() {
     const er = $('custWizErr'); er.textContent = e.message; er.classList.remove('hidden');
     btn.disabled = false;
   }
+}
+
+// ---- Nodes: this panel as the central of other servers (node*.go) ----
+let _nodes = null, nodesTimer = null;
+const nodeAgo = sec => {
+  if (!sec) return '—';
+  const d = Math.max(0, Math.round(Date.now() / 1000 - sec));
+  if (d < 60) return tr('', 'just now');
+  if (d < 3600) return Math.round(d / 60) + ' ' + tr('', 'min ago');
+  if (d < 86400) return Math.round(d / 3600) + ' ' + tr('', 'h ago');
+  return Math.round(d / 86400) + ' ' + tr('', 'days ago');
+};
+const nodePct = v => (typeof v === 'number' && v >= 0) ? v.toFixed(0) + '%' : '—';
+function nodeRow(n) {
+  const i = n.info || {}, lic = i.license || {};
+  const side = i.side === 'iran' ? tr('', 'Iran') : i.side === 'foreign' ? tr('', 'Foreign') : tr('', 'Not set up');
+  const state = n.online ? ['ok', tr('', 'Online')] : ['err', tr('', 'Offline')];
+  const licTxt = lic.active ? ('Pro' + (lic.expires ? ' · ' + tr('', 'until') + ' ' + custDate(lic.expires) : '')) : tr('', 'No license');
+  const kv = (k, v) => `<div class="lm-box"><div class="lm-k"><span>${esc(k)}</span><b class="lm-num">${esc(v)}</b></div></div>`;
+  return `<div class="lm-row${n.online ? '' : ' cut'}" id="node-${n.id}">
+    <div class="lm-head"><div class="lm-name"><b>${esc(n.name)}</b><small class="lm-num">${esc([i.public_ip || n.addr || '', i.hostname || ''].filter(Boolean).join(' · '))}</small></div>
+      <span class="badge ${state[0]}">${esc(state[1])}</span></div>
+    <div class="lm-grid">
+      ${kv(tr('', 'Side'), side)}${kv(tr('', 'Tunnels'), String(i.tunnels ?? '—'))}${kv(tr('', 'Version'), i.version || n.link_version || '—')}
+      ${kv('CPU · RAM · ' + tr('', 'Disk'), [nodePct(i.cpu_pct), nodePct(i.mem_pct), nodePct(i.disk_pct)].join(' · '))}
+      ${kv(tr('', 'License'), licTxt)}${kv(n.online ? tr('', 'Connected') : tr('', 'Last seen'), nodeAgo(n.online ? n.since : n.last_seen))}
+    </div>
+    <div class="qs-hint lm-num">${esc(tr('', 'Key'))} ${esc(n.key_fp)}${i.machine_hash ? ' · ' + esc(tr('', 'Machine ID')) + ' ' + esc(i.machine_hash) : ''}</div>
+    <div class="lm-acts">
+      <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openNodeRename(${n.id})">${esc(tr('', 'Rename'))}</button>
+      <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30 u-c-er" onclick="nodeRemove(${n.id})">${esc(tr('', 'Remove'))}</button>
+    </div></div>`;
+}
+function nodeJobRow(j) {
+  const st = j.state === 'done' ? ['ok', tr('', 'Joined')] : j.state === 'failed' ? ['err', tr('', 'Failed')] : ['info', tr('', 'Working…')];
+  return `<details class="lm-row"${j.state === 'failed' ? ' open' : ''}><summary class="lm-head"><div class="lm-name"><b>${esc(j.name || j.host)}</b><small class="lm-num">SSH ${esc(j.host)}</small></div>
+    <span class="badge ${st[0]}">${esc(st[1])}</span></summary><pre class="cs-code">${esc(j.log || '')}</pre></details>`;
+}
+function renderNodes(d) {
+  _nodes = d;
+  const acts = $('nodeActs'), body = $('nodeBody'), err = $('nodeErr');
+  if (err) { err.textContent = d.error || ''; err.classList.toggle('hidden', !d.error); }
+  if (!body) return;
+  if (d.role === 'node') {
+    const c = d.central || {};
+    if (acts) acts.innerHTML = `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30 u-c-er" onclick="nodeLeave()">${esc(tr('', 'Leave the central'))}</button>`;
+    const st = c.connected ? ['ok', tr('', 'Connected')] : ['err', tr('', 'Not connected')];
+    body.innerHTML = `<div class="lm-row"><div class="lm-head"><div class="lm-name"><b>${esc(tr('', 'This server is a node'))}</b><small class="lm-num">${esc(c.url || '')}</small></div>
+      <span class="badge ${st[0]}">${esc(st[1])}</span></div>
+      <div class="qs-hint">${esc(tr('', 'Its central manages it; this panel still works for anything you want to do by hand here.'))}</div>
+      <div class="qs-hint lm-num">${esc(tr('', 'Node'))} ${esc(String(c.id))} (${esc(c.name || '')}) · ${esc(tr('', 'Central key'))} ${esc(c.key_fp || '')}${c.connected ? ' · ' + esc(tr('', 'Connected')) + ' ' + esc(nodeAgo(c.since)) : ''}</div>
+      ${c.refused ? `<div class="warnbox u-mt-8">${esc(tr('', 'The central does not know this node any more (it was removed, or its list was lost). Join again with a new code, or leave.'))}</div>` : ''}
+      ${!c.connected && c.last_error ? `<div class="xr-err u-mt-8">${esc(c.last_error)}</div>` : ''}</div>`;
+    return;
+  }
+  if (acts) acts.innerHTML = (d.role === 'central' && (d.invites || []).length ? `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="nodeCancelInvites()">${esc(tr('', 'Cancel open codes'))} (${(d.invites || []).length})</button>` : '') +
+    (d.role !== 'central' ? `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openNodeJoin()">${esc(tr('', 'Join a central'))}</button>` : '') +
+    (d.role === 'central' && !(d.nodes || []).length ? `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="nodeLeave()">${esc(tr('', 'Stop being a central'))}</button>` : '') +
+    `<button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openNodeSSH()">${esc(tr('', 'Add with SSH'))}</button>
+     <button type="button" class="hashem-btn hashem-btn-primary u-btn-30" onclick="openNodeInvite()">${esc(tr('', 'Add a server'))}</button>`;
+  const nodes = d.nodes || [], jobs = (d.jobs || []).filter(j => j.state !== 'done' || Date.now() / 1000 - (j.ended || 0) < 600);
+  if (!nodes.length && !jobs.length) {
+    body.innerHTML = `<div class="cs-empty"><b>${esc(tr('', 'No nodes yet'))}</b><p class="qs-hint">${esc(tr('', 'Add a server: run the line this panel gives on it, or let this panel log in with SSH and do it. Tunnels already running are not touched.'))}</p>
+      <button type="button" class="hashem-btn hashem-btn-primary" onclick="openNodeInvite()">${esc(tr('', 'Add a server'))}</button></div>`;
+    return;
+  }
+  const on = nodes.filter(n => n.online).length;
+  body.innerHTML = `<div class="cs-sum">${[[String(nodes.length), tr('', 'Nodes')], [String(on), tr('', 'Online')], [String(nodes.length - on), tr('', 'Offline')]]
+    .map(([v, k]) => `<div><b class="lm-num">${esc(v)}</b><span>${esc(k)}</span></div>`).join('')}</div>
+    <div class="lm-list">${jobs.map(nodeJobRow).join('')}${nodes.map(nodeRow).join('')}</div>`;
+}
+async function loadNodes() {
+  try { renderNodes(await api('/api/nodes')); } catch (e) { reportErr('nodes', e); }
+}
+(function initNodes() {
+  if (!nodesTimer) nodesTimer = setInterval(() => {
+    const t = $('tab-nodes');
+    if (t && !t.hidden && !document.hidden && !($('custModal') && !$('custModal').hidden)) loadNodes();
+  }, 5000);
+})();
+const nodeFind = id => ((_nodes && _nodes.nodes) || []).find(n => n.id === id);
+function nodeAddrField() {
+  return `<div class="xr-field"><label class="qs-label" for="ndUrl">${esc(tr('', 'Address nodes dial'))}</label>
+    <input class="hashem-input lm-num" id="ndUrl" dir="ltr" maxlength="200" placeholder="http://IP:PORT" value="${esc((_nodes && _nodes.default_url) || '')}">
+    <div class="qs-hint">${esc(tr('', 'This panel\'s public IP and port. Use another address (a domain, or the GRE address) if nodes reach this server another way.'))}</div></div>`;
+}
+function openNodeInvite() {
+  const html = `<div class="xr-field"><label class="qs-label" for="ndName">${esc(tr('', 'Name'))}</label><input class="hashem-input" id="ndName" maxlength="40" placeholder="${esc(tr('', 'e.g. Germany 1'))}"></div>${nodeAddrField()}`;
+  custModal(tr('', 'Add a server'), html, tr('', 'Make the line'), async () => {
+    const r = await api('/api/nodes', { action: 'invite', name: $('ndName').value, url: $('ndUrl').value });
+    const box = (id, label, v) => `<div class="cs-srv"><div class="cs-srv-h"><b>${esc(label)}</b>
+      <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="copyTextSafe($('${id}').textContent, ${jsArg(tr('', 'Copied'))}, ${jsArg(label)})">${esc(tr('', 'Copy'))}</button></div>
+      <pre class="cs-code" id="${id}">${esc(v)}</pre></div>`;
+    custModal(tr('', 'Run this on the new server'), `<div class="qs-hint">${esc(tr('', 'Run one of these as root on the server. The code works once, for 30 minutes. The server shows up here when it joins.'))}</div>
+      <div class="cs-srvs">${box('ndCmd', tr('', 'Hashem is installed there'), r.command)}${box('ndCmdI', tr('', 'Hashem is not installed yet'), r.install_command)}</div>`);
+    loadNodes();
+    return false;
+  });
+}
+function openNodeSSH() {
+  const html = `<div class="xr-fields">
+      <div class="xr-field"><label class="qs-label" for="nsHost">${esc(tr('', 'Server IP'))}</label><input class="hashem-input lm-num" id="nsHost" dir="ltr" maxlength="253"></div>
+      <div class="xr-field"><label class="qs-label" for="nsPort">${esc(tr('', 'SSH port'))}</label><input class="hashem-input lm-num" id="nsPort" type="number" min="1" max="65535" value="22"></div>
+      <div class="xr-field"><label class="qs-label" for="nsUser">${esc(tr('', 'User'))}</label><input class="hashem-input lm-num" id="nsUser" dir="ltr" value="root" maxlength="32"></div>
+    </div>
+    <div class="xr-field"><label class="qs-label" for="nsPass">${esc(tr('', 'Password'))}</label><input class="hashem-input" id="nsPass" type="password" autocomplete="off" dir="ltr"></div>
+    <div class="xr-field"><label class="qs-label" for="nsKey">${esc(tr('', 'Or a private key'))}</label><textarea class="hashem-input lm-num" id="nsKey" rows="3" dir="ltr" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea></div>
+    <div class="xr-field"><label class="qs-label" for="ndName">${esc(tr('', 'Name'))}</label><input class="hashem-input" id="ndName" maxlength="40"></div>
+    ${nodeAddrField()}
+    <div class="qs-hint">${esc(tr('', 'This panel logs in once, installs or updates Hashem there and joins it. The password or key is not saved.'))}</div>`;
+  const req = () => ({ action: 'ssh', host: $('nsHost').value, port: parseInt($('nsPort').value, 10) || 22, user: $('nsUser').value,
+    password: $('nsPass').value, ssh_key: $('nsKey').value, name: $('ndName').value, url: $('ndUrl').value });
+  custModal(tr('', 'Add with SSH'), html, tr('', 'Connect'), async () => {
+    const body = req();
+    const r = await api('/api/nodes', body);
+    if (!r.host_key) return;
+    // the server's host key, before any secret is sent: the user confirms it
+    custModal(tr('', 'Is this the right server?'), `<div class="qs-hint">${esc(tr('', 'The server at {h} has this SSH host key. If you are not sure, compare it with: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub on the server.').replace('{h}', body.host))}</div>
+      <pre class="cs-code">${esc(r.host_key)}</pre>`, tr('', 'Yes, add it'), async () => {
+      await api('/api/nodes', Object.assign(body, { host_key: r.host_key }));
+      toastOk(tr('', 'Adding the server'), body.host);
+      loadNodes();
+    });
+    return false;
+  });
+}
+function openNodeJoin() {
+  const html = `<div class="xr-field"><label class="qs-label" for="njCode">${esc(tr('', 'Join code'))}</label><input class="hashem-input lm-num" id="njCode" dir="ltr" placeholder="hn1.…"></div>
+    <div class="xr-field"><label class="qs-label" for="ndName">${esc(tr('', 'Name'))}</label><input class="hashem-input" id="ndName" maxlength="40"></div>
+    <div class="qs-hint">${esc(tr('', 'Make this server a node of another panel: on the central, Nodes → Add a server gives the code. Tunnels are not touched.'))}</div>`;
+  custModal(tr('', 'Join a central'), html, tr('', 'Join'), async () => {
+    renderNodes(await api('/api/nodes', { action: 'join', code: $('njCode').value.replace(/^.*\b(hn1\.[A-Za-z0-9_-]+).*$/s, '$1'), name: $('ndName').value }));
+    toastOk(tr('', 'Joined'), '');
+  });
+}
+function openNodeRename(id) {
+  const n = nodeFind(id);
+  if (!n) return;
+  custModal(tr('', 'Rename'), `<div class="xr-field"><label class="qs-label" for="ndName">${esc(tr('', 'Name'))}</label><input class="hashem-input" id="ndName" maxlength="40" value="${esc(n.name)}"></div>`,
+    tr('', 'Save'), async () => { renderNodes(await api('/api/nodes', { action: 'rename', id, name: $('ndName').value })); });
+}
+async function nodeRemove(id) {
+  const n = nodeFind(id);
+  if (!n || !await entConfirm(tr('', 'Remove this node?'), tr('', 'The central forgets it and it becomes a standalone panel again. Its tunnels keep running.'), tr('', 'Remove'))) return;
+  try { renderNodes(await api('/api/nodes', { action: 'remove', id })); toastOk(tr('', 'Node removed'), n.name); } catch (e) { toastErr(tr('', 'Failed'), e.message); }
+}
+async function nodeLeave() {
+  const node = _nodes && _nodes.role === 'node';
+  if (!await entConfirm(node ? tr('', 'Leave the central?') : tr('', 'Stop being a central?'),
+    node ? tr('', 'The central stops managing this server. Its tunnels keep running and this panel works as before.') : tr('', 'This panel becomes a standalone panel again.'), tr('', 'Leave'))) return;
+  try { renderNodes(await api('/api/nodes', { action: 'leave' })); } catch (e) { toastErr(tr('', 'Failed'), e.message); }
+}
+async function nodeCancelInvites() {
+  try { renderNodes(await api('/api/nodes', { action: 'cancel-invites' })); } catch (e) { toastErr(tr('', 'Failed'), e.message); }
 }

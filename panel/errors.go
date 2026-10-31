@@ -124,6 +124,11 @@ var errCatalog = map[string]errInfo{
 	"E-CUST-03": {409, "a foreign server's ports are not usable", "The detail names the port and what holds it: pick another port."},
 	"E-CUST-04": {404, "unknown customer or foreign server", "Refresh the page; it may have been removed."},
 	"E-CUST-05": {409, "not possible in the customer's current state", "The detail says what to do first (renew, reset the usage, or set an address)."},
+	"E-NODE-01": {400, "bad nodes request", "The detail names the field; fix it and try again."},
+	"E-NODE-02": {409, "not possible in this panel's role", "The detail says what to do first (leave the central, remove the nodes, or make this panel the central)."},
+	"E-NODE-03": {404, "unknown node", "Refresh the page; it may have been removed."},
+	"E-NODE-04": {502, "the node or server cannot be reached", "Check the address and that the server is up; the detail has the network error."},
+	"E-NODE-05": {500, "cannot save the node settings", "The detail names the file: check free space and /etc/gre-panel permissions."},
 	"E-CUST-06": {500, "cannot save customers.json", "Disk write failed: check free space and /etc/gre-panel permissions."},
 	// log diagnostics (annotation only, also reused by status hints)
 	"E-GRE-01":     {0, "GRE interface missing / down", "Tunnel setup did not create it, or it was deleted — reinstall that peer."},

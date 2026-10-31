@@ -1,6 +1,6 @@
 # Plan: central panel and nodes
 
-Status: draft, waiting for the owner's approval. Built in phases on `dev`;
+Status: approved by the owner. Built in phases on `dev`;
 each phase is gated before the next starts (see "Gate").
 
 ## What it is
@@ -123,6 +123,17 @@ Wire format, versioning and the threat model written next to the code
 - Customers (sold tunnels) of every node in one list, with the actions
   relayed to the node that holds the customer.
 
+### T: dashboard traffic, checked
+
+The dashboard's traffic system (`dashboard.go`, `carrier_traffic.go`,
+`traffic_usage.go`, the history and the speeds the page draws) is audited
+for bugs before the node phases build on it, and every finding is fixed and
+covered by a test. In N2 and N4 the same numbers must come out right through
+the central: a node's dashboard read through the relay equals the one read
+on the node, and the overview sums nodes without counting a tunnel twice
+(both ends of a tunnel report it). A lab test checks real traffic through a
+tunnel against the dashboard, locally and through the central.
+
 ### N5: migration of existing installs
 
 See "Migration".
@@ -225,4 +236,5 @@ checks and trusted keys are unchanged), findings fixed, CI green. Push to
 
 ## Order
 
-N1 → N2 → N3 → N5 (migration needs N1–N3 to be worth taking) → N4.
+T (alongside N1) → N1 → N2 → N3 → N5 (migration needs N1–N3 to be worth
+taking) → N4.
