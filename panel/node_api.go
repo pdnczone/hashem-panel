@@ -237,8 +237,7 @@ func handleNodesPost(w http.ResponseWriter, r *http.Request) {
 		nodesMu.Unlock()
 		if err == nil {
 			nodeKick(req.ID)
-			_ = os.RemoveAll(nodeBackupDir(req.ID)) // its backup copies (node_fleet.go)
-			nodeAlertsForget(req.ID)
+			nodeAlertsForget(req.ID) // its backup copies stay their 14 days (node_fleet.go)
 			LogSecurityAudit("node_removed", cfg.Username, ClientIP(r), "id="+strconv.Itoa(req.ID))
 		}
 	case "leave":

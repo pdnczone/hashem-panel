@@ -234,6 +234,15 @@ independent reviews (correctness, and security with proof that the license
 checks and trusted keys are unchanged), findings fixed, CI green. Push to
 `dev` only; no merge to main and no release tag without the owner.
 
+## Follow-ups (after N4)
+
+- Pick the release channel for a node update from the central (today each
+  node updates on its own channel).
+- When the channel's protocol version first changes: the central refuses
+  to update a node to a version that speaks a newer protocol than itself.
+- The Peer Link sends the tunnel token in clear: sign its requests instead
+  (it would also close the move's window, N5).
+
 ## Order
 
 T (alongside N1) → N1 → N2 → N3 → N5 (migration needs N1–N3 to be worth

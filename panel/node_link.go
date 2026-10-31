@@ -607,8 +607,10 @@ func nodeInfoLoop(s *nodeSession) {
 	}
 }
 
-// nodeForget drops a node that left its central by itself.
+// nodeForget drops a node that left its central by itself (its alert mark
+// too).
 func nodeForget(s *nodeSession, why string) {
+	nodeAlertsForget(s.id)
 	nodesMu.Lock()
 	for i, rec := range nodesF.Nodes {
 		if rec.ID == s.id && nodeSessions[s.id] == s {
