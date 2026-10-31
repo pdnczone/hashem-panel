@@ -7,14 +7,25 @@ package main
 // Peer Link route (GET /_hp/api/peer/node-offer, authenticated by the tunnel
 // token the two already share) and joins.
 //
-// Trust comes from the tunnel token, which never crosses the network:
+// Trust comes from the tunnel token the two already share:
 //
 //   - the offer is {url, key, nonce} with mac = HMAC(token, offer fields), so
-//     the foreign server only trusts a central key the token holder made;
+//     the foreign server only trusts a central key the token holder made, at
+//     the address it reached its Iran panel on;
 //   - the join secret is HMAC(token, nonce, key), which both sides compute;
 //     the central keeps it as an ordinary one-time invite (hash only, 30
-//     minutes), so the join is the normal enrollment over the pinned
-//     channel. Someone who sees the offer cannot join without the token.
+//     minutes), so the join is the normal enrollment over the pinned channel.
+//
+// The Peer Link sends the token itself in clear (X-Peer-Secret), so someone
+// on the path can learn it. What limits that (the owner chose an automatic
+// move over a confirmation on each foreign server):
+//
+//   - the move is open for 7 days at most, and closes when every foreign
+//     server has joined; a foreign server that joined once is never offered
+//     again, even after it was removed;
+//   - the foreign server joins only a central at the address it reached;
+//   - a server that joined by the move gets no license copy until the
+//     admin approves it on the central (nodeRecord.Held).
 //
 // Tunnels are not touched. A foreign server joins by itself only once: if it
 // leaves or is removed later, it stays standalone (node_migrated marker).
@@ -31,8 +42,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,6 +54,7 @@ import (
 
 const (
 	nodeMigrateLater = 7 * 24 * time.Hour
+	nodeMigrateOpen  = 7 * 24 * time.Hour // the longest the move stays open
 	nodeMigratePoll  = 5 * time.Minute
 )
 
@@ -75,6 +89,7 @@ type nodeMigratePeer struct {
 	Name   string `json:"name"`
 	IP     string `json:"ip"`
 	Joined int    `json:"joined,omitempty"` // its node id once it joined
+	Ever   bool   `json:"ever,omitempty"`   // it joined by the move once (it is not offered again)
 	token  string
 }
 
@@ -111,9 +126,28 @@ func nodeMigratePeers() []nodeMigratePeer {
 				out[i].Joined = r.ID
 			}
 		}
+		out[i].Ever = out[i].Joined > 0 || slices.Contains(nodesF.Migrated, out[i].Key)
 	}
 	nodesMu.Unlock()
 	return out
+}
+
+// nodeMigrateCloseLocked closes the move when its time is up or every
+// foreign server has joined; it reports whether the move is open.
+func nodeMigrateCloseLocked(st *nodeMigrateState, peers []nodeMigratePeer) bool {
+	if !st.Open {
+		return false
+	}
+	all := true
+	for _, p := range peers {
+		all = all && p.Ever
+	}
+	if all || time.Since(time.Unix(st.OpenedAt, 0)) > nodeMigrateOpen {
+		st.Open = false
+		_ = nodeMigrateSave(*st)
+		return false
+	}
+	return true
 }
 
 // nodeMigrateView is what GET /api/nodes says about the move.
@@ -127,9 +161,10 @@ func nodeMigrateView(self nodeSelf) map[string]any {
 	}
 	nodeMigrateMu.Lock()
 	st := nodeMigrateLoad()
+	open := nodeMigrateCloseLocked(&st, peers)
 	nodeMigrateMu.Unlock()
-	offer := self.Role == "" && !st.Open && !st.Never && time.Now().Unix() >= st.LaterUntil
-	return map[string]any{"offer": offer, "open": st.Open && self.Role == nodeRoleCentral, "never": st.Never, "peers": peers}
+	offer := self.Role == "" && !open && !st.Never && st.OpenedAt == 0 && time.Now().Unix() >= st.LaterUntil
+	return map[string]any{"offer": offer, "open": open && self.Role == nodeRoleCentral, "never": st.Never, "peers": peers}
 }
 
 // nodeMigrateAction: migrate-start | migrate-later | migrate-never | migrate-stop.
@@ -227,11 +262,13 @@ func (o nodeMigrateOffer) secret(token string) string {
 // handlePeerNodeOffer is GET /_hp/api/peer/node-offer, behind
 // requireTunnelSecretHidden. Anything but an open migration is a bare 404.
 func handlePeerNodeOffer(w http.ResponseWriter, r *http.Request) {
-	self, err := nodeSelfLoad()
+	// held throughout: a Stop between the check and the invite leaves none
 	nodeMigrateMu.Lock()
+	defer nodeMigrateMu.Unlock()
+	self, err := nodeSelfLoad()
 	st := nodeMigrateLoad()
-	nodeMigrateMu.Unlock()
-	if err != nil || self.Role != nodeRoleCentral || !st.Open {
+	peers := nodeMigratePeers()
+	if err != nil || self.Role != nodeRoleCentral || !nodeMigrateCloseLocked(&st, peers) {
 		http.NotFound(w, r)
 		return
 	}
@@ -241,13 +278,13 @@ func handlePeerNodeOffer(w http.ResponseWriter, r *http.Request) {
 		want = "peer:" + strconv.Itoa(id)
 	}
 	var peer *nodeMigratePeer
-	for _, p := range nodeMigratePeers() {
+	for _, p := range peers {
 		if p.Key == want {
 			peer = &p
 			break
 		}
 	}
-	if peer == nil || peer.Joined > 0 {
+	if peer == nil || peer.Ever {
 		http.NotFound(w, r)
 		return
 	}
@@ -255,7 +292,7 @@ func handlePeerNodeOffer(w http.ResponseWriter, r *http.Request) {
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	url, err := nodeCentralURL(scheme + "://" + r.Host) // the address this server was reached on
+	central, err := nodeCentralURL(scheme + "://" + r.Host) // the address this server was reached on
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -267,7 +304,7 @@ func handlePeerNodeOffer(w http.ResponseWriter, r *http.Request) {
 	}
 	var nb [16]byte
 	_, _ = rand.Read(nb[:])
-	o := nodeMigrateOffer{URL: url, Key: pub, Nonce: hex.EncodeToString(nb[:])}
+	o := nodeMigrateOffer{URL: central, Key: pub, Nonce: hex.EncodeToString(nb[:])}
 	o.MAC = o.mac(peer.token)
 	now := time.Now()
 	nodesMu.Lock()
@@ -301,7 +338,8 @@ func nodeMigratedFile() string { return filepath.Join(configDir, "node_migrated"
 
 // nodeMigrateTry asks this server's Iran panel for an offer and joins by it.
 // "" when there is nothing to do.
-var nodeMigrateFetch = func() ([]byte, error) {
+// It answers the offer and the host it was reached on.
+var nodeMigrateFetch = func() ([]byte, string, error) {
 	// not sendToPeer: a 404 (no offer) is the usual answer and must not mark
 	// the Peer Link as down
 	c := loadPeerConfig()
@@ -322,10 +360,10 @@ var nodeMigrateFetch = func() ([]byte, error) {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 		_ = resp.Body.Close()
 		if resp.StatusCode == http.StatusOK && json.Valid(b) {
-			return b, nil
+			return b, req.URL.Hostname(), nil
 		}
 	}
-	return nil, errors.New("no offer")
+	return nil, "", errors.New("no offer")
 }
 
 func nodeMigrateTry(ctx context.Context) (string, error) {
@@ -342,7 +380,7 @@ func nodeMigrateTry(ctx context.Context) (string, error) {
 	if ft := firstTunnelInfo(); !ft.Exists || ft.Side != "foreign" {
 		return "", nil // the Peer Link of a tunnel that is gone
 	}
-	b, err := nodeMigrateFetch()
+	b, reached, err := nodeMigrateFetch()
 	if err != nil {
 		return "", nil // no offer (404), an old Iran panel, or not reachable now
 	}
@@ -353,13 +391,19 @@ func nodeMigrateTry(ctx context.Context) (string, error) {
 	if !hmac.Equal([]byte(o.MAC), []byte(o.mac(c.PeerSecret))) {
 		return "", errors.New("an offer not made with this tunnel's token: ignored")
 	}
+	// only a central at the address this server reached its Iran panel on
+	if u, err := url.Parse(o.URL); err != nil || !strings.EqualFold(u.Hostname(), reached) {
+		return "", fmt.Errorf("an offer for a central at %s, not at %s where the Iran panel answered: ignored", o.URL, reached)
+	}
 	code := nodeCode{URL: o.URL, Key: o.Key, Secret: o.secret(c.PeerSecret)}
 	host, _ := os.Hostname()
 	s, err := nodeJoin(ctx, code.String(), host)
 	if err != nil {
 		return "", err
 	}
-	_ = writeFile0600(nodeMigratedFile(), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"))
+	if err := writeFile0600(nodeMigratedFile(), []byte(time.Now().UTC().Format(time.RFC3339)+"\n")); err != nil {
+		log.Printf("nodes: cannot write %s (%v): this server may join again by itself after it leaves", nodeMigratedFile(), err)
+	}
 	LogSecurityAudit("node_migrated", "node", "", "central="+s.Central+" id="+strconv.Itoa(s.ID))
 	return s.Central, nil
 }

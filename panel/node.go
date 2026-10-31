@@ -30,6 +30,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -76,6 +77,7 @@ type nodeRecord struct {
 	// this node (so a renewal replaces it, and a node's own key is left alone)
 	LicensePushed string `json:"license_pushed,omitempty"`
 	Peer          string `json:"peer,omitempty"` // joined by a move to nodes: its tunnel on this server
+	Held          bool   `json:"held,omitempty"` // joined by the move and not approved yet: no license copy
 }
 
 // nodeInvite is a one-time join code; only its hash is kept.
@@ -93,6 +95,7 @@ type nodesFile struct {
 	NextID   int           `json:"next_id,omitempty"` // ids are never given out twice
 	Left     []nodeTunLeft `json:"left,omitempty"`    // server ends of tunnels whose making failed half-way (node_tunnel.go)
 	LeftNext int           `json:"left_next,omitempty"`
+	Migrated []string      `json:"migrated,omitempty"` // tunnels whose foreign server joined by the move (node_migrate.go)
 }
 
 // nodeInfo is what a node reports about itself (the "info" call).
@@ -562,7 +565,11 @@ func nodeEnrollLocked(secret, key, name, addr string, now time.Time) (int, error
 		}
 	}
 	nodesF.NextID = id + 1 // a removed node's id is not given to the next one
-	nodesF.Nodes = append(nodesF.Nodes, nodeRecord{ID: id, Name: name, Key: key, Added: now.Unix(), LastSeen: now.Unix(), Addr: addr, Peer: iv.Peer})
+	nodesF.Nodes = append(nodesF.Nodes, nodeRecord{ID: id, Name: name, Key: key, Added: now.Unix(), LastSeen: now.Unix(), Addr: addr,
+		Peer: iv.Peer, Held: iv.Peer != ""})
+	if iv.Peer != "" && !slices.Contains(nodesF.Migrated, iv.Peer) {
+		nodesF.Migrated = append(nodesF.Migrated, iv.Peer)
+	}
 	return id, nil
 }
 

@@ -707,9 +707,12 @@ func nodeJoin(ctx context.Context, code, name string) (nodeSelf, error) {
 	}
 	s := nodeSelf{Role: nodeRoleNode, ID: f.NodeID, Central: c.URL, CentralKey: c.Key, Name: name, JoinedAt: time.Now().Unix()}
 	nodesMu.Lock()
-	err = nodeSelfSave(s)
-	nodesMu.Unlock()
-	return s, err
+	defer nodesMu.Unlock()
+	// the role again: another join (or becoming a central) during the dial wins
+	if now, err := nodeSelfLoad(); err != nil || now.Role != cur.Role || now.JoinedAt != cur.JoinedAt {
+		return nodeSelf{}, errors.New("this panel's role changed while joining: try again")
+	}
+	return s, nodeSelfSave(s)
 }
 
 // nodeLinkState is the node's view of its channel, for the panel and CLI.

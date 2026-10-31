@@ -11900,7 +11900,9 @@ function nodeRow(n) {
       ${kv(tr('', 'License'), licTxt)}${kv(n.online ? tr('', 'Connected') : tr('', 'Last seen'), nodeAgo(n.online ? n.since : n.last_seen))}
     </div>
     <div class="qs-hint lm-num">${esc(tr('', 'Key'))} ${esc(n.key_fp)}${i.machine_hash ? ' · ' + esc(tr('', 'Machine ID')) + ' ' + esc(i.machine_hash) : ''}</div>
+    ${n.held ? `<div class="warnbox u-mt-8">${esc(tr('', 'Joined by the move to nodes. Check it is your server (its address and machine ID); this panel\'s license is copied to it only after you approve it.'))}</div>` : ''}
     <div class="lm-acts">
+      ${n.held ? `<button type="button" class="hashem-btn hashem-btn-primary u-btn-30" onclick="nodeApprove(${Number(n.id)})">${esc(tr('', 'Approve'))}</button>` : ''}
       ${n.online ? `<button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openNodeHere(${Number(n.id)})">${esc(tr('', 'Open'))}</button>` : ''}
       <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openNodeRename(${n.id})">${esc(tr('', 'Rename'))}</button>
       <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30 u-c-er" onclick="nodeRemove(${n.id})">${esc(tr('', 'Remove'))}</button>
@@ -12035,6 +12037,9 @@ async function nodeLeave() {
     node ? tr('', 'The central stops managing this server. Its tunnels keep running and this panel works as before.') : tr('', 'This panel becomes a standalone panel again.'), tr('', 'Leave'))) return;
   try { renderNodes(await api('/api/nodes', { action: 'leave' })); } catch (e) { toastErr(tr('', 'Failed'), e.message); }
 }
+async function nodeApprove(id) {
+  try { renderNodes(await api('/api/nodes', { action: 'approve', id })); } catch (e) { toastErr(tr('', 'Failed'), e.message); }
+}
 async function nodeCancelInvites() {
   try { renderNodes(await api('/api/nodes', { action: 'cancel-invites' })); } catch (e) { toastErr(tr('', 'Failed'), e.message); }
 }
@@ -12048,7 +12053,7 @@ function migrateCard(m, compact) {
     : esc(m.open ? tr('', 'waiting: it joins by itself once it runs this version (hashem update on it)') : tr('', 'will join'))}</li>`).join('')}</ul>`;
   if (m.open) {
     return `<div class="lm-row"><div class="lm-head"><div class="lm-name"><b>${esc(tr('', 'Moving your foreign servers here'))}</b>
-      <small>${esc(tr('', 'Each one joins by itself, proven by its tunnel token. Tunnels are not touched.'))}</small></div>
+      <small>${esc(tr('', 'Each one joins by itself, proven by its tunnel token. Tunnels are not touched. The move closes by itself after 7 days or when all have joined.'))}</small></div>
       <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="migrateDo('migrate-stop')">${esc(tr('', 'Stop'))}</button></div>${list}</div>`;
   }
   if (!m.offer) {

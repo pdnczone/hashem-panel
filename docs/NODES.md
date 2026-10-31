@@ -45,10 +45,20 @@ page; `hashem update` prints the same hint once).
 
 - **Yes, move to nodes**: this panel becomes the central. Each foreign
   server joins by itself once it runs this version (`hashem update` on it).
-  It proves who it is with the tunnel token the two servers already share:
-  the token never crosses the network, and someone who only sees the
-  traffic cannot join or pose as the central. The Nodes page lists every
-  foreign server as waiting or joined; **Stop** ends the move.
+  It proves who it is with the tunnel token the two servers already share,
+  and joins only a central at the address it reaches its Iran panel on.
+  The Nodes page lists every foreign server as waiting or joined; **Stop**
+  ends the move. The move also closes by itself after 7 days, or when every
+  foreign server has joined, and a server that joined once is not offered
+  again.
+- A server that joined by the move is marked on the Nodes page: check that
+  it is yours (address, machine ID) and press **Approve**. This panel's
+  license is copied to it only after that.
+- The Peer Link that carries the offer sends the tunnel token without
+  encryption, as it always has. Someone on the network path who learns it
+  could try to join while the move is open; that is why the move is short,
+  and why a joined server waits for your approval. If you want no window at
+  all, add the servers with **Add a server** instead.
 - **Not now** asks again in 7 days; **Don't ask again** never asks (the
   Nodes page keeps a **Move them** button).
 - Running tunnels are not touched, and every server keeps its own panel. A
