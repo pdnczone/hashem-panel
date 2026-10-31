@@ -25,7 +25,11 @@ package main
 //     again, even after it was removed;
 //   - the foreign server joins only a central at the address it reached;
 //   - a server that joined by the move gets no license copy until the
-//     admin approves it on the central (nodeRecord.Held).
+//     admin approves it on the central (nodeRecord.Held);
+//   - a foreign server looks for an offer only for 14 days after this
+//     version first runs on it (node_migrate_watch; `hashem node move`
+//     starts that again), not forever: a forged offer can only be tried
+//     while it is looking.
 //
 // Tunnels are not touched. A foreign server joins by itself only once: if it
 // leaves or is removed later, it stays standalone (node_migrated marker).
@@ -54,7 +58,8 @@ import (
 
 const (
 	nodeMigrateLater = 7 * 24 * time.Hour
-	nodeMigrateOpen  = 7 * 24 * time.Hour // the longest the move stays open
+	nodeMigrateOpen  = 7 * 24 * time.Hour  // the longest the move stays open
+	nodeMigrateWatch = 14 * 24 * time.Hour // a foreign server looks for an offer this long (node move: again)
 	nodeMigratePoll  = 5 * time.Minute
 )
 
@@ -126,6 +131,12 @@ func nodeMigratePeers() []nodeMigratePeer {
 				out[i].Joined = r.ID
 			}
 		}
+		// a server added by hand (no move tag) is joined too: by its address
+		for _, r := range nodesF.Nodes {
+			if out[i].Joined == 0 && out[i].IP != "" && r.Info.PublicIP == out[i].IP {
+				out[i].Joined = r.ID
+			}
+		}
 		out[i].Ever = out[i].Joined > 0 || slices.Contains(nodesF.Migrated, out[i].Key)
 	}
 	nodesMu.Unlock()
@@ -138,7 +149,7 @@ func nodeMigrateCloseLocked(st *nodeMigrateState, peers []nodeMigratePeer) bool 
 	if !st.Open {
 		return false
 	}
-	all := true
+	all := len(peers) > 0 // a list that could not be read is not "all joined"
 	for _, p := range peers {
 		all = all && p.Ever
 	}
@@ -338,8 +349,10 @@ func nodeMigratedFile() string { return filepath.Join(configDir, "node_migrated"
 
 // nodeMigrateTry asks this server's Iran panel for an offer and joins by it.
 // "" when there is nothing to do.
-// It answers the offer and the host it was reached on.
-var nodeMigrateFetch = func() ([]byte, string, error) {
+// It answers the offer and the host it was reached on. The Iran server's
+// public address is tried first: the central's address then does not
+// depend on the tunnel it may have to repair.
+var nodeMigrateFetch = func(ctx context.Context) ([]byte, string, error) {
 	// not sendToPeer: a 404 (no offer) is the usual answer and must not mark
 	// the Peer Link as down
 	c := loadPeerConfig()
@@ -347,8 +360,25 @@ var nodeMigrateFetch = func() ([]byte, string, error) {
 	defer tr.CloseIdleConnections()
 	client := &http.Client{Timeout: 10 * time.Second, Transport: tr,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	for _, u := range peerTargetURLs(c, "/api/peer/node-offer") {
-		req, err := http.NewRequest(http.MethodGet, u, nil)
+	urls := peerTargetURLs(c, "/api/peer/node-offer")
+	if pu, err := url.Parse(c.PeerURL); err == nil && pu.Hostname() != "" {
+		slices.SortStableFunc(urls, func(a, b string) int {
+			pa := strings.Contains(a, "://"+pu.Host) || strings.Contains(a, "://"+pu.Hostname()+":")
+			pb := strings.Contains(b, "://"+pu.Host) || strings.Contains(b, "://"+pu.Hostname()+":")
+			switch {
+			case pa && !pb:
+				return -1
+			case pb && !pa:
+				return 1
+			}
+			return 0
+		})
+	}
+	for _, u := range urls {
+		if ctx.Err() != nil {
+			break
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 		if err != nil {
 			continue
 		}
@@ -380,7 +410,10 @@ func nodeMigrateTry(ctx context.Context) (string, error) {
 	if ft := firstTunnelInfo(); !ft.Exists || ft.Side != "foreign" {
 		return "", nil // the Peer Link of a tunnel that is gone
 	}
-	b, reached, err := nodeMigrateFetch()
+	if !nodeMigrateWatching(time.Now()) {
+		return "", nil // its 14 days are over (node move starts them again)
+	}
+	b, reached, err := nodeMigrateFetch(ctx)
 	if err != nil {
 		return "", nil // no offer (404), an old Iran panel, or not reachable now
 	}
@@ -406,6 +439,29 @@ func nodeMigrateTry(ctx context.Context) (string, error) {
 	}
 	LogSecurityAudit("node_migrated", "node", "", "central="+s.Central+" id="+strconv.Itoa(s.ID))
 	return s.Central, nil
+}
+
+// ---- how long a foreign server looks for an offer ----
+
+func nodeMigrateWatchFile() string { return filepath.Join(configDir, "node_migrate_watch") }
+
+// nodeMigrateWatching: within 14 days of the first look (the file is made
+// then), or of `node move`.
+func nodeMigrateWatching(now time.Time) bool {
+	b, err := os.ReadFile(nodeMigrateWatchFile())
+	if err != nil {
+		if os.IsNotExist(err) {
+			_ = nodeMigrateWatchReset()
+			return true
+		}
+		return false
+	}
+	since, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+	return err == nil && now.Sub(time.Unix(since, 0)) < nodeMigrateWatch
+}
+
+func nodeMigrateWatchReset() error {
+	return writeFile0600(nodeMigrateWatchFile(), []byte(strconv.FormatInt(time.Now().Unix(), 10)+"\n"))
 }
 
 // startNodeMigrateWatch: a foreign server checks for its Iran panel's offer

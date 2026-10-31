@@ -69,6 +69,9 @@ func handleNodesGet(w http.ResponseWriter, r *http.Request) {
 		}
 		invites := make([]map[string]any, 0, len(nodesF.Invites))
 		for _, iv := range nodesF.Invites {
+			if iv.Peer != "" {
+				continue // a move's offer (node_migrate.go), not a code someone typed
+			}
 			invites = append(invites, map[string]any{"name": iv.Name, "created": iv.Created, "expires": iv.Expires})
 		}
 		left := append([]nodeTunLeft{}, nodesF.Left...)
@@ -232,6 +235,9 @@ func handleNodesPost(w http.ResponseWriter, r *http.Request) {
 		}
 	case "leave":
 		err = nodeLeave(self)
+		if err == nil && self.Role == nodeRoleCentral {
+			_ = nodeMigrateAction(nodeSelf{}, "migrate-stop") // no move outlives the central
+		}
 		if err == nil {
 			LogSecurityAudit("node_leave", cfg.Username, ClientIP(r), "role="+self.Role)
 		}
@@ -740,7 +746,17 @@ func cliNode(args []string) int {
 			fmt.Fprintln(os.Stderr, "[!] "+err.Error())
 			return 1
 		}
+		if s.Role == nodeRoleCentral {
+			_ = nodeMigrateAction(nodeSelf{}, "migrate-stop")
+		}
 		fmt.Println("[OK] this panel is standalone again; tunnels are not touched.")
+		return 0
+	case "move": // a foreign server: look for its Iran panel's move offer again for 14 days
+		if err := nodeMigrateWatchReset(); err != nil {
+			fmt.Fprintln(os.Stderr, "[!] "+err.Error())
+			return 1
+		}
+		fmt.Println("[OK] this server looks for its Iran panel's offer to move to nodes for the next 14 days.")
 		return 0
 	case "status":
 		s, err := nodeSelfLoad()
