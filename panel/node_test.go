@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -570,5 +571,29 @@ func TestNodeSSHCommandChecksVersion(t *testing.T) {
 	cmd := nodeSSHCommand("n", false)
 	if !strings.Contains(cmd, "hashem help 2>/dev/null | grep -q node-join") || !strings.Contains(cmd, nodeInstallURL) {
 		t.Fatalf("an old Hashem must go through the installer: %s", cmd)
+	}
+}
+
+func TestNodePreAuthIPv6ByPrefix(t *testing.T) {
+	for i := 0; i < nodePreAuthIP; i++ {
+		if !nodePreAuthTake(fmt.Sprintf("2001:db8:1:2::%x", i+1)) {
+			t.Fatalf("take %d", i)
+		}
+	}
+	if nodePreAuthTake("2001:db8:1:2::ffff") {
+		t.Fatal("another address of the same /64 got past the cap")
+	}
+	if !nodePreAuthTake("2001:db8:1:3::1") {
+		t.Fatal("another /64 was blocked")
+	}
+	nodePreAuthDone("2001:db8:1:3::1")
+	for i := 0; i < nodePreAuthIP; i++ {
+		nodePreAuthDone(fmt.Sprintf("2001:db8:1:2::%x", i+1))
+	}
+	nodePreAuth.Lock()
+	n := nodePreAuth.n
+	nodePreAuth.Unlock()
+	if n != 0 {
+		t.Fatalf("leak: %d", n)
 	}
 }

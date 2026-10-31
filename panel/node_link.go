@@ -24,6 +24,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -258,7 +259,19 @@ var nodePreAuth = struct {
 	byIP map[string]int
 }{byIP: map[string]int{}}
 
+// nodePreAuthKey: the address a link is counted under; IPv6 by /64 (one
+// host gets a whole /64, so per address would be no limit).
+func nodePreAuthKey(ip string) string {
+	if a, err := netip.ParseAddr(ip); err == nil && a.Is6() && !a.Is4In6() {
+		if p, err := a.Prefix(64); err == nil {
+			return p.String()
+		}
+	}
+	return ip
+}
+
 func nodePreAuthTake(ip string) bool {
+	ip = nodePreAuthKey(ip)
 	nodePreAuth.Lock()
 	defer nodePreAuth.Unlock()
 	if nodePreAuth.n >= nodePreAuthMax || nodePreAuth.byIP[ip] >= nodePreAuthIP {
@@ -270,6 +283,7 @@ func nodePreAuthTake(ip string) bool {
 }
 
 func nodePreAuthDone(ip string) {
+	ip = nodePreAuthKey(ip)
 	nodePreAuth.Lock()
 	defer nodePreAuth.Unlock()
 	nodePreAuth.n--
