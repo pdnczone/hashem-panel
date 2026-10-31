@@ -196,7 +196,8 @@ func nodeAlertClean(e alertEvent) (alertEvent, bool) {
 	}
 	clean := func(s string, n int) string {
 		s = strings.Map(func(r rune) rune {
-			if r == 0x2028 || r == 0x2029 || r >= 0x202A && r <= 0x202E || r >= 0x2066 && r <= 0x2069 {
+			if r == 0x2028 || r == 0x2029 || r >= 0x202A && r <= 0x202E || r >= 0x2066 && r <= 0x2069 ||
+				r >= 0x200B && r <= 0x200F || r == 0x061C || r == 0xFEFF {
 				return -1
 			}
 			return r
@@ -204,7 +205,9 @@ func nodeAlertClean(e alertEvent) (alertEvent, bool) {
 		if r := []rune(s); len(r) > n {
 			s = string(r[:n]) + "…"
 		}
-		return strings.TrimLeft(strings.TrimPrefix(strings.TrimSpace(s), "<!"), "@")
+		// no mentions a chat would act on (a zero-width joiner after @), no <...> markup
+		s = strings.NewReplacer("@", "@\u200d", "<", "‹", ">", "›").Replace(strings.TrimSpace(s))
+		return s
 	}
 	e.Link, e.Why = clean(e.Link, 80), clean(e.Why, 160)
 	if _, err := time.Parse(time.RFC3339, e.At); err != nil || len(e.At) > 40 {
@@ -603,6 +606,9 @@ func nodeBackupPrune(dir string) {
 		if err != nil {
 			continue
 		}
+		if strings.HasSuffix(f.Name(), ".tmp") && time.Since(st.ModTime()) < 10*time.Minute {
+			continue // a copy being written now
+		}
 		if f.IsDir() || time.Since(st.ModTime()) > nodeBackupKeep || !nodeBackupName(f.Name()) {
 			_ = os.RemoveAll(filepath.Join(dir, f.Name()))
 			continue
@@ -621,11 +627,15 @@ func nodeBackupPruneAll() {
 	dirs, _ := os.ReadDir(filepath.Join(configDir, "node-backups"))
 	nodesMu.Lock()
 	nodesLoadLocked()
+	bad := nodesEr != ""
 	known := map[int]bool{}
 	for _, r := range nodesF.Nodes {
 		known[r.ID] = true
 	}
 	nodesMu.Unlock()
+	if bad {
+		return // the list cannot be read: not a reason to drop every node's copies
+	}
 	for _, d := range dirs {
 		id, err := strconv.Atoi(d.Name())
 		if err != nil || !known[id] {
