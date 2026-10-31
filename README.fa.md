@@ -6,8 +6,8 @@
 
 کاربران به IP عمومی سرور ایران وصل می‌شوند و ترافیکشان از راه GRE، FRP، Backhaul، Xray، SSH یا تونل اسپوف به سرویس‌های سرور خارج می‌رسد؛ با بررسی سلامت، جابه‌جایی خودکار و آپدیت امن.
 
-[![Downloads](https://img.shields.io/github/downloads/pdnczone/hashem-panel/total?label=downloads&color=brightgreen)](https://github.com/pdnczone/hashem-panel/releases)
-[![CI](https://github.com/pdnczone/hashem-panel/actions/workflows/ci.yml/badge.svg)](https://github.com/pdnczone/hashem-panel/actions/workflows/ci.yml)
+[![Downloads](https://img.shields.io/github/downloads/roboapi2/hashem-panel/total?label=downloads&color=brightgreen)](https://github.com/roboapi2/hashem-panel/releases)
+[![CI](https://github.com/roboapi2/hashem-panel/actions/workflows/ci.yml/badge.svg)](https://github.com/roboapi2/hashem-panel/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 [English](README.md) · فارسی · [وب‌سایت](https://pdnczone.ir) · [تلگرام](https://t.me/pdnczone) · [یوتیوب](https://youtube.com/@pdnczone)
@@ -49,7 +49,7 @@
 روی **هر دو** سرور اجرا کنید:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/pdnczone/hashem-panel/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/roboapi2/hashem-panel/main/install.sh)
 ```
 
 ۱. **سرور ایران:** گزینه‌ی `1`؛ تونل و پورت‌ها را انتخاب کنید و باندلی را که چاپ می‌شود (`hsh1_…`) کپی کنید.
@@ -75,9 +75,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/pdnczone/hashem-panel/main/i
 | FRP · Backhaul · Xray | پورت کنترلی که انتخاب می‌کنید (برای kcp، quic و udp روی UDP هم) |
 | پنل | TCP `7777`، یا `7443` بعد از فعال شدن HTTPS |
 
-## Hashem Pro
+## نسخه رایگان Community
 
-GRE + FRP، پنل و آپدیت‌ها رایگان‌اند. **لایسنس Pro** راه‌اندازی Backhaul، Xray، باقر، اسپوف، محدودیت‌ها، کلاستر، تست مسیر، عیب‌یابی، تنظیمات کارایی، واچ‌داگ و بنچمارک را باز می‌کند. هر لایسنس Pro همه‌ی امکانات Pro را باز می‌کند، حتی آن‌هایی که بعداً اضافه می‌شوند، و تونل‌ها و تنظیماتی که کار می‌کنند بدون لایسنس هم کار می‌کنند. [pdnczone.ir](https://pdnczone.ir)
+در این فورک، همه قابلیت‌ها از جمله Backhaul، Xray، باقر، اسپوف، کلاستر، واچ‌داگ، بنچمارک و Sentinel بدون لایسنس و به‌صورت رایگان فعال هستند. نصب و آپدیت را از ریپازیتوری همین فورک انجام دهید. اعتبار و مجوز AGPL-3.0 سازنده اصلی حفظ شده است.
 
 ## مستندات
 
@@ -92,6 +92,6 @@ GRE + FRP، پنل و آپدیت‌ها رایگان‌اند. **لایسنس Pr
 
 Issue و Pull Request خوش‌آمد است؛ [CONTRIBUTING.md](CONTRIBUTING.md) را بخوانید و از شاخه‌ی `dev` شروع کنید. مشکل امنیتی را خصوصی گزارش کنید ([SECURITY.md](SECURITY.md)).
 
-تحت مجوز [AGPL-3.0](LICENSE): اگر نسخه‌ی تغییریافته را به‌صورت سرویس شبکه اجرا کنید، باید تغییراتتان را با همین مجوز منتشر کنید. امکانات Pro به لایسنس از سازنده نیاز دارند.
+تحت مجوز [AGPL-3.0](LICENSE): اگر نسخه‌ی تغییریافته را به‌صورت سرویس شبکه اجرا کنید، باید تغییراتتان را با همین مجوز منتشر کنید. تمام قابلیت‌ها در این فورک Community بدون لایسنس فعال هستند.
 
 </div>
