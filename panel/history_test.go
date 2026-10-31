@@ -170,3 +170,19 @@ func TestForgetMissingNeedsSustainedAbsence(t *testing.T) {
 		t.Fatal("present link must be kept")
 	}
 }
+
+// Audit T5: points without counters in between (iptables-save failed) made
+// the next rate divide the bytes since the older reading by one interval.
+func TestHistoryRateAfterAGapWithoutCounters(t *testing.T) {
+	h := &histStore{links: map[string]*histRing{}}
+	t0 := time.Unix(1_800_000_000, 0)
+	c := func(v uint64) *uint64 { return &v }
+	h.recordSample("bh", t0, stateHealthy, 1, c(0), c(0))
+	h.recordSample("bh", t0.Add(histEvery), stateHealthy, 1, nil, nil)
+	h.recordSample("bh", t0.Add(2*histEvery), stateHealthy, 1, nil, nil)
+	h.recordSample("bh", t0.Add(3*histEvery), stateHealthy, 1, c(uint64(3*histEvery/time.Second)*1000), c(0))
+	pts := h.series("bh", 0)
+	if got := pts[len(pts)-1].RxBps; got != 1000 {
+		t.Fatalf("rate after the gap %v B/s, want 1000", got)
+	}
+}

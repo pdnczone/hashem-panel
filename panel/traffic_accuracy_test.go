@@ -65,7 +65,7 @@ func TestTrafficCountsWhilePanelWasDown(t *testing.T) {
 	trafficStateMu.Lock()
 	saveTrafficStateLocked()
 	// the panel restarts
-	trafficStateInit, lifetimeUp, lifetimeDown, lastRawIf, lastSampleAt = false, 0, 0, nil, time.Time{}
+	trafficStateInit, lifetimeUp, lifetimeDown, lastRawIf, lastSampleAt, lastReadAt = false, 0, 0, nil, time.Time{}, time.Time{}
 	trafficStateMu.Unlock()
 
 	m := trafficSample(dev(4500), 0, 0, true, t0.Add(60*time.Second))
@@ -186,9 +186,13 @@ func TestCarrierTagCounters(t *testing.T) {
 		backhaulDir, configDir, runner = oldDir, oldCfg, oldRunner
 		carrierState.Lock()
 		carrierState.sig, carrierState.at, carrierState.tags, carrierState.ok = "", time.Time{}, nil, false
+		carrierState.rx, carrierState.tx, carrierState.raw = 0, 0, nil
 		carrierState.Unlock()
 	})
 	reset()
+	carrierState.Lock()
+	carrierState.rx, carrierState.tx, carrierState.tags, carrierState.raw = 0, 0, nil, nil
+	carrierState.Unlock()
 	readCarrierCounters() // builds the chains: counters start at 0
 	reset()
 	rx, tx, ok := readCarrierCounters()
@@ -227,5 +231,68 @@ func TestLinkCountersFromSnapshot(t *testing.T) {
 func TestSpoofInterfaceIsATunnel(t *testing.T) {
 	if !isTunnelInterface(spoofIface) {
 		t.Fatal("the Spoof tunnel's WireGuard interface carries tunnel traffic")
+	}
+}
+
+// Audit T1: a stale reading inside the first second of a speed window (the
+// window moves lastSampleAt only after a second) was taken for a reset of
+// every interface and its whole counter was counted again.
+func TestTrafficStaleReadingInsideSpeedWindow(t *testing.T) {
+	resetTrafficState(t)
+	const gb = 1 << 30
+	t0 := time.Unix(1_800_000_000, 0)
+	dev := func(rx uint64) string { return devLines(map[string][2]uint64{"gre-a": {rx, 0}}) }
+	trafficSample(dev(5*gb), 0, 0, false, t0)
+	trafficSample(dev(5*gb+1000), 0, 0, false, t0.Add(600*time.Millisecond))
+	m := trafficSample(dev(5*gb+400), 0, 0, false, t0.Add(300*time.Millisecond))
+	if got := m["down"].(uint64); got != 1000 {
+		t.Fatalf("down = %d after a stale reading inside the window, want 1000", got)
+	}
+	m = trafficSample(dev(5*gb+1000), 0, 0, false, t0.Add(600*time.Millisecond)) // the same reading again
+	if got := m["down"].(uint64); got != 1000 {
+		t.Fatalf("down = %d after the same reading twice, want 1000", got)
+	}
+}
+
+// Audit T3: the 30 s flush wrote traffic_state.json before the first
+// reading had loaded it, with zero totals: the saved lifetime was lost.
+func TestTrafficFlushBeforeFirstSampleKeepsState(t *testing.T) {
+	resetTrafficState(t)
+	st := persistentTrafficState{LifetimeUp: 4000, LifetimeDown: 9000, LastIf: map[string][2]uint64{"gre-a": {100, 100}}}
+	b, _ := json.Marshal(st)
+	if err := os.WriteFile(trafficStateFile(), b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	flushHistoryIfDirty() // the panel is slow to take its first reading
+	m := trafficSample(devLines(map[string][2]uint64{"gre-a": {150, 100}}), 0, 0, false, time.Now())
+	if got := m["down"].(uint64); got != 9050 {
+		t.Fatalf("down = %d, want 9050 (9000 saved + 50 moved)", got)
+	}
+}
+
+// Audit T6: with no state file the totals come from traffic.json, read
+// under its own lock (it raced the history recorder).
+func TestTrafficStateFallsBackToHistory(t *testing.T) {
+	resetTrafficState(t)
+	up, down := uint64(70), uint64(80)
+	histMu.Lock()
+	histCached = []trafficPoint{{T: 1, Up: &up, Down: &down}}
+	histMu.Unlock()
+	m := trafficSample(devLines(map[string][2]uint64{"gre-a": {1, 1}}), 0, 0, false, time.Now())
+	if m["up"].(uint64) != 70 || m["down"].(uint64) != 80 {
+		t.Fatalf("totals %v/%v, want 70/80 from the history", m["up"], m["down"])
+	}
+}
+
+// Audit T4: a sold tunnel inside GRE is the customer's traffic, billed on
+// its own: never the seller's tunnel traffic.
+func TestTrafficSkipsCustomersGRE(t *testing.T) {
+	for _, name := range []string{"hcg3x1", "hcg12x2", "hcc0a1b2c3d"} {
+		if isTunnelInterface(name) {
+			t.Errorf("isTunnelInterface(%q): a customer's GRE counted as this server's tunnel", name)
+		}
+	}
+	if !isTunnelInterface("gre-tunnel") {
+		t.Error("gre-tunnel is a tunnel")
 	}
 }

@@ -56,7 +56,7 @@ func TestTrafficLab(t *testing.T) {
 		carrierState.Unlock()
 	})
 	trafficStateMu.Lock()
-	trafficStateInit, lifetimeUp, lifetimeDown, lastRawIf, lastSampleAt = false, 0, 0, nil, time.Time{}
+	trafficStateInit, lifetimeUp, lifetimeDown, lastRawIf, lastSampleAt, lastReadAt = false, 0, 0, nil, time.Time{}, time.Time{}
 	speedDeltaUp, speedDeltaDown, currentSpeedUp, currentSpeedDown = 0, 0, 0, 0
 	trafficStateMu.Unlock()
 
@@ -237,7 +237,7 @@ func TestTrafficLab(t *testing.T) {
 	dBefore := readDash()
 	flushHistoryIfDirty() // saves traffic_state.json, as the panel does every 30 s
 	trafficStateMu.Lock()
-	trafficStateInit, lifetimeUp, lifetimeDown, lastRawIf, lastSampleAt = false, 0, 0, nil, time.Time{}
+	trafficStateInit, lifetimeUp, lifetimeDown, lastRawIf, lastSampleAt, lastReadAt = false, 0, 0, nil, time.Time{}, time.Time{}
 	trafficStateMu.Unlock()
 	run("main3")
 	tick()

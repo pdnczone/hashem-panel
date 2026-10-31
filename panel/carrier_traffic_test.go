@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -158,9 +159,13 @@ func TestReadCarrierCounters(t *testing.T) {
 		backhaulDir, runner = oldDir, oldRunner
 		carrierState.Lock()
 		carrierState.sig, carrierState.at, carrierState.lastFailed = "", time.Time{}, time.Time{}
+		carrierState.rx, carrierState.tx, carrierState.tags, carrierState.raw = 0, 0, nil, nil
 		carrierState.Unlock()
 	})
 	reset()
+	carrierState.Lock()
+	carrierState.rx, carrierState.tx, carrierState.tags, carrierState.raw = 0, 0, nil, nil
+	carrierState.Unlock()
 
 	if rx, tx, ok := readCarrierCounters(); !ok || rx != 0 || tx != 0 {
 		t.Fatalf("first reading: %d %d %v", rx, tx, ok)
@@ -192,15 +197,21 @@ func TestReadCarrierCounters(t *testing.T) {
 		t.Fatalf("cached reading ran %v", calls)
 	}
 
-	// Reboot: the chains are gone and are built again.
+	// Reboot: the chains are gone and are built again. The total does not
+	// drop (it is what this process counted); the new chains add from 0.
 	save = "*filter\nCOMMIT\n"
 	calls = nil
 	reset()
-	if rx, _, ok := readCarrierCounters(); !ok || rx != 0 {
+	if rx, _, ok := readCarrierCounters(); !ok || rx != 1700 {
 		t.Fatalf("after reboot: %d %v", rx, ok)
 	}
 	if !strings.Contains(strings.Join(calls, "\n"), "iptables-restore") {
 		t.Fatal("chains not rebuilt after reboot")
+	}
+	save = acctSave // the new chains have counted 1700 since
+	reset()
+	if rx, _, ok := readCarrierCounters(); !ok || rx != 3400 {
+		t.Fatalf("the rebuilt chains add their own count: %d %v", rx, ok)
 	}
 
 	// No iptables: no counters, and no retry on every tick.
@@ -394,4 +405,65 @@ func TestCarrierDropSkipsMissingChains(t *testing.T) {
 	if len(calls) != 7 {
 		t.Fatalf("present chains must be dropped: %v", calls)
 	}
+}
+
+// The IPv4 and IPv6 chains are counted apart: one family failing once, or
+// being rebuilt, never makes the total drop and never counts the other
+// family's whole count again (it was summed into one counter, and a drop of
+// the sum was taken for a reset).
+func TestCarrierCountersFamilyFlap(t *testing.T) {
+	oldDir, oldRunner, old6 := backhaulDir, runner, acctIPv6
+	backhaulDir = t.TempDir()
+	_ = os.WriteFile(filepath.Join(backhaulDir, "server.toml"), []byte("[server]\nbind_addr = \"0.0.0.0:3080\"\n"), 0o600)
+	acctIPv6 = func() bool { return true }
+	save := func(in uint64) string {
+		return "*filter\n:HASHEM_ACCT_IN - [0:0]\n:HASHEM_ACCT_OUT - [0:0]\n" +
+			"[1:1] -A INPUT -j HASHEM_ACCT_IN\n[1:1] -A OUTPUT -j HASHEM_ACCT_OUT\n" +
+			fmt.Sprintf("[1:%d] -A HASHEM_ACCT_IN -p tcp -m tcp --dport 3080\n", in) +
+			"[1:5] -A HASHEM_ACCT_OUT -p tcp -m tcp --sport 3080\nCOMMIT\n"
+	}
+	var v4, v6 string
+	fail6 := false
+	runner = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		switch name {
+		case "iptables-save":
+			return []byte(v4), nil
+		case "ip6tables-save":
+			if fail6 {
+				return nil, fmt.Errorf("ip6tables: resource busy")
+			}
+			return []byte(v6), nil
+		}
+		return nil, nil
+	}
+	zero := func() {
+		carrierState.Lock()
+		carrierState.sig, carrierState.sig6, carrierState.at, carrierState.lastFailed = "", "", time.Time{}, time.Time{}
+		carrierState.rx, carrierState.tx, carrierState.tags, carrierState.raw, carrierState.ok = 0, 0, nil, nil, false
+		carrierState.Unlock()
+	}
+	t.Cleanup(func() { backhaulDir, runner, acctIPv6 = oldDir, oldRunner, old6; zero() })
+	zero()
+	read := func(what string, want uint64) {
+		t.Helper()
+		carrierState.Lock()
+		carrierState.at = time.Time{}
+		carrierState.Unlock()
+		rx, _, ok := readCarrierCounters()
+		if !ok || rx != want {
+			t.Fatalf("%s: rx %d %v, want %d", what, rx, ok, want)
+		}
+	}
+	v4, v6 = "*filter\nCOMMIT\n", "*filter\nCOMMIT\n"
+	read("chains built", 0)
+	v4, v6 = save(10_000_000_000), save(1_000_000_000)
+	read("both families", 11_000_000_000)
+	fail6, v4 = true, save(10_000_000_100)
+	read("ip6tables fails once: only IPv4's change", 11_000_000_100)
+	fail6, v6 = false, save(1_000_000_050)
+	read("IPv6 back: its change only", 11_000_000_150)
+	v4, v6 = "*filter\nCOMMIT\n", save(1_000_000_060) // a firewall reload drops the IPv4 chains
+	read("IPv4 rebuilt: no drop, IPv6 goes on", 11_000_000_160)
+	v4 = save(40)
+	read("the new IPv4 chains from 0", 11_000_000_200)
 }

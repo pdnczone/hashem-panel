@@ -445,7 +445,57 @@ var carrierState = struct {
 	tags       map[string][2]uint64 // per tunnel: [0] received, [1] sent
 	ok         bool
 	lastFailed time.Time
+	// The raw chain counters of each family at the last reading ("v4",
+	// "v6"; tags under "v4/"+tag): the totals above add each family's own
+	// change, so a family that is rebuilt or fails once does not make the
+	// sum drop and the other family's whole count is not taken again.
+	raw map[string][2]uint64
 }{}
+
+// carrierAddFam adds one family's reading (totals and per-tunnel tags) to
+// the running totals; prev readings are in carrierState.raw. Caller holds
+// carrierState.
+func carrierAddFam(fam string, rx, tx uint64, tags map[string][2]uint64) {
+	if carrierState.raw == nil {
+		carrierState.raw = map[string][2]uint64{}
+	}
+	if carrierState.tags == nil {
+		carrierState.tags = map[string][2]uint64{}
+	}
+	add := func(key string, cur [2]uint64) [2]uint64 {
+		prev := carrierState.raw[key]
+		carrierState.raw[key] = cur
+		return [2]uint64{counterDelta(prev[0], cur[0]), counterDelta(prev[1], cur[1])}
+	}
+	d := add(fam, [2]uint64{rx, tx})
+	carrierState.rx += d[0]
+	carrierState.tx += d[1]
+	for tag, c := range tags {
+		d := add(fam+"/"+tag, c)
+		t := carrierState.tags[tag]
+		carrierState.tags[tag] = [2]uint64{t[0] + d[0], t[1] + d[1]}
+	}
+}
+
+// carrierForgetFam drops a family's last readings (its chains are gone: a
+// new chain counts from 0).
+func carrierForgetFam(fam string) {
+	for k := range carrierState.raw {
+		if k == fam || strings.HasPrefix(k, fam+"/") {
+			delete(carrierState.raw, k)
+		}
+	}
+}
+
+// carrierTagsOf sums byEnd per tunnel tag.
+func carrierTagsOf(ends []carrierEnd, byEnd map[acctKey][2]uint64) map[string][2]uint64 {
+	tags := map[string][2]uint64{}
+	for _, e := range ends {
+		c, t := byEnd[e.key()], tags[e.Tag]
+		tags[e.Tag] = [2]uint64{t[0] + c[0], t[1] + c[1]}
+	}
+	return tags
+}
 
 // carrierTagCounters is the last reading per tunnel (see carrierEnd.Tag);
 // call carrierCounters first for a fresh one.
@@ -499,8 +549,7 @@ func readCarrierCounters() (rx, tx uint64, ok bool) {
 	rx, tx, byEnd, ready := parseAcctSaveEnds(string(out))
 	if !ready || rules != carrierState.sig {
 		// New or changed tunnels, a reboot or a firewall reload: build the
-		// chains again (their counters start over, which the ledger treats as
-		// a reset).
+		// chains again (their counters start over from 0).
 		if err := carrierLoad(rules); err != nil {
 			carrierState.lastFailed = time.Now()
 			return 0, 0, false
@@ -508,10 +557,12 @@ func readCarrierCounters() (rx, tx uint64, ok bool) {
 		carrierState.sig = rules
 		rx, tx, byEnd = 0, 0, nil
 	}
+	carrierAddFam("v4", rx, tx, carrierTagsOf(ends, byEnd))
 	// IPv6: a failing ip6tables leaves the IPv4 counts alone
 	if rules6 := carrierRules6(ends, primaryInterface()); rules6 == "" && carrierState.sig6 != "" {
 		carrierDropFam("ip6tables")
 		carrierState.sig6 = ""
+		carrierForgetFam("v6")
 	} else if rules6 != "" {
 		if out6, err := runCmdTimeoutOut(5*time.Second, "ip6tables-save", "-c", "-t", "filter"); err == nil {
 			rx6, tx6, byEnd6, ready6 := parseAcctSaveEnds(string(out6))
@@ -521,24 +572,12 @@ func readCarrierCounters() (rx, tx uint64, ok bool) {
 				}
 				rx6, tx6, byEnd6 = 0, 0, nil
 			}
-			rx, tx = rx+rx6, tx+tx6
-			if byEnd == nil {
-				byEnd = map[acctKey][2]uint64{}
-			}
-			for k, v := range byEnd6 {
-				c := byEnd[k]
-				byEnd[k] = [2]uint64{c[0] + v[0], c[1] + v[1]}
-			}
+			carrierAddFam("v6", rx6, tx6, carrierTagsOf(ends, byEnd6))
 		}
 	}
-	tags := map[string][2]uint64{}
-	for _, e := range ends {
-		c, t := byEnd[e.key()], tags[e.Tag]
-		tags[e.Tag] = [2]uint64{t[0] + c[0], t[1] + c[1]}
-	}
 	carrierState.lastFailed = time.Time{}
-	carrierState.rx, carrierState.tx, carrierState.tags, carrierState.ok = rx, tx, tags, true
-	return rx, tx, true
+	carrierState.ok = true
+	return carrierState.rx, carrierState.tx, true
 }
 
 // carrierLoad replaces both chains and makes sure INPUT and OUTPUT jump to them.
