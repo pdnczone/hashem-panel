@@ -569,7 +569,7 @@ func TestNodeWriteFileAtomic(t *testing.T) {
 
 func TestNodeSSHCommandChecksVersion(t *testing.T) {
 	cmd := nodeSSHCommand("n", false)
-	if !strings.Contains(cmd, "hashem help 2>/dev/null | grep -q node-join") || !strings.Contains(cmd, nodeInstallURL) {
+	if !strings.Contains(cmd, `hashem help 2>/dev/null | grep -q '\''node-join.*code | ->'\''`) || !strings.Contains(cmd, nodeInstallURL) {
 		t.Fatalf("an old Hashem must go through the installer: %s", cmd)
 	}
 }

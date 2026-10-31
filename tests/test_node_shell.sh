@@ -17,7 +17,7 @@ fake_panel() { # $1 = new|old
     cat > "$PANEL_BIN" <<FAKE
 #!/usr/bin/env bash
 if [[ "\$1" == "--help" ]]; then
-  [[ "$1" == new ]] && echo "Usage: gre-panel [license [status] | node [status|join CODE|leave]]" || echo "Usage: gre-panel [license [status]]"
+  [[ "$1" == new ]] && echo "Usage: gre-panel [license [status] | node [status|join CODE|-|leave]]" || echo "Usage: gre-panel [license [status]]"
   exit 0
 fi
 if [[ "\$1 \$2 \$3" == "node join -" ]]; then read -r c; echo "panel \$* <\$c" >> "$LOG"; else echo "panel \$*" >> "$LOG"; fi
@@ -60,5 +60,15 @@ fake_panel new
 cli_node status >/dev/null
 check "hashem node status passes through" "panel node status" "$(cat "$LOG")"
 check "usage lists node-join" 1 "$(grep -c '^  hashem node-join' hashem.sh)"
+: > "$LOG"
+cat > "$PANEL_BIN" <<FAKE
+#!/usr/bin/env bash
+[[ "\$1" == "--help" ]] && { echo "Usage: gre-panel [node [status|join CODE|leave]]"; exit 0; }
+echo "panel \$*" >> "$LOG"
+FAKE
+chmod +x "$PANEL_BIN"
+cli_node_join hn1.abc --name y >/dev/null
+check "a first node build (no stdin): the code as an argument" "panel node join hn1.abc --name y" "$(cat "$LOG")"
+check "usage says - is the code on stdin" 1 "$(grep -c '^  hashem node-join <hn1.code | ->' hashem.sh)"
 check "dispatch has node-join" 1 "$(grep -c '^        node-join) shift; cli_node_join' hashem.sh)"
 exit $fail

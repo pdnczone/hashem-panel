@@ -294,6 +294,9 @@ func nodeLeave(self nodeSelf) error {
 		return nodeSelfClear()
 	case nodeRoleCentral:
 		nodesLoadLocked()
+		if nodesEr != "" { // its nodes are not known: leaving would cut them off unseen
+			return nodeErr{"E-NODE-05", "nodes.json cannot be read (" + nodesEr + "): fix or remove it first"}
+		}
 		if len(nodesF.Nodes) > 0 {
 			return nodeErr{"E-NODE-02", fmt.Sprintf("this central still has %d node(s): remove them first", len(nodesF.Nodes))}
 		}
@@ -491,7 +494,7 @@ func nodeSSHStart(self nodeSelf, req nodeRequest) (nodeSSHResult, error) {
 func nodeSSHCommand(name string, sudo bool) string {
 	// a Hashem older than nodes has no node-join: the installer brings the
 	// current one (and keeps the tunnels)
-	script := "set -e; if command -v hashem >/dev/null 2>&1 && hashem help 2>/dev/null | grep -q node-join; then " + nodeJoinCommandArg("-", name, false) +
+	script := "set -e; if command -v hashem >/dev/null 2>&1 && hashem help 2>/dev/null | grep -q 'node-join.*code | ->'; then " + nodeJoinCommandArg("-", name, false) +
 		"; else " + nodeJoinCommandArg("-", name, true) + "; fi"
 	cmd := "bash -c " + shellQuote(script)
 	if sudo {
