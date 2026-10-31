@@ -50,6 +50,8 @@ The GRE link itself can be wrapped four ways: **Direct** (protocol 47), **WSS** 
 - **One health model** for the dashboard, the map and every card, with latency per link and alerts by webhook or Telegram when a tunnel changes state.
 - **Swap a tunnel's carrier** from either server; both switch, and both go back if the new one does not connect within 45 seconds.
 - **Cluster:** several foreign servers behind one Iran port (failover, balance, sticky, least connections), Iran servers backing each other up, and DNS failover. [Guide](docs/CLUSTER.md)
+- **Nodes:** manage all your servers from one panel: add them with one line or SSH, open any server's pages from the central, make a tunnel between two of them from one page, update and back them up, and get their alerts in one place. [Guide](docs/NODES.md)
+- **Customers (Pro):** sell tunnels: each customer brings foreign servers, you set the plan (days, volume, speed), and their tunnels stop when it ends. [Guide](docs/CUSTOMERS.md)
 - **Watchdog, encrypted backups and diagnostics** (`hashem doctor`), with Quick Repair.
 - **Updates you can undo:** stable and dev channels, SHA-256 verified, automatic rollback after a bad start.
 - **Hardened panel:** argon2id passwords, CSRF, optional 2FA, audit log; the web terminal is off by default.
@@ -95,7 +97,7 @@ GRE + FRP, the panel and updates are free. A **Pro license** unlocks Backhaul se
 | | |
 | --- | --- |
 | **Start** | [Choosing a tunnel](docs/ENGINES.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Secure deployment](docs/DEPLOYMENT.md) |
-| **Guides** | [IPv6](docs/IPV6.md) · [Xray tunnel](docs/XRAY_TUNNEL.md) · [Cluster](docs/CLUSTER.md) · [Cluster tutorial](docs/CLUSTER_TUTORIAL.md) · [FRP transports](docs/FRP_TUNNELS_GUIDE.md) |
+| **Guides** | [IPv6](docs/IPV6.md) · [Xray tunnel](docs/XRAY_TUNNEL.md) · [Cluster](docs/CLUSTER.md) · [Cluster tutorial](docs/CLUSTER_TUTORIAL.md) · [Nodes](docs/NODES.md) · [Customers](docs/CUSTOMERS.md) · [FRP transports](docs/FRP_TUNNELS_GUIDE.md) |
 | **Reference** | [Operations: health model, updates, CLI, uninstall](docs/OPERATIONS.md) · [HTTP API](docs/API.md) · [Error codes](docs/ERROR_CODES.md) · [Changelog](CHANGELOG.md) |
 | **Project** | [Contributing](CONTRIBUTING.md) · [Development](docs/dev/DEVELOPMENT.md) · [Security policy](SECURITY.md) · [Code of conduct](CODE_OF_CONDUCT.md) |
 
