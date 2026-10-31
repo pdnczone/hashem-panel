@@ -256,7 +256,7 @@ func writeAPIError(w http.ResponseWriter, r *http.Request, code, detail string) 
 	}
 	ep := ""
 	if r != nil {
-		ep = r.Method + " " + r.URL.Path
+		ep = r.Method + " " + nodeViewRedact(r.URL.Path) // a node view's token stays out of the log
 	}
 	recordError(code, ep, msg)
 	w.Header().Set("Content-Type", "application/json")

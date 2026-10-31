@@ -100,7 +100,7 @@ func routeLabel(path string) string {
 	if cfg.BasePath == "" || (path != base && !strings.HasPrefix(path, base+"/")) {
 		return "other"
 	}
-	return "/{base}" + strings.TrimPrefix(path, base)
+	return "/{base}" + nodeViewRedact(strings.TrimPrefix(path, base))
 }
 
 func observeRoute(label string, d time.Duration) {

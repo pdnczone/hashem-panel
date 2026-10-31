@@ -19,6 +19,15 @@ const NV_READY = NV ? new Promise(done => {
 }) : null;
 const at = p => (NV && p.startsWith('/api/')) ? BASE + '/api/nv/' + NV_TOKEN + p.slice(4) : BASE + p;
 if (NV) document.documentElement.classList.add('nv');
+// the user working in a node's view keeps the central's login from going idle
+if (NV) {
+  let sent = 0;
+  ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(ev => window.addEventListener(ev, () => {
+    if (Date.now() - sent < 20000) return;
+    sent = Date.now();
+    try { window.parent.postMessage({ hnv: 'active' }, NV_ORIGIN); } catch (_) { /* not framed */ }
+  }, { passive: true, capture: true }));
+}
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const escapeHtml = esc;
@@ -174,8 +183,10 @@ function modalHide(ov) {
 }
 let _csrfToken = '';
 function getCSRFToken() {
+  if (NV) return ''; // a node's view: its token is the credential, and it has no cookies
   if (_csrfToken) return _csrfToken;
-  const match = document.cookie.match(/(?:^|; )gre_csrf=([^;]*)/);
+  let match = null;
+  try { match = document.cookie.match(/(?:^|; )gre_csrf=([^;]*)/); } catch (_) { /* no cookie access */ }
   if (match) return decodeURIComponent(match[1]);
   return '';
 }
@@ -200,7 +211,9 @@ async function api(path, body, method) {
     headers: Object.keys(headers).length ? headers : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (r.status === 401 && NV) { // the central's login ended: its page reloads
+  // the central's own 401 (no X-Hashem-Node: not the node's answer): its
+  // login ended or the token is stale, and the central's page sorts it out
+  if (r.status === 401 && NV && !r.headers.get('X-Hashem-Node')) {
     try { window.parent.postMessage({ hnv: 'ended' }, NV_ORIGIN); } catch (_) { /* not framed */ }
     throw new Error(tr('', 'The session ended: reload the page'));
   }
@@ -223,6 +236,27 @@ async function api(path, body, method) {
   const data = await r.json();
   if (data && data.csrf_token && !NV) setCSRFToken(data.csrf_token);
   return data;
+}
+// download saves what path answers. In a node's view it is fetched, so an
+// error is a message and the view stays (navigating the frame would replace it).
+async function download(path) {
+  if (!NV) { location.href = at(path); return; }
+  try {
+    await NV_READY;
+    const r = await fetch(at(path), { cache: 'no-store' });
+    if (!r.ok) {
+      let msg = r.statusText;
+      try { const j = await r.json(); msg = (j.error_code ? '[' + j.error_code + '] ' : '') + (j.error || msg); } catch (_) { /* not JSON */ }
+      throw new Error(msg);
+    }
+    const m = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(await r.blob());
+    a.download = m ? m[1] : 'download';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  } catch (e) { toastErr(tr('', 'Download failed'), e.message); }
 }
 function showLogin() { $('login').classList.remove('hidden'); $('app').classList.add('hidden'); }
 function showApp() { $('login').classList.add('hidden'); $('app').classList.remove('hidden'); loadLicense(); }
@@ -508,7 +542,9 @@ $('themeBtn').onclick = () => setTheme(document.body.dataset.t === 'dark' ? 'lig
 // No saved choice: follow the system appearance, live, until the user picks one.
 function savedTheme() { try { return localStorage.getItem('gre_theme'); } catch(e) { return null; } }
 const sysLight = window.matchMedia ? matchMedia('(prefers-color-scheme: light)') : null;
-setTheme(savedTheme() || (sysLight && sysLight.matches ? 'light' : 'dark'), false);
+// a node's view has no storage: the central's page passes its theme
+if (NV) setTheme(new URLSearchParams(location.search).get('t') === 'light' ? 'light' : 'dark', false);
+else setTheme(savedTheme() || (sysLight && sysLight.matches ? 'light' : 'dark'), false);
 if (sysLight && sysLight.addEventListener) sysLight.addEventListener('change', e => { if (!savedTheme()) setTheme(e.matches ? 'light' : 'dark', false, true); });
 
 // i18n & Persian (Farsi) Language System
@@ -6607,7 +6643,7 @@ async function loadWatchdog() {
         });
         bList.querySelectorAll('[data-dl]').forEach(btn => {
           btn.onclick = () => {
-            window.location.href = at('/api/watchdog/backup-download?f=' + encodeURIComponent(btn.dataset.dl));
+            download('/api/watchdog/backup-download?f=' + encodeURIComponent(btn.dataset.dl));
           };
         });
         bList.querySelectorAll('[data-rst]').forEach(btn => {
@@ -11570,7 +11606,7 @@ function openCustBulkRenew() {
     toastOk(tr('', 'Renewed'), tr('', '{n} customers').replace('{n}', ids.length));
   });
 }
-function custExport() { location.href = at('/api/customers/export.csv'); }
+function custExport() { download('/api/customers/export.csv'); }
 
 // a foreign server: lid 0 adds one
 function openCustLink(id, lid) {
@@ -12022,7 +12058,8 @@ async function nodePickLoad() {
   if (NV) return;
   let d;
   try {
-    const r = await fetch(BASE + '/api/nodes', { cache: 'no-store' });
+    const r = await fetch(BASE + '/api/nodes', { cache: 'no-store', headers: Date.now() - userActiveAt < 30000 ? { 'X-User-Active': '1' } : {} });
+    if (r.status === 401) { if (NODE) location.reload(); return; } // logged out: the login page
     if (!r.ok) return; // keep what is shown: a failed read is not "no nodes"
     d = await r.json();
   } catch (_) { return; }
@@ -12074,8 +12111,26 @@ window.addEventListener('message', e => {
   // the frame has an opaque origin: '*' is the only target, and the token
   // goes only to the frame this page made
   if (d.hnv === 'ready') f.contentWindow.postMessage({ hnv: 'token', token: _nodeViewTok.token }, '*');
-  if (d.hnv === 'ended') location.reload();
+  if (d.hnv === 'active' && document.hasFocus()) { userActiveAt = Date.now(); nodePickLoad(); }
+  if (d.hnv === 'ended') nodeViewEnded();
 });
+// nodeViewEnded: the frame's token was refused. This page's own login
+// decides: gone, the login page; still there, a fresh token, once; again
+// soon after, the view is closed (a node cannot keep this tab reloading).
+let _nodeViewEndedAt = 0;
+async function nodeViewEnded() {
+  let r = null;
+  try { r = await fetch(BASE + '/api/nodes', { cache: 'no-store' }); } catch (_) { /* offline */ }
+  if (r && r.status === 401) { nodePickSet(null); location.reload(); return; }
+  _nodeViewTok = null;
+  if (Date.now() - _nodeViewEndedAt < 60000) {
+    toastErr(tr('', 'Failed'), tr('', 'The node view was closed: open the node again.'));
+    nodePickSet(null);
+    return;
+  }
+  _nodeViewEndedAt = Date.now();
+  nodeViewOpen();
+}
 function openNodeHere(id) { nodePickSet(id); }
 (function initNodePick() {
   if (NV) {
