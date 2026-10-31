@@ -6136,6 +6136,48 @@ if dropped > 0:
     return $RET
 }
 
+# purge_hashem_units: stop, disable and delete every systemd unit Hashem
+# or its panel ever wrote, matched by name prefix or by an ExecStart/config
+# path of ours, together with their drop-in dirs and .wants/.requires links.
+# Each stop is bounded by a timeout and followed by SIGKILL, so one unit stuck
+# in "deactivating" cannot hang the uninstall. Units left behind used to keep
+# ports, nft tables or crash loops alive and blocked the next install.
+# HASHEM_SYSTEMD_DIR is overridable for tests.
+purge_hashem_units() {
+    local dir="${HASHEM_SYSTEMD_DIR:-/etc/systemd/system}" f u l
+    local -a units=()
+    local name_re='^(gre-panel|gre-[a-z0-9-]+|frps[a-z0-9-]*|frpc[a-z0-9-]*|backhaul[a-z0-9-]*|hashem-[a-z0-9-]+|hsell-[0-9]+-[0-9]+|spoof-core)\.(service|timer|socket|path)$'
+    local path_re='(/usr/local/bin/(frps|frpc|backhaul|gre-panel|hashem|spoof)([[:space:]]|$|\.sh)|/etc/gre-panel/|/etc/frp/|/etc/backhaul/|/etc/hashem/|backhaul-core/|/etc/spoof/)'
+    for f in "$dir"/*.service "$dir"/*.timer "$dir"/*.socket "$dir"/*.path; do
+        [[ -f "$f" && ! -L "$f" ]] || continue
+        u="${f##*/}"
+        case "$u" in sentinel.service|x-ui.service|xray.service|sing-box.service|wg-quick@*) continue ;; esac
+        if [[ "$u" =~ $name_re ]] || grep -Eqs "^(ExecStart|ExecStartPre|ExecStartPost|ExecStop)=.*${path_re}" "$f"; then
+            units+=("$u")
+        fi
+    done
+    # timers first so they cannot start their service again mid-purge
+    local -a ordered=()
+    for u in "${units[@]}"; do [[ "$u" == *.timer ]] && ordered+=("$u"); done
+    for u in "${units[@]}"; do [[ "$u" == gre-panel.service ]] && ordered+=("$u"); done
+    for u in "${units[@]}"; do [[ "$u" != *.timer && "$u" != gre-panel.service ]] && ordered+=("$u"); done
+    for u in "${ordered[@]}"; do
+        timeout 15 systemctl stop "$u" >/dev/null 2>&1 || systemctl kill -s KILL "$u" >/dev/null 2>&1 || true
+        timeout 15 systemctl disable "$u" >/dev/null 2>&1 || true
+        rm -rf "${dir:?}/$u" "${dir:?}/$u.d"
+        rm -f "$dir"/*.wants/"$u" "$dir"/*.requires/"$u"
+    done
+    # links whose target is gone (unit file removed earlier without disable)
+    for l in "$dir"/*.wants/* "$dir"/*.requires/*; do
+        [[ -L "$l" && ! -e "$l" ]] || continue
+        u="${l##*/}"
+        [[ "$u" =~ $name_re ]] && rm -f "$l"
+    done
+    timeout 30 systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl reset-failed >/dev/null 2>&1 || true
+    return 0
+}
+
 uninstall_all() {
     echo -e "\n${RED}=== Uninstalling EVERYTHING (tunnel + panel + hashem command) ===${NC}"
     read -p "Are you sure? This removes GRE & FRP, the web panel AND the 'hashem' command. (y/N): " CONFIRM
@@ -6152,16 +6194,15 @@ uninstall_all() {
 # `hashem` stops working.
 uninstall_all_force() {
         echo -e "${CYAN}[*] Performing complete uninstallation of Hashem...${NC}"
-        # 1. Stop & disable all services & timers
-        systemctl stop 'frps-wss*' >/dev/null 2>&1 || true
-        systemctl stop frps frpc "${TUNNEL_NAME}.service" gre-panel hashem-watchdog.timer hashem-watchdog.service backhaul-server backhaul-client backhaul >/dev/null 2>&1 || true
-        systemctl stop 'frps*' 'frpc*' 'backhaul*' 'gre-t*' 'gre-h*' >/dev/null 2>&1 || true
-        systemctl disable frps frpc "${TUNNEL_NAME}.service" gre-panel hashem-watchdog.timer hashem-watchdog.service backhaul-server backhaul-client backhaul >/dev/null 2>&1 || true
-        systemctl disable 'frps*' 'frpc*' 'backhaul*' 'gre-t*' 'gre-h*' hashem-lb-net >/dev/null 2>&1 || true
+        # 1. Stop & disable all services & timers (bounded: a stuck unit is killed)
+        timeout 15 systemctl stop hashem-watchdog.timer gre-panel >/dev/null 2>&1 || systemctl kill -s KILL gre-panel >/dev/null 2>&1 || true
         purge_legacy_obfuscation
         # sold customer tunnels (panel Customers tab), stopped before the panel
         # binary goes so it cannot restart them
         customers_teardown
+        purge_hashem_units
+        nft delete table inet hashem_rescue >/dev/null 2>&1 || true
+        nft delete table inet hashem_dnat >/dev/null 2>&1 || true
 
         # 2. Terminate any leftover processes
         pkill -9 -f "${INSTALL_DIR}/frps" >/dev/null 2>&1 || true
@@ -6169,6 +6210,7 @@ uninstall_all_force() {
         pkill -9 -f "${INSTALL_DIR}/backhaul" >/dev/null 2>&1 || true
         pkill -9 -f "backhaul-core/backhaul_premium" >/dev/null 2>&1 || true
         pkill -9 -f "${INSTALL_DIR}/gre-panel" >/dev/null 2>&1 || true
+        pkill -9 -f "${INSTALL_DIR}/spoof" >/dev/null 2>&1 || true
 
         # 3. Remove all systemd files
         rm -f /etc/systemd/system/frps*.service /etc/systemd/system/frpc*.service \
