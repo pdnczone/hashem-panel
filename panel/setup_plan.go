@@ -121,7 +121,14 @@ var setupPlanTokens = func() (peers map[int]string, uplinks map[int]string) {
 	if _, tok := currentIranBundle(); tok != "" {
 		peers[0] = tok // the first tunnel of an Iran server
 	}
-	for _, f := range []string{filepath.Join(frpDir, "frpc.toml"), filepath.Join(backhaulDir, "client.toml")} {
+	// the first tunnel's client: the running engine's config first (a stale
+	// one of the other engine may be left after a switch), then the old
+	// place Backhaul kept it in
+	confs := []string{filepath.Join(frpDir, "frpc.toml"), filepath.Join(backhaulDir, "client.toml"), filepath.Join(configDir, "client.toml")}
+	if strings.HasPrefix(currentLocal().FrpSvc, "backhaul") {
+		confs = []string{filepath.Join(backhaulDir, "client.toml"), filepath.Join(configDir, "client.toml"), filepath.Join(frpDir, "frpc.toml")}
+	}
+	for _, f := range confs {
 		if tok := confToken(f); tok != "" {
 			uplinks[1] = tok
 			break

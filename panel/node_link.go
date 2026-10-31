@@ -875,8 +875,10 @@ func nodeRunOnce(s nodeSelf) string {
 				continue
 			}
 			go func(fr nodeFrame) {
-				defer func() { <-sem }()
 				body, err := nodeHandleReq(fr)
+				// the slot is free before the answer goes: the central sends
+				// its next call as soon as it has the answer
+				<-sem
 				nodeSendRes(nc, fr.ID, body, err)
 			}(fr)
 		}

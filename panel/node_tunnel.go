@@ -48,6 +48,10 @@ const (
 	nodeTunPlanMax  = 256 // entries of each list a plan may carry
 )
 
+// nodeTunFindRetry: a new server end not in the plan yet is looked for once
+// more after this (a server's status snapshot is refreshed every few seconds).
+var nodeTunFindRetry = 6 * time.Second
+
 // nodeTunLeft is a server end whose tunnel was not finished and that could
 // not be removed: it is listed until it is removed.
 type nodeTunLeft struct {
@@ -346,14 +350,13 @@ func (q *nodeTunReq) check() error {
 	}
 	if q.Engine == "frp" {
 		q.AcceptUDP = false
-		// FRP takes single ports only (ranges and 8080=80 are Backhaul's)
-		n := 0
-		for _, f := range strings.Split(q.Ports, ",") {
-			if strings.TrimSpace(f) != "" {
-				n++
-			}
+		// FRP takes single ports only (ranges and 8080=80 are Backhaul's);
+		// split as parsePorts does, so "443 2083" and a repeat are fine
+		seen := map[string]bool{}
+		for _, f := range strings.FieldsFunc(q.Ports, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
+			seen[strings.TrimLeft(f, "0")] = true
 		}
-		if len(parsePorts(q.Ports)) != n {
+		if len(parsePorts(q.Ports)) != len(seen) {
 			return nodeErr{"E-NODE-01", "ports: FRP takes single port numbers (ranges and mappings are for Backhaul)"}
 		}
 	}
@@ -362,10 +365,14 @@ func (q *nodeTunReq) check() error {
 			continue
 		}
 		nodesMu.Lock()
-		known := nodeFindLocked(id) != nil
+		rec := nodeFindLocked(id)
+		held := rec != nil && rec.Held
 		nodesMu.Unlock()
-		if !known {
+		if rec == nil {
 			return errNodeUnknown(id)
+		}
+		if held {
+			return nodeErr{"E-NODE-01", fmt.Sprintf("%s joined by the move to nodes and is not approved yet: approve it on the Nodes page first", nodeTunName(id))}
 		}
 	}
 	return nil
@@ -512,10 +519,18 @@ func nodeTunBundleCheck(bundle string, q nodeTunReq, d nodeTunDraft) error {
 		return errors.New("the server end's bundle has other ports than planned")
 	case nodeTunTransport(q.Engine, b.Transport) != nodeTunTransport(q.Engine, q.Transport):
 		return fmt.Errorf("the server end's bundle has transport %q, not %q", b.Transport, q.Transport)
-	case q.Engine != "frp" && b.UDP != q.AcceptUDP:
+	case q.Engine != "frp" && b.UDP != nodeTunUDPMark(q):
 		return errors.New("the server end's bundle forwards UDP otherwise than planned")
 	}
 	return nil
+}
+
+// nodeTunUDPMark: whether the bundle carries Backhaul's UDP mark. Only a
+// UDP companion is marked (tcpmux and the ws family); on tcp UDP goes inside
+// the tunnel, and udp is UDP already.
+func nodeTunUDPMark(q nodeTunReq) bool {
+	t := nodeTunTransport(q.Engine, q.Transport)
+	return q.AcceptUDP && t != "tcp" && t != "udp"
 }
 
 // nodeTunTransport is t with the engine's default filled in.
@@ -576,13 +591,18 @@ func nodeTunCreate(ctx context.Context, j *nodeTunJob, q nodeTunReq) error {
 	err = nodeAPIJSON(sctx, q.Server, http.MethodPost, "/api/setup", body, &res)
 	cancel()
 	findNew := func() int { // the new server end, by the client's address
-		fctx, cancel := context.WithTimeout(ctx, nodeTunPlanTO)
-		defer cancel()
-		id, ferr := nodeTunFindPeer(fctx, q.Server, d.Client.Public)
-		if ferr != nil || id < 0 || (before[id] && d.ServerRole == "add-peer") {
-			return -1
+		for try := 0; try < 2; try++ {
+			if try > 0 {
+				time.Sleep(nodeTunFindRetry) // the server's status snapshot may lag the install
+			}
+			fctx, cancel := context.WithTimeout(ctx, nodeTunPlanTO)
+			id, ferr := nodeTunFindPeer(fctx, q.Server, d.Client.Public)
+			cancel()
+			if ferr == nil && id >= 0 && !(before[id] && d.ServerRole == "add-peer") {
+				return id
+			}
 		}
-		return id
+		return -1
 	}
 	if err != nil {
 		// the server answered "no" before installing anything: nothing to undo
