@@ -3213,6 +3213,8 @@ window.FA_TEXT = {
 "The node view was closed: open the node again.": "نمای نود بسته شد: نود را دوباره باز کنید.",
 "Node": "نود",
 "Download failed": "دانلود نشد",
+"Throughput (both ways)": "گذردهی (هر دو جهت)",
+"counted at its Iran server; its other tunnels are not in the totals": "در سرور ایرانش حساب شده؛ تانل‌های دیگرش در جمع کل نیستند",
 "All servers": "همه سرورها",
 "Backup copied": "نسخه پشتیبان کپی شد",
 "Backups": "نسخه‌های پشتیبان",

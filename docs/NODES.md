@@ -109,8 +109,10 @@ so the totals are not doubled.
 - **Backups**: the central keeps a copy of each node's newest backup for
   14 days (checked every 6 hours, or **now** per node). The node's
   Watchdog makes the backup and encrypts it with that node's own key, so
-  the copy is only readable with that key. A node without Watchdog (Pro)
-  has no backups to copy.
+  the copy is only readable with that key. Save each node's key
+  (its Watchdog page: export the backup key) somewhere safe: without it a
+  lost node's copies cannot be opened. A node without Watchdog (Pro) has no
+  backups to copy.
 - **Customers**: the customers of every server in one list; **Open** goes
   to that server's Customers page.
 - **Alerts**: when Telegram or a webhook alert is set up on the central,

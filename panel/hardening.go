@@ -46,7 +46,8 @@ var longRunningGET = []string{
 	"/api/logs", "/api/doctor", "/api/update", "/api/version", "/api/releases", "/api/benchmark",
 	"/api/watchdog/backup-download", "/api/support", "/api/revpath", "/api/tls", "/api/perf",
 	"/api/dial", "/api/rescue", "/api/carrier", "/api/peer", "/api/tunnel-health",
-	"/api/nv", // relayed to a node: as long as the call on the node
+	"/api/nv",           // relayed to a node: as long as the call on the node
+	"/api/nodes/backup", // a node's backup copy, over a slow link
 }
 
 func isLongRunning(r *http.Request) bool {

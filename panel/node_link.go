@@ -197,6 +197,9 @@ type nodeSession struct {
 
 var nodeSessions = map[int]*nodeSession{} // nodesMu
 
+// errNodeOffline: the channel closed before the answer (not a node's own error).
+var errNodeOffline = errors.New("went offline")
+
 // nodeInfoLoops: the running info loops (a test waits for them to end).
 var nodeInfoLoops sync.WaitGroup
 
@@ -222,7 +225,7 @@ func (s *nodeSession) call(ctx context.Context, method string, body any) (json.R
 		case s.slots <- struct{}{}:
 			defer func() { <-s.slots }()
 		case <-s.done:
-			return nil, fmt.Errorf("node %d went offline", s.id)
+			return nil, fmt.Errorf("node %d %w", s.id, errNodeOffline)
 		case <-ctx.Done():
 			return nil, fmt.Errorf("node %d is busy with other requests: try again", s.id)
 		}
@@ -245,11 +248,11 @@ func (s *nodeSession) call(ctx context.Context, method string, body any) (json.R
 	select {
 	case f := <-ch:
 		if f.Err != "" {
-			return nil, errors.New(f.Err)
+			return nil, errors.New(nodeLogText([]byte(f.Err))) // the node's words: one short line
 		}
 		return f.Body, nil
 	case <-s.done:
-		return nil, fmt.Errorf("node %d went offline", s.id)
+		return nil, fmt.Errorf("node %d %w", s.id, errNodeOffline)
 	case <-ctx.Done():
 		return nil, fmt.Errorf("node %d did not answer in time", s.id)
 	}
@@ -526,7 +529,6 @@ func nodeServeHello(nc *nodeConn, f nodeFrame, key, addr string) {
 // nodeSessionEnd drops s (if it is still the node's session).
 func nodeSessionEnd(s *nodeSession) {
 	s.close()
-	nodeAlertsForget(s)
 	nodesMu.Lock()
 	if nodeSessions[s.id] == s {
 		delete(nodeSessions, s.id)

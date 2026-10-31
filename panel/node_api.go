@@ -237,6 +237,8 @@ func handleNodesPost(w http.ResponseWriter, r *http.Request) {
 		nodesMu.Unlock()
 		if err == nil {
 			nodeKick(req.ID)
+			_ = os.RemoveAll(nodeBackupDir(req.ID)) // its backup copies (node_fleet.go)
+			nodeAlertsForget(req.ID)
 			LogSecurityAudit("node_removed", cfg.Username, ClientIP(r), "id="+strconv.Itoa(req.ID))
 		}
 	case "leave":
@@ -372,9 +374,20 @@ func handleNodesPost(w http.ResponseWriter, r *http.Request) {
 		if !isCentral() {
 			return
 		}
+		nodesMu.Lock()
+		rec := nodeFindLocked(req.ID)
+		ok := rec != nil && !rec.Held && req.ID >= 1
+		nodesMu.Unlock()
+		if !ok {
+			writeAPIError(w, r, "E-NODE-01", "an approved node")
+			return
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
 		name, berr := nodeBackupPull(ctx, req.ID)
 		cancel()
+		if berr == nil && name != "" {
+			LogSecurityAudit("node_backup_pull", cfg.Username, ClientIP(r), fmt.Sprintf("node=%d file=%s", req.ID, name))
+		}
 		if berr != nil {
 			writeAPIError(w, r, "E-NODE-04", berr.Error())
 			return

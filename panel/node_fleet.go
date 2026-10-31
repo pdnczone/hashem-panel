@@ -18,6 +18,7 @@ package main
 //     server that holds the customer.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -54,11 +55,10 @@ type nodeAlertEvent struct {
 // nodeAlertsObserve keeps this node's alert events while it is linked to a
 // central (the central decides whether and where they go).
 func nodeAlertsObserve(now time.Time, links []linkSnap) {
-	nodeLinkState.Lock()
-	linked := nodeLinkState.Connected
-	nodeLinkState.Unlock()
-	ev := nodeAlertTrk.observe(now, links, alertConfig{MinGapSec: 120})
-	if !linked || len(ev) == 0 {
+	// kept while the channel is down too (a cut is when they matter); the
+	// central decides about degraded ones with its own setting
+	ev := nodeAlertTrk.observe(now, links, alertConfig{MinGapSec: 120, NotifyDegrad: true})
+	if len(ev) == 0 {
 		return
 	}
 	nodeAlerts.Lock()
@@ -82,9 +82,10 @@ func nodeAlertsSince(raw json.RawMessage) (json.RawMessage, error) {
 	nodeAlerts.Lock()
 	defer nodeAlerts.Unlock()
 	out := struct {
+		Boot   string           `json:"boot"` // this run of the panel: seqs start again after a restart
 		Seq    uint64           `json:"seq"`
 		Events []nodeAlertEvent `json:"events"`
-	}{Seq: nodeAlerts.seq, Events: []nodeAlertEvent{}}
+	}{Boot: nodeBootID, Seq: nodeAlerts.seq, Events: []nodeAlertEvent{}}
 	if q.Since >= 0 {
 		for _, e := range nodeAlerts.events {
 			if e.Seq > uint64(q.Since) {
@@ -95,11 +96,20 @@ func nodeAlertsSince(raw json.RawMessage) (json.RawMessage, error) {
 	return json.Marshal(out)
 }
 
-// nodeAlertPull: on the central, the seq read last from each session.
+// nodeBootID names this run of the panel.
+var nodeBootID = strconv.FormatInt(time.Now().UnixNano(), 36)
+
+// nodeAlertPull: on the central, per node, the run and seq read last; a
+// reconnect goes on from there, a restarted node from its start.
+type nodeAlertMark struct {
+	boot string
+	seq  int64
+}
+
 var nodeAlertPull = struct {
 	sync.Mutex
-	seq map[*nodeSession]int64
-}{seq: map[*nodeSession]int64{}}
+	seq map[int]nodeAlertMark
+}{seq: map[int]nodeAlertMark{}}
 
 // nodeAlertsForward asks node s for new alert events and sends them with
 // the central's own alert settings.
@@ -109,10 +119,11 @@ func nodeAlertsForward(s *nodeSession, name string) {
 		return
 	}
 	nodeAlertPull.Lock()
-	since, ok := nodeAlertPull.seq[s]
+	mark, ok := nodeAlertPull.seq[s.id]
 	nodeAlertPull.Unlock()
+	since := mark.seq
 	if !ok {
-		since = -1 // a new session: start from now, do not send old events again
+		since = -1 // first seen by this central run: start from now
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), nodeCallTO)
 	raw, err := s.call(ctx, "alerts", map[string]int64{"since": since})
@@ -121,27 +132,128 @@ func nodeAlertsForward(s *nodeSession, name string) {
 		return // an older node has no "alerts"
 	}
 	var res struct {
+		Boot   string           `json:"boot"`
 		Seq    uint64           `json:"seq"`
 		Events []nodeAlertEvent `json:"events"`
 	}
 	if json.Unmarshal(raw, &res) != nil {
 		return
 	}
+	if ok && res.Boot != mark.boot { // the node restarted: its events start at 1 again
+		ctx, cancel := context.WithTimeout(context.Background(), nodeCallTO)
+		raw, err = s.call(ctx, "alerts", map[string]int64{"since": 0})
+		cancel()
+		if err != nil || json.Unmarshal(raw, &res) != nil {
+			return
+		}
+	}
 	nodeAlertPull.Lock()
-	nodeAlertPull.seq[s] = int64(res.Seq)
+	nodeAlertPull.seq[s.id] = nodeAlertMark{boot: res.Boot, seq: int64(res.Seq)}
 	nodeAlertPull.Unlock()
 	if len(res.Events) > 10 {
 		res.Events = res.Events[len(res.Events)-10:] // a node is not a firehose
 	}
 	evs := make([]alertEvent, 0, len(res.Events))
 	for _, e := range res.Events {
-		ev := e.alertEvent
-		ev.Link, ev.Why = nodeLogText([]byte(ev.Link)), nodeLogText([]byte(ev.Why))
-		evs = append(evs, ev)
+		if ev, ok := nodeAlertClean(e.alertEvent); ok && isAlertWorthy(ev.From, ev.To, cfg.NotifyDegrad) && nodeAlertAllow(s.id, time.Now()) {
+			evs = append(evs, ev)
+		}
 	}
-	if len(evs) > 0 {
+	if len(evs) == 0 {
+		return
+	}
+	// sent beside the info loop (a slow webhook must not stall it), one
+	// batch per node at a time
+	nodeAlertBusy.Lock()
+	if nodeAlertBusy.m[s.id] {
+		nodeAlertBusy.Unlock()
+		return
+	}
+	nodeAlertBusy.m[s.id] = true
+	nodeAlertBusy.Unlock()
+	go func(id int) {
+		defer func() {
+			nodeAlertBusy.Lock()
+			delete(nodeAlertBusy.m, id)
+			nodeAlertBusy.Unlock()
+		}()
 		nodeAlertDeliver(cfg, name, evs)
+	}(s.id)
+}
+
+var nodeAlertBusy = struct {
+	sync.Mutex
+	m map[int]bool
+}{m: map[int]bool{}}
+
+// nodeAlertClean: a node's event as the central sends it, or false. The
+// states must be known ones; text is one short line with no direction
+// tricks or mentions; the time is this server's when it is not a time.
+func nodeAlertClean(e alertEvent) (alertEvent, bool) {
+	known := func(s string) bool { return s == "" || s == stateHealthy || s == stateDegraded || s == stateDown }
+	if !known(e.From) || !known(e.To) {
+		return e, false
 	}
+	clean := func(s string, n int) string {
+		s = strings.Map(func(r rune) rune {
+			if r == 0x2028 || r == 0x2029 || r >= 0x202A && r <= 0x202E || r >= 0x2066 && r <= 0x2069 {
+				return -1
+			}
+			return r
+		}, nodeLogText([]byte(s)))
+		if r := []rune(s); len(r) > n {
+			s = string(r[:n]) + "…"
+		}
+		return strings.TrimLeft(strings.TrimPrefix(strings.TrimSpace(s), "<!"), "@")
+	}
+	e.Link, e.Why = clean(e.Link, 80), clean(e.Why, 160)
+	if _, err := time.Parse(time.RFC3339, e.At); err != nil || len(e.At) > 40 {
+		e.At = time.Now().UTC().Format(time.RFC3339)
+	}
+	return e, true
+}
+
+// nodeAlertAllow: at most nodeAlertPerNode an hour per node and
+// nodeAlertAll an hour in all, so no node can flood the bot.
+const (
+	nodeAlertPerNode = 12.0
+	nodeAlertAll     = 60.0
+)
+
+var nodeAlertBucket = struct {
+	sync.Mutex
+	node map[int][2]float64 // tokens, unix seconds
+	all  [2]float64
+}{node: map[int][2]float64{}}
+
+func nodeAlertAllow(id int, now time.Time) bool {
+	nodeAlertBucket.Lock()
+	defer nodeAlertBucket.Unlock()
+	t := float64(now.UnixNano()) / 1e9
+	take := func(b [2]float64, per float64) ([2]float64, bool) {
+		if b[1] == 0 {
+			b = [2]float64{per, t}
+		}
+		b[0] = min(per, b[0]+(t-b[1])*per/3600)
+		b[1] = t
+		if b[0] < 1 {
+			return b, false
+		}
+		b[0]--
+		return b, true
+	}
+	nb, ok := take(nodeAlertBucket.node[id], nodeAlertPerNode)
+	if !ok {
+		nodeAlertBucket.node[id] = nb
+		return false
+	}
+	ab, ok := take(nodeAlertBucket.all, nodeAlertAll)
+	nodeAlertBucket.all = ab
+	if !ok {
+		return false
+	}
+	nodeAlertBucket.node[id] = nb
+	return true
 }
 
 // nodeAlertDeliver sends events as from node name (tests replace it).
@@ -162,38 +274,52 @@ var nodeAlertDeliver = func(cfg alertConfig, name string, evs []alertEvent) {
 	}
 }
 
-func nodeAlertsForget(s *nodeSession) {
+// nodeAlertsForget: a removed node.
+func nodeAlertsForget(id int) {
 	nodeAlertPull.Lock()
-	delete(nodeAlertPull.seq, s)
+	delete(nodeAlertPull.seq, id)
 	nodeAlertPull.Unlock()
 }
 
 // ---- overview ----
 
+// nodeFleetParallel: servers read at once (each answer may be large).
+const nodeFleetParallel = 8
+
 type nodeFleetServer struct {
-	ID        int            `json:"id"` // 0: the central
-	Name      string         `json:"name"`
-	Online    bool           `json:"online"`
-	Error     string         `json:"error,omitempty"`
-	Health    string         `json:"health,omitempty"`
-	Role      string         `json:"role,omitempty"`
-	Public    string         `json:"public,omitempty"`
-	Tunnels   int            `json:"tunnels"`
-	Traffic   map[string]any `json:"traffic,omitempty"` // up, down, total, speed_up, speed_down
-	System    map[string]any `json:"system,omitempty"`
-	Conns     any            `json:"conns,omitempty"`
-	Counted   bool           `json:"counted"` // its traffic is in the totals
-	CPU       float64        `json:"cpu_pct"` // from its info (-1: not known)
-	Mem       float64        `json:"mem_pct"`
-	Disk      float64        `json:"disk_pct"`
-	Version   string         `json:"version,omitempty"`
-	Held      bool           `json:"held,omitempty"`
-	LicenseOK bool           `json:"license_ok"`
+	ID        int               `json:"id"` // 0: the central
+	Name      string            `json:"name"`
+	Online    bool              `json:"online"`
+	Error     string            `json:"error,omitempty"`
+	Health    string            `json:"health,omitempty"`
+	Role      string            `json:"role,omitempty"`
+	Public    string            `json:"public,omitempty"`
+	Tunnels   int               `json:"tunnels"`
+	Traffic   *nodeFleetTraffic `json:"traffic,omitempty"`
+	System    map[string]any    `json:"system,omitempty"`
+	Conns     any               `json:"conns,omitempty"`
+	Counted   bool              `json:"counted"`           // its traffic is in the totals
+	Partial   bool              `json:"partial,omitempty"` // counted at its Iran server, but it has other tunnels too
+	CPU       float64           `json:"cpu_pct"`           // from its info (-1: not known)
+	Mem       float64           `json:"mem_pct"`
+	Disk      float64           `json:"disk_pct"`
+	Version   string            `json:"version,omitempty"`
+	Held      bool              `json:"held,omitempty"`
+	LicenseOK bool              `json:"license_ok"`
+}
+
+// nodeFleetTraffic: a server's traffic as its dashboard gives it (bytes, bytes/s).
+type nodeFleetTraffic struct {
+	Up        float64 `json:"up"`
+	Down      float64 `json:"down"`
+	Total     float64 `json:"total"`
+	SpeedUp   float64 `json:"speed_up"`
+	SpeedDown float64 `json:"speed_down"`
 }
 
 type nodeFleetView struct {
 	Servers []nodeFleetServer `json:"servers"`
-	Totals  map[string]uint64 `json:"totals"` // up, down, speed_up, speed_down (bytes, bytes/s)
+	Totals  map[string]uint64 `json:"totals"` // total (bytes), speed (bytes/s, both ways)
 	Online  int               `json:"online"`
 	Errors  []string          `json:"errors,omitempty"`
 }
@@ -217,7 +343,20 @@ func nodeFleetOverview(ctx context.Context) nodeFleetView {
 	}
 	nodesMu.Unlock()
 	out := nodeFleetView{Servers: make([]nodeFleetServer, len(list)), Totals: map[string]uint64{}}
+	// which tunnels join two of these servers: read beside the dashboards,
+	// with time of its own
+	var links []nodeTunLink
+	var lerr []string
+	var plans map[int]setupPlan
+	linksDone := make(chan struct{})
+	go func() {
+		defer close(linksDone)
+		lctx, cancel := context.WithTimeout(context.Background(), nodeTunPlanTO)
+		defer cancel()
+		links, lerr, plans = nodeTunLinksPlans(lctx)
+	}()
 	var wg sync.WaitGroup
+	lim := make(chan struct{}, nodeFleetParallel)
 	for i, x := range list {
 		out.Servers[i] = nodeFleetServer{ID: x.id, Name: x.name, Online: x.online, Version: x.version, Held: x.held, LicenseOK: x.lic,
 			CPU: x.info.CPUPct, Mem: x.info.MemPct, Disk: x.info.DiskPct}
@@ -227,15 +366,17 @@ func nodeFleetOverview(ctx context.Context) nodeFleetView {
 		wg.Add(1)
 		go func(fs *nodeFleetServer) {
 			defer wg.Done()
+			lim <- struct{}{}
+			defer func() { <-lim }()
 			var d struct {
-				Health    string         `json:"health_state"`
-				Role      string         `json:"role"`
-				Public    string         `json:"local_pub"`
-				PeerCount int            `json:"peer_count"`
-				Online    bool           `json:"online"`
-				Traffic   map[string]any `json:"traffic"`
-				System    map[string]any `json:"system"`
-				Conns     any            `json:"conns"`
+				Health    string            `json:"health_state"`
+				Role      string            `json:"role"`
+				Public    string            `json:"local_pub"`
+				PeerCount int               `json:"peer_count"`
+				Online    bool              `json:"online"`
+				Traffic   *nodeFleetTraffic `json:"traffic"`
+				System    map[string]any    `json:"system"`
+				Conns     any               `json:"conns"`
 			}
 			if err := nodeAPIJSON(ctx, fs.ID, http.MethodGet, "/api/dashboard?range=1h", nil, &d); err != nil {
 				fs.Error = err.Error()
@@ -249,15 +390,15 @@ func nodeFleetOverview(ctx context.Context) nodeFleetView {
 		}(&out.Servers[i])
 	}
 	wg.Wait()
+	<-linksDone
 	// a tunnel between two of these servers is counted at its Iran end
-	links, lerr := nodeTunLinks(ctx)
 	out.Errors = append(out.Errors, lerr...)
-	clientOfFleet := map[int]bool{}
+	clientOfFleet := map[int]int{} // proven uplinks to a fleet server
 	for _, l := range links {
-		clientOfFleet[l.Client] = true
+		clientOfFleet[l.Client]++
 	}
-	num := func(m map[string]any, k string) uint64 {
-		if v, ok := m[k].(float64); ok && v > 0 {
+	num := func(v float64) uint64 {
+		if v > 0 && v < 1e18 {
 			return uint64(v)
 		}
 		return 0
@@ -267,20 +408,32 @@ func nodeFleetOverview(ctx context.Context) nodeFleetView {
 		if fs.Online && !fs.Held && fs.Error == "" {
 			out.Online++
 		}
-		if fs.Traffic == nil || clientOfFleet[fs.ID] && !strings.Contains(strings.ToLower(fs.Role), "iran") {
+		if p, ok := plans[fs.ID]; ok { // the plan knows the first tunnel and joined hubs too
+			fs.Tunnels = len(p.Peers) + len(p.Uplinks)
+		}
+		if fs.Traffic == nil {
+			continue
+		}
+		if n := clientOfFleet[fs.ID]; n > 0 {
+			if p, ok := plans[fs.ID]; ok && len(p.Uplinks) > n {
+				fs.Partial = true // its other tunnels' traffic is in no total
+			}
 			continue
 		}
 		fs.Counted = true
-		for _, k := range []string{"up", "down", "speed_up", "speed_down"} {
-			out.Totals[k] += num(fs.Traffic, k)
-		}
+		// up and down are each server's own view: only their sum adds up
+		out.Totals["total"] += num(fs.Traffic.Up) + num(fs.Traffic.Down)
+		out.Totals["speed"] += num(fs.Traffic.SpeedUp) + num(fs.Traffic.SpeedDown)
 	}
 	return out
 }
 
 // ---- updates ----
 
-var nodeUpdateWait = 5 * time.Minute // a node back on its new version
+var (
+	nodeUpdateWait   = 5 * time.Minute  // a node back on its new version
+	nodeUpdateCallTO = 10 * time.Minute // its update call (a download on a slow link)
+)
 
 // nodeFleetUpdate updates nodes ids one at a time; the first failure stops it.
 func nodeFleetUpdate(ctx context.Context, j *nodeTunJob, ids []int) error {
@@ -291,6 +444,7 @@ func nodeFleetUpdate(ctx context.Context, j *nodeTunJob, ids []int) error {
 		if rec != nil {
 			before = rec.Info.Version
 		}
+		oldSess := nodeSessions[id]
 		nodesMu.Unlock()
 		if rec == nil {
 			return errNodeUnknown(id)
@@ -299,11 +453,11 @@ func nodeFleetUpdate(ctx context.Context, j *nodeTunJob, ids []int) error {
 		var res struct {
 			Detail string `json:"detail"`
 		}
-		uctx, cancel := context.WithTimeout(ctx, nodeRelayPostTO)
+		uctx, cancel := context.WithTimeout(ctx, nodeUpdateCallTO)
 		err := nodeAPIJSON(uctx, id, http.MethodPost, "/api/update", map[string]any{}, &res)
 		cancel()
 		if err != nil {
-			if apiErrOf(err) == nil && strings.Contains(err.Error(), "went offline") {
+			if errors.Is(err, errNodeOffline) {
 				err = nil // the node restarted on the new version before it answered
 			} else {
 				return fmt.Errorf("%v; the rest were not updated", err)
@@ -318,7 +472,9 @@ func nodeFleetUpdate(ctx context.Context, j *nodeTunJob, ids []int) error {
 		for {
 			nodesMu.Lock()
 			r := nodeFindLocked(id)
-			back := r != nil && nodeSessions[id] != nil && r.Info.Version != "" && r.Info.Version != before
+			// back: on a new connection (it restarted) and another version
+			now := nodeSessions[id]
+			back := r != nil && now != nil && now != oldSess && r.Info.Version != "" && r.Info.Version != before
 			ver := ""
 			if r != nil {
 				ver = r.Info.Version
@@ -345,6 +501,7 @@ func nodeFleetUpdate(ctx context.Context, j *nodeTunJob, ids []int) error {
 
 const (
 	nodeBackupKeep  = 14 * 24 * time.Hour
+	nodeBackupMax   = 3 // copies per node
 	nodeBackupEvery = 6 * time.Hour
 )
 
@@ -370,7 +527,7 @@ func nodeBackupsList() []nodeBackupFile {
 		}
 		files, _ := os.ReadDir(nodeBackupDir(id))
 		for _, f := range files {
-			if st, err := f.Info(); err == nil && !f.IsDir() && strings.HasSuffix(f.Name(), ".enc") {
+			if st, err := f.Info(); err == nil && !f.IsDir() && nodeBackupName(f.Name()) {
 				out = append(out, nodeBackupFile{Node: id, Name: f.Name(), Size: st.Size(), Time: st.ModTime().Unix()})
 			}
 		}
@@ -403,7 +560,7 @@ func nodeBackupPull(ctx context.Context, id int) (string, error) {
 	}
 	var newest backupItem
 	for _, b := range wd.Backups {
-		if nodeBackupName(b.Name) && b.Time > newest.Time {
+		if nodeBackupName(b.Name) && strings.HasPrefix(b.Name, "hashem-backup-") && b.Time > newest.Time {
 			newest = b
 		}
 	}
@@ -422,18 +579,60 @@ func nodeBackupPull(ctx context.Context, id int) (string, error) {
 	if st != http.StatusOK || len(body) == 0 {
 		return "", fmt.Errorf("%s: the backup download answered %d", nodeTunName(id), st)
 	}
+	// only what the Watchdog makes: openssl's encrypted form, of a sane size
+	if len(body) > nodeRelayBodyMax || !bytes.HasPrefix(body, []byte("Salted__")) {
+		return "", fmt.Errorf("%s: that is not an encrypted Watchdog backup", nodeTunName(id))
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
 	return newest.Name, writeFile0600(filepath.Join(dir, newest.Name), body)
 }
 
+// nodeBackupPrune keeps a node's copies younger than nodeBackupKeep, and
+// at most nodeBackupMax of them (the newest).
 func nodeBackupPrune(dir string) {
 	files, _ := os.ReadDir(dir)
+	type kept struct {
+		name string
+		at   time.Time
+	}
+	var keep []kept
 	for _, f := range files {
-		if st, err := f.Info(); err == nil && time.Since(st.ModTime()) > nodeBackupKeep {
-			_ = os.Remove(filepath.Join(dir, f.Name()))
+		st, err := f.Info()
+		if err != nil {
+			continue
 		}
+		if f.IsDir() || time.Since(st.ModTime()) > nodeBackupKeep || !nodeBackupName(f.Name()) {
+			_ = os.RemoveAll(filepath.Join(dir, f.Name()))
+			continue
+		}
+		keep = append(keep, kept{f.Name(), st.ModTime()})
+	}
+	slices.SortFunc(keep, func(a, b kept) int { return b.at.Compare(a.at) })
+	for i := nodeBackupMax; i < len(keep); i++ {
+		_ = os.Remove(filepath.Join(dir, keep[i].name))
+	}
+}
+
+// nodeBackupPruneAll prunes every node's copies and drops those of nodes
+// that are gone.
+func nodeBackupPruneAll() {
+	dirs, _ := os.ReadDir(filepath.Join(configDir, "node-backups"))
+	nodesMu.Lock()
+	nodesLoadLocked()
+	known := map[int]bool{}
+	for _, r := range nodesF.Nodes {
+		known[r.ID] = true
+	}
+	nodesMu.Unlock()
+	for _, d := range dirs {
+		id, err := strconv.Atoi(d.Name())
+		if err != nil || !known[id] {
+			_ = os.RemoveAll(filepath.Join(configDir, "node-backups", d.Name()))
+			continue
+		}
+		nodeBackupPrune(nodeBackupDir(id))
 	}
 }
 
@@ -442,6 +641,7 @@ func startNodeBackups() {
 	time.Sleep(10 * time.Minute)
 	for {
 		if s, err := nodeSelfLoad(); err == nil && s.Role == nodeRoleCentral {
+			nodeBackupPruneAll()
 			nodesMu.Lock()
 			var ids []int
 			for _, r := range nodesF.Nodes {
@@ -477,6 +677,10 @@ func handleNodeBackupGet(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, "E-NODE-03", "no such backup")
 		return
 	}
+	mu.Lock()
+	user := cfg.Username
+	mu.Unlock()
+	LogSecurityAudit("node_backup_download", user, ClientIP(r), fmt.Sprintf("node=%d file=%s", id, f))
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", "node"+strconv.Itoa(id)+"-"+f))
 	w.Header().Set("Content-Type", "application/octet-stream")
 	http.ServeFile(w, r, path)
@@ -511,12 +715,16 @@ func nodeFleetCustomers(ctx context.Context) ([]nodeFleetCustomer, []string) {
 	var wg sync.WaitGroup
 	out := []nodeFleetCustomer{}
 	var errs []string
+	lim := make(chan struct{}, nodeFleetParallel)
 	for _, id := range ids {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
+			lim <- struct{}{}
+			defer func() { <-lim }()
 			var v struct {
 				Customers []nodeFleetCustomer `json:"customers"`
+				Licensed  *bool               `json:"licensed"`
 			}
 			err := nodeAPIJSON(ctx, id, http.MethodGet, "/api/customers", nil, &v)
 			mu.Lock()
@@ -526,6 +734,9 @@ func nodeFleetCustomers(ctx context.Context) ([]nodeFleetCustomer, []string) {
 					errs = append(errs, err.Error())
 				}
 				return
+			}
+			if v.Licensed != nil && !*v.Licensed {
+				return // Customers is Pro there: nothing it sells
 			}
 			if len(v.Customers) > 1000 {
 				v.Customers = v.Customers[:1000]
