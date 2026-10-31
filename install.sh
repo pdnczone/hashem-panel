@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Hashem one-line installer — resilient multi-mirror download & auto-setup.
-# Usage: bash <(curl -fsSL https://raw.githubusercontent.com/pdnczone/hashem-panel/main/install.sh)
+# Usage: bash <(curl -fsSL https://raw.githubusercontent.com/roboapi2/hashem-panel/main/install.sh)
 set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then
@@ -32,7 +32,7 @@ echo -e "\033[0;33m[*] Downloading core manager script...\033[0m"
 # canonical GitHub copy was reachable, or when two different mirror hosts
 # served byte-identical content. HASHEM_SHA256=<hex> pins the exact script;
 # HASHEM_ALLOW_UNVERIFIED=1 is the explicit (unsafe) opt-out.
-PRIMARY="https://raw.githubusercontent.com/pdnczone/hashem-panel/main/hashem.sh"
+PRIMARY="https://raw.githubusercontent.com/roboapi2/hashem-panel/main/hashem.sh"
 if [[ -n "${HASHEM_INSTALL_URLS:-}" ]]; then
     read -r -a URLS <<< "$HASHEM_INSTALL_URLS"   # test/override hook
     PRIMARY="${URLS[0]}"
@@ -41,7 +41,7 @@ else
         "$PRIMARY"
         "https://mirror.ghproxy.com/$PRIMARY"
         "https://ghproxy.net/$PRIMARY"
-        "https://fastly.jsdelivr.net/gh/pdnczone/hashem-panel@main/hashem.sh"
+        "https://fastly.jsdelivr.net/gh/roboapi2/hashem-panel@main/hashem.sh"
     )
 fi
 
