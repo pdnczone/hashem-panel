@@ -37,7 +37,26 @@ makes it standalone again.
   dials again by itself (every few seconds up to once a minute).
 - Every node keeps its full local panel.
 
+## Moving an existing install
+
+After the update, an Iran panel that has foreign servers asks once:
+**Manage all your servers from this panel?** (on the dashboard and the Nodes
+page; `hashem update` prints the same hint once).
+
+- **Yes, move to nodes**: this panel becomes the central. Each foreign
+  server joins by itself once it runs this version (`hashem update` on it).
+  It proves who it is with the tunnel token the two servers already share:
+  the token never crosses the network, and someone who only sees the
+  traffic cannot join or pose as the central. The Nodes page lists every
+  foreign server as waiting or joined; **Stop** ends the move.
+- **Not now** asks again in 7 days; **Don't ask again** never asks (the
+  Nodes page keeps a **Move them** button).
+- Running tunnels are not touched, and every server keeps its own panel. A
+  foreign server joins by itself only once: if it leaves later, it stays
+  standalone.
+
 ## Manage a node from the central
+
 
 Pick the node in the server picker at the top of the page (or **Open** on its
 row). Every page then shows that server: dashboard, tunnels, setup,
@@ -76,6 +95,8 @@ ends** removes the foreign end first, then the Iran end.
 
 To change a tunnel's engine or carrier, open the Iran server (the picker)
 and use its Tunnel page: it tells the foreign server, as it does today.
+
+## Licenses on nodes
 
 
 A Pro key active on the central is copied to each node that has no key of

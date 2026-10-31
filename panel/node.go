@@ -75,6 +75,7 @@ type nodeRecord struct {
 	// LicensePushed: nodeKeyHash of the central's key the central put on
 	// this node (so a renewal replaces it, and a node's own key is left alone)
 	LicensePushed string `json:"license_pushed,omitempty"`
+	Peer          string `json:"peer,omitempty"` // joined by a move to nodes: its tunnel on this server
 }
 
 // nodeInvite is a one-time join code; only its hash is kept.
@@ -83,6 +84,7 @@ type nodeInvite struct {
 	Name    string `json:"name,omitempty"`
 	Created int64  `json:"created"`
 	Expires int64  `json:"expires"`
+	Peer    string `json:"peer,omitempty"` // a move to nodes: the foreign server's tunnel ("main" | "peer:<id>")
 }
 
 type nodesFile struct {
@@ -559,7 +561,7 @@ func nodeEnrollLocked(secret, key, name, addr string, now time.Time) (int, error
 		}
 	}
 	nodesF.NextID = id + 1 // a removed node's id is not given to the next one
-	nodesF.Nodes = append(nodesF.Nodes, nodeRecord{ID: id, Name: name, Key: key, Added: now.Unix(), LastSeen: now.Unix(), Addr: addr})
+	nodesF.Nodes = append(nodesF.Nodes, nodeRecord{ID: id, Name: name, Key: key, Added: now.Unix(), LastSeen: now.Unix(), Addr: addr, Peer: iv.Peer})
 	return id, nil
 }
 

@@ -814,6 +814,7 @@ func main() {
 	go startClusterMonitor()
 	go startMeshLoop()
 	go startNodeLoop()
+	go startNodeMigrateWatch()
 	go startLimitsLoop()
 	go func() {
 		cc := loadCarrierConfig()

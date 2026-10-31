@@ -10,7 +10,7 @@ fail=0
 check() { if [[ "$2" != "$3" ]]; then echo "FAIL: $1 (want [$2] got [$3])"; fail=1; else echo "ok:   $1"; fi; }
 ext() { awk -v n="$1" '$0 ~ "^"n"\\(\\) \\{" {p=1} p {print} p && /^}/ {exit}' hashem.sh; }
 RED='' NC='' GREEN='' YELLOW='' CYAN='' BOLD=''
-for fn in panel_supports cli_node cli_node_join; do eval "$(ext "$fn")"; done
+for fn in panel_supports cli_node cli_node_join node_migrate_hint; do eval "$(ext "$fn")"; done
 PANEL_BIN="$T/gre-panel"
 LOG="$T/log"
 fake_panel() { # $1 = new|old
@@ -71,4 +71,23 @@ cli_node_join hn1.abc --name y >/dev/null
 check "a first node build (no stdin): the code as an argument" "panel node join hn1.abc --name y" "$(cat "$LOG")"
 check "usage says - is the code on stdin" 1 "$(grep -c '^  hashem node-join <hn1.code | ->' hashem.sh)"
 check "dispatch has node-join" 1 "$(grep -c '^        node-join) shift; cli_node_join' hashem.sh)"
+
+# the move-to-nodes hint after an update: once, only on an Iran panel with
+# foreign servers, never on a node or after "Don't ask again"
+PANEL_CONFIG_DIR="$T/conf"; mkdir -p "$PANEL_CONFIG_DIR"
+check "no foreign servers: no hint" "" "$(node_migrate_hint)"
+echo '{"peers":[{"id":2}]}' > "$PANEL_CONFIG_DIR/peers.json"
+check "an Iran panel: the hint" 1 "$(node_migrate_hint | grep -c 'move to nodes')"
+check "only once" "" "$(node_migrate_hint)"
+rm -f "$PANEL_CONFIG_DIR/node_migrate_hint"
+echo '{"never": true}' > "$PANEL_CONFIG_DIR/node_migrate.json"
+check "not after Don't ask again" "" "$(node_migrate_hint)"
+rm -f "$PANEL_CONFIG_DIR/node_migrate.json" "$PANEL_CONFIG_DIR/peers.json"
+echo '{"role": "master", "peer_secret": "x"}' > "$PANEL_CONFIG_DIR/peer_link.json"
+echo '{"role":"node"}' > "$PANEL_CONFIG_DIR/node.json"
+check "not on a node" "" "$(node_migrate_hint)"
+rm -f "$PANEL_CONFIG_DIR/node.json"
+check "a master without a tunnel: no hint" "" "$(node_migrate_hint)"
+echo '{"role":"iran","remote_public":"192.0.2.9"}' > "$PANEL_CONFIG_DIR/setup.json"
+check "a first tunnel's master: the hint" 1 "$(node_migrate_hint | grep -c 'move to nodes')"
 exit $fail

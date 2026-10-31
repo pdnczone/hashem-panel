@@ -3680,6 +3680,7 @@ function doLogin() {
       $('p').value = ''; $('totpCode').value = ''; $('codeField').classList.add('hidden'); $('loginErr').textContent = '';
       showApp(); refresh(); loadSetupDefaults(); loadVersion(); accessRefresh(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); metricsRefresh(); histRefresh(); advisorRefresh();
       nodePickLoad(); // a node chosen before the login reopens
+      migrateBannerLoad();
     } catch(e) {
       if (e.code === 'E-AUTH-09') { $('codeField').classList.remove('hidden'); $('totpCode').focus(); }
       $('loginErr').textContent = e.message;
@@ -7737,7 +7738,7 @@ if ($('docCopyBtn')) $('docCopyBtn').onclick = () => { if (doctorData) copyTextS
     catch(e) { showApp(); toastErr(tr('', 'Failed'), e.message); }
     return;
   }
-  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); metricsRefresh(); histRefresh(); advisorRefresh(); }
+  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); metricsRefresh(); histRefresh(); advisorRefresh(); migrateBannerLoad(); }
   catch(e) { showLogin(); }
 })();
 // light pollers: skip when the tab is in the background (background tabs
@@ -11935,13 +11936,14 @@ function renderNodes(d) {
     `<button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openNodeSSH()">${esc(tr('', 'Add with SSH'))}</button>
      <button type="button" class="hashem-btn hashem-btn-primary u-btn-30" onclick="openNodeInvite()">${esc(tr('', 'Add a server'))}</button>`;
   const nodes = d.nodes || [], jobs = (d.jobs || []).filter(j => j.state !== 'done' || Date.now() / 1000 - (j.ended || 0) < 600);
+  const mig = migrateCard(d.migrate, false);
   if (!nodes.length && !jobs.length) {
-    body.innerHTML = `<div class="cs-empty"><b>${esc(tr('', 'No nodes yet'))}</b><p class="qs-hint">${esc(tr('', 'Add a server: run the line this panel gives on it, or let this panel log in with SSH and do it. Tunnels already running are not touched.'))}</p>
+    body.innerHTML = mig + `<div class="cs-empty"><b>${esc(tr('', 'No nodes yet'))}</b><p class="qs-hint">${esc(tr('', 'Add a server: run the line this panel gives on it, or let this panel log in with SSH and do it. Tunnels already running are not touched.'))}</p>
       <button type="button" class="hashem-btn hashem-btn-primary" onclick="openNodeInvite()">${esc(tr('', 'Add a server'))}</button></div>`;
     return;
   }
   const on = nodes.filter(n => n.online).length;
-  body.innerHTML = `<div class="cs-sum">${[[String(nodes.length), tr('', 'Nodes')], [String(on), tr('', 'Online')], [String(nodes.length - on), tr('', 'Offline')]]
+  body.innerHTML = mig + `<div class="cs-sum">${[[String(nodes.length), tr('', 'Nodes')], [String(on), tr('', 'Online')], [String(nodes.length - on), tr('', 'Offline')]]
     .map(([v, k]) => `<div><b class="lm-num">${esc(v)}</b><span>${esc(k)}</span></div>`).join('')}</div>
     <div class="lm-list">${jobs.map(nodeJobRow).join('')}${nodes.map(nodeRow).join('')}</div>`;
 }
@@ -12035,6 +12037,53 @@ async function nodeLeave() {
 }
 async function nodeCancelInvites() {
   try { renderNodes(await api('/api/nodes', { action: 'cancel-invites' })); } catch (e) { toastErr(tr('', 'Failed'), e.message); }
+}
+
+// ---- moving an existing install to nodes (node_migrate.go) ----
+function migrateCard(m, compact) {
+  if (!m) return '';
+  const peers = m.peers || [];
+  const list = `<ul class="qs-hint">${peers.map(p => `<li><b>${esc(p.name)}</b> <span class="lm-num">${esc(p.ip || '')}</span> · ${p.joined
+    ? esc(tr('', 'joined'))
+    : esc(m.open ? tr('', 'waiting: it joins by itself once it runs this version (hashem update on it)') : tr('', 'will join'))}</li>`).join('')}</ul>`;
+  if (m.open) {
+    return `<div class="lm-row"><div class="lm-head"><div class="lm-name"><b>${esc(tr('', 'Moving your foreign servers here'))}</b>
+      <small>${esc(tr('', 'Each one joins by itself, proven by its tunnel token. Tunnels are not touched.'))}</small></div>
+      <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="migrateDo('migrate-stop')">${esc(tr('', 'Stop'))}</button></div>${list}</div>`;
+  }
+  if (!m.offer) {
+    return compact ? '' : `<div class="lm-row"><div class="lm-head"><div class="lm-name"><b>${esc(tr('', 'Move your foreign servers here'))}</b>
+      <small>${esc(tr('', '{n} foreign servers have a tunnel with this panel.').replace('{n}', peers.length))}</small></div>
+      <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="migrateDo('migrate-start')">${esc(tr('', 'Move them'))}</button></div></div>`;
+  }
+  return `<div class="tunnel-card u-mb-20" role="region"><div class="tc-header"><p class="tc-title">${esc(tr('', 'Manage all your servers from this panel?'))}</p></div>
+    <div class="qs-hint">${esc(tr('', 'This panel becomes the central. Your foreign servers join it by themselves once they run this version; their tunnel token proves who they are. Running tunnels are not touched, and every server keeps its own panel.'))}</div>
+    ${list}
+    <div class="lm-acts"><button type="button" class="hashem-btn hashem-btn-primary u-btn-30" onclick="migrateDo('migrate-start')">${esc(tr('', 'Yes, move to nodes'))}</button>
+    <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="migrateDo('migrate-later')">${esc(tr('', 'Not now'))}</button>
+    <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="migrateDo('migrate-never')">${esc(tr('', 'Don\'t ask again'))}</button></div></div>`;
+}
+async function migrateDo(action) {
+  try {
+    const d = await api('/api/nodes', { action });
+    renderNodes(d);
+    migrateBanner(d);
+    if (action === 'migrate-start') { toastOk(tr('', 'This panel is now the central'), tr('', 'Your foreign servers join as they update.')); goTab('nodes'); }
+  } catch (e) { toastErr(tr('', 'Failed'), e.message); }
+}
+function migrateBanner(d) {
+  const b = $('migrateBanner');
+  if (!b) return;
+  const m = d && d.migrate;
+  b.hidden = !(m && m.offer);
+  b.innerHTML = b.hidden ? '' : migrateCard(m, true);
+}
+async function migrateBannerLoad() {
+  if (NV) return;
+  try {
+    const r = await fetch(BASE + '/api/nodes', { cache: 'no-store' });
+    if (r.ok) migrateBanner(await r.json());
+  } catch (_) { /* offline */ }
 }
 
 // ---- tunnels between servers (node_tunnel.go): made and removed from here ----

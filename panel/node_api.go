@@ -91,6 +91,9 @@ func handleNodesGet(w http.ResponseWriter, r *http.Request) {
 		nodeLinkState.Unlock()
 		out["central"] = c
 	}
+	if m := nodeMigrateView(self); m != nil {
+		out["migrate"] = m
+	}
 	writeJSON(w, out)
 }
 
@@ -308,6 +311,11 @@ func handleNodesPost(w http.ResponseWriter, r *http.Request) {
 		LogSecurityAudit("node_tunnel_remove", cfg.Username, ClientIP(r), fmt.Sprintf("server=%d client=%d peer=%d hub=%d left=%d", q.Server, q.Client, q.PeerID, q.Hub, q.Left))
 		writeJSON(w, map[string]any{"status": "ok", "job": id})
 		return
+	case "migrate-start", "migrate-later", "migrate-never", "migrate-stop": // moving to nodes (node_migrate.go)
+		err = nodeMigrateAction(self, req.Action)
+		if err == nil {
+			LogSecurityAudit("node_"+strings.ReplaceAll(req.Action, "-", "_"), cfg.Username, ClientIP(r), "")
+		}
 	case "tunnel-forget": // a left-over server end removed by hand on its server
 		if !isCentral() {
 			return
