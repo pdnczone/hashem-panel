@@ -752,6 +752,10 @@ func cliNode(args []string) int {
 		fmt.Println("[OK] this panel is standalone again; tunnels are not touched.")
 		return 0
 	case "move": // a foreign server: look for its Iran panel's move offer again for 14 days
+		if _, err := os.Stat(nodeMigratedFile()); err == nil {
+			fmt.Println("[!] this server joined a central by a move once already; it does not join by itself again. Add it on the central with Add a server.")
+			return 1
+		}
 		if err := nodeMigrateWatchReset(); err != nil {
 			fmt.Fprintln(os.Stderr, "[!] "+err.Error())
 			return 1

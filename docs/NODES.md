@@ -60,10 +60,12 @@ page; `hashem update` prints the same hint once).
   and why a joined server waits for your approval. If you want no window at
   all, add the servers with **Add a server** instead.
 - A foreign server looks for its Iran panel's offer only for 14 days after
-  it first runs this version. If you start the move later, run
-  `hashem node move` on it. The same token risk applies in this direction:
-  while it is looking, someone on the path who knows the token could offer
-  it a fake central at its Iran panel's address.
+  it first runs this version, whether or not you start the move. If you
+  start the move later, run `hashem node move` on it. The same token risk
+  applies in this direction: while it is looking, someone on the path who
+  knows the token could offer it a fake central at its Iran panel's
+  address. To avoid that window, update the foreign servers only after you
+  start the move, or add them with **Add a server**.
 - If a server shows as joined but is not yours, or never connects, remove
   it and add the real one with **Add a server**: the move does not offer a
   server twice. A foreign server that belongs to someone else (a shared
