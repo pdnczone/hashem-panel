@@ -12051,7 +12051,7 @@ function migrateCard(m, compact) {
   const list = `<ul class="qs-hint">${peers.map(p => `<li><b>${esc(p.name)}</b> <span class="lm-num">${esc(p.ip || '')}</span> · ${p.joined
     ? esc(tr('', 'joined'))
     : p.ever ? esc(tr('', 'joined once and was removed: add it with Add a server'))
-    : esc(m.open ? tr('', 'waiting: it joins by itself once it runs this version (hashem update on it; if it was updated more than 14 days ago, hashem node move on it)') : tr('', 'will join'))}</li>`).join('')}</ul>`;
+    : esc(m.open ? tr('', 'waiting: it joins by itself once it runs this version (hashem update on it; if it was updated more than 14 days ago, hashem node move on it)') : tr('', 'not joined'))}</li>`).join('')}</ul>`;
   const left = peers.filter(p => !p.ever).length;
   if (m.open) {
     return `<div class="lm-row"><div class="lm-head"><div class="lm-name"><b>${esc(tr('', 'Moving your foreign servers here'))}</b>
@@ -12060,7 +12060,7 @@ function migrateCard(m, compact) {
   }
   if (!m.offer) {
     return compact || !left ? '' : `<div class="lm-row"><div class="lm-head"><div class="lm-name"><b>${esc(tr('', 'Move your foreign servers here'))}</b>
-      <small>${esc(tr('', '{n} foreign servers have a tunnel with this panel.').replace('{n}', peers.length))}</small></div>
+      <small>${esc(tr('', '{n} foreign servers have a tunnel with this panel and have not joined.').replace('{n}', left))}</small></div>
       <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="migrateDo('migrate-start')">${esc(tr('', 'Move them'))}</button></div></div>`;
   }
   return `<div class="tunnel-card u-mb-20" role="region"><div class="tc-header"><p class="tc-title">${esc(tr('', 'Manage all your servers from this panel?'))}</p></div>
@@ -12211,7 +12211,7 @@ function nodePickRender() {
     sel.classList.toggle('hidden', !show);
     if (!show) continue;
     const opts = [`<option value="">${esc(tr('', 'This server'))}</option>`].concat(_nodePickList.map(n =>
-      `<option value="${Number(n.id)}"${n.online ? '' : ' disabled'}>${esc(n.name)}${n.online ? '' : ' — ' + esc(tr('', 'Offline'))}</option>`));
+      `<option value="${Number(n.id)}"${n.online && !n.held ? '' : ' disabled'}>${esc(n.name)}${!n.online ? ' — ' + esc(tr('', 'Offline')) : n.held ? ' — ' + esc(tr('', 'not approved')) : ''}</option>`));
     sel.innerHTML = opts.join('');
     sel.value = NODE ? String(NODE) : '';
   }

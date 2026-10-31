@@ -362,9 +362,12 @@ var nodeMigrateFetch = func(ctx context.Context) ([]byte, string, error) {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	urls := peerTargetURLs(c, "/api/peer/node-offer")
 	if pu, err := url.Parse(c.PeerURL); err == nil && pu.Hostname() != "" {
+		public := func(s string) bool {
+			u, err := url.Parse(s)
+			return err == nil && strings.EqualFold(u.Hostname(), pu.Hostname())
+		}
 		slices.SortStableFunc(urls, func(a, b string) int {
-			pa := strings.Contains(a, "://"+pu.Host) || strings.Contains(a, "://"+pu.Hostname()+":")
-			pb := strings.Contains(b, "://"+pu.Host) || strings.Contains(b, "://"+pu.Hostname()+":")
+			pa, pb := public(a), public(b)
 			switch {
 			case pa && !pb:
 				return -1
@@ -413,7 +416,9 @@ func nodeMigrateTry(ctx context.Context) (string, error) {
 	if !nodeMigrateWatching(time.Now()) {
 		return "", nil // its 14 days are over (node move starts them again)
 	}
-	b, reached, err := nodeMigrateFetch(ctx)
+	fctx, cancel := context.WithTimeout(ctx, 20*time.Second) // the join keeps its own time
+	b, reached, err := nodeMigrateFetch(fctx)
+	cancel()
 	if err != nil {
 		return "", nil // no offer (404), an old Iran panel, or not reachable now
 	}
@@ -468,7 +473,7 @@ func nodeMigrateWatchReset() error {
 func startNodeMigrateWatch() {
 	time.Sleep(time.Minute)
 	for {
-		ctx, cancel := context.WithTimeout(context.Background(), nodeHandshakeTO*3)
+		ctx, cancel := context.WithTimeout(context.Background(), nodeHandshakeTO*3+20*time.Second)
 		central, err := nodeMigrateTry(ctx)
 		cancel()
 		if err != nil {

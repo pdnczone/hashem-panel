@@ -308,3 +308,21 @@ func TestNodeMigrateEmptyListKeepsOpen(t *testing.T) {
 		t.Fatal("closed on an empty list")
 	}
 }
+
+// A node that joined by the move cannot be opened before it is approved.
+func TestNodeMigrateHeldNoView(t *testing.T) {
+	nodeTestInvite(t, nodeTestCentral(t), "x")
+	nodesMu.Lock()
+	nodesF.Nodes = append(nodesF.Nodes, nodeRecord{ID: 5, Name: "moved", Key: "K5", Held: true})
+	nodesMu.Unlock()
+	sess := newSessionToken()
+	addSession(sess)
+	t.Cleanup(func() { dropSession(sess) })
+	r := httptest.NewRequest("POST", "/x/api/nodes", strings.NewReader(`{"action":"view","id":5}`))
+	r.AddCookie(&http.Cookie{Name: "gre_session", Value: sess})
+	w := httptest.NewRecorder()
+	handleNodesPost(w, r)
+	if w.Code == 200 || !strings.Contains(w.Body.String(), "approve") {
+		t.Fatalf("a held node's view: %d %s", w.Code, w.Body)
+	}
+}

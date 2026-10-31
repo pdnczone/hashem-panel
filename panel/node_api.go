@@ -167,11 +167,16 @@ func handleNodesPost(w http.ResponseWriter, r *http.Request) {
 		}
 		nodesMu.Lock()
 		nodesLoadLocked()
-		known := nodeFindLocked(req.ID) != nil
+		rec := nodeFindLocked(req.ID)
+		known, held := rec != nil, rec != nil && rec.Held
 		nodesMu.Unlock()
 		c, cerr := r.Cookie("gre_session")
 		if !known || cerr != nil || c.Value == "" {
 			writeAPIError(w, r, "E-NODE-03", fmt.Sprintf("no node %d", req.ID))
+			return
+		}
+		if held {
+			writeAPIError(w, r, "E-NODE-01", "this node joined by the move to nodes and is not approved yet: approve it on the Nodes page first")
 			return
 		}
 		writeJSON(w, map[string]any{"status": "ok", "token": nodeViewNew(c.Value, req.ID)})
