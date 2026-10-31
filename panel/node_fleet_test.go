@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -48,7 +50,7 @@ func TestNodeFleetOverviewCountsOnce(t *testing.T) {
 		t.Fatalf("servers: %+v", v)
 	}
 	// 2's traffic is the same bytes as 1's: counted once, at 1
-	if v.Totals["up"] != 110 || v.Totals["down"] != 220 || v.Totals["speed_down"] != 8 {
+	if v.Totals["total"] != 330 || v.Totals["speed"] != 14 {
 		t.Fatalf("totals: %v", v.Totals)
 	}
 	for _, s := range v.Servers {
@@ -119,6 +121,8 @@ func TestNodeFleetUpdateStopsOnFailure(t *testing.T) {
 				time.Sleep(100 * time.Millisecond)
 				nodesMu.Lock()
 				nodeFindLocked(1).Info.Version = "v2"
+				old := nodeSessions[1] // it came back on a new connection
+				nodeSessions[1] = &nodeSession{id: 1, conn: old.conn, done: make(chan struct{})}
 				nodesMu.Unlock()
 			}()
 			return 200, []byte(`{"status":"ok"}`), true
@@ -149,23 +153,24 @@ func TestNodeFleetUpdateStopsOnFailure(t *testing.T) {
 
 func TestNodeBackupPull(t *testing.T) {
 	f := nodeTunTest(t)
+	backupBody := "Salted__ENCRYPTED"
 	nodeFleetFake(t, f, nil, func(id int, path string) (int, []byte, bool) {
 		switch {
 		case path == "/api/watchdog":
-			return 200, []byte(`{"backups":[{"name":"hashem-2026-10-30.enc","time":"2026-10-30 01:00:00"},{"name":"hashem-2026-10-31.enc","time":"2026-10-31 01:00:00"},{"name":"../evil.enc","time":"2099-01-01 00:00:00"}]}`), true
+			return 200, []byte(`{"backups":[{"name":"hashem-backup-2026-10-30.enc","time":"2026-10-30 01:00:00"},{"name":"hashem-backup-2026-10-31.enc","time":"2026-10-31 01:00:00"},{"name":"../evil.enc","time":"2099-01-01 00:00:00"},{"name":"other.enc","time":"2099-01-01 00:00:00"}]}`), true
 		case strings.HasPrefix(path, "/api/watchdog/backup-download?f="):
-			if !strings.HasSuffix(path, "hashem-2026-10-31.enc") {
+			if !strings.HasSuffix(path, "hashem-backup-2026-10-31.enc") {
 				t.Errorf("asked for %s", path)
 			}
-			return 200, []byte("ENCRYPTED"), true
+			return 200, []byte(backupBody), true
 		}
 		return 0, nil, false
 	})
 	name, err := nodeBackupPull(context.Background(), 1)
-	if err != nil || name != "hashem-2026-10-31.enc" {
+	if err != nil || name != "hashem-backup-2026-10-31.enc" {
 		t.Fatalf("pull: %q %v", name, err)
 	}
-	if b, _ := os.ReadFile(filepath.Join(nodeBackupDir(1), name)); string(b) != "ENCRYPTED" {
+	if b, _ := os.ReadFile(filepath.Join(nodeBackupDir(1), name)); string(b) != "Salted__ENCRYPTED" {
 		t.Fatalf("kept: %q", b)
 	}
 	if name, _ := nodeBackupPull(context.Background(), 1); name != "" {
@@ -174,6 +179,33 @@ func TestNodeBackupPull(t *testing.T) {
 	if l := nodeBackupsList(); len(l) != 1 || l[0].Node != 1 {
 		t.Fatalf("list: %+v", l)
 	}
+	// not an encrypted backup: refused
+	_ = os.RemoveAll(nodeBackupDir(1))
+	backupBody = "<html>not a backup"
+	if _, err := nodeBackupPull(context.Background(), 1); err == nil {
+		t.Fatal("a plain body kept")
+	}
+	backupBody = "Salted__ENCRYPTED"
+	_, _ = nodeBackupPull(context.Background(), 1)
+	// at most 3 copies, the newest
+	for i, n := range []string{"hashem-backup-a.enc", "hashem-backup-b.enc", "hashem-backup-c.enc", "hashem-backup-d.enc"} {
+		p := filepath.Join(nodeBackupDir(1), n)
+		_ = os.WriteFile(p, []byte("Salted__"), 0600)
+		at := time.Now().Add(time.Duration(i-10) * time.Minute)
+		_ = os.Chtimes(p, at, at)
+	}
+	nodeBackupPrune(nodeBackupDir(1))
+	if l := nodeBackupsList(); len(l) != 3 || l[2].Name == "hashem-backup-a.enc" {
+		t.Fatalf("kept: %+v", l)
+	}
+	// a removed node's copies go
+	_ = os.MkdirAll(nodeBackupDir(77), 0700)
+	nodeBackupPruneAll()
+	if _, err := os.Stat(nodeBackupDir(77)); err == nil {
+		t.Fatal("a removed node's copies stayed")
+	}
+	_ = os.RemoveAll(nodeBackupDir(1))
+	_, _ = nodeBackupPull(context.Background(), 1)
 	// older than 14 days: dropped
 	old := time.Now().Add(-15 * 24 * time.Hour)
 	_ = os.Chtimes(filepath.Join(nodeBackupDir(1), name), old, old)
@@ -238,4 +270,52 @@ func TestUINoDuplicateNames(t *testing.T) {
 		}
 		seen[n] = true
 	}
+}
+
+// What a node says in an alert is cleaned: known states only, one short
+// line, a sane time; and the rate is limited per node.
+func TestNodeAlertCleanAndLimit(t *testing.T) {
+	if _, ok := nodeAlertClean(alertEvent{From: "healthy\n🔴 [node other]", To: stateDown}); ok {
+		t.Fatal("a forged state")
+	}
+	e, ok := nodeAlertClean(alertEvent{Link: "@everyone\u202edown\nnext", Why: strings.Repeat("x", 500), From: stateHealthy, To: stateDown, At: "not a time"})
+	if !ok || strings.ContainsAny(e.Link, "\n\u202e@") || len([]rune(e.Why)) > 161 {
+		t.Fatalf("cleaned: %+v", e)
+	}
+	if _, err := time.Parse(time.RFC3339, e.At); err != nil {
+		t.Fatalf("time: %q", e.At)
+	}
+	nodeAlertBucket.Lock()
+	nodeAlertBucket.node, nodeAlertBucket.all = map[int][2]float64{}, [2]float64{}
+	nodeAlertBucket.Unlock()
+	now := time.Now()
+	n := 0
+	for i := 0; i < 100; i++ {
+		if nodeAlertAllow(9, now) {
+			n++
+		}
+	}
+	if n != int(nodeAlertPerNode) {
+		t.Fatalf("%d allowed in an hour", n)
+	}
+	if !nodeAlertAllow(9, now.Add(time.Hour)) {
+		t.Fatal("not refilled after an hour")
+	}
+}
+
+// Only the channel closing is "went offline"; a node cannot claim it.
+func TestNodeOfflineSentinel(t *testing.T) {
+	if err := nodeAPIJSONErrOf(errors.New("went offline")); errors.Is(err, errNodeOffline) {
+		t.Fatal("a node's text taken as the sentinel")
+	}
+	if err := nodeAPIJSONErrOf(fmt.Errorf("node 1 %w", errNodeOffline)); !errors.Is(err, errNodeOffline) {
+		t.Fatal("the sentinel lost on the way")
+	}
+}
+
+func nodeAPIJSONErrOf(e error) error {
+	old := nodeAPIFn
+	defer func() { nodeAPIFn = old }()
+	nodeAPIFn = func(context.Context, int, string, string, any) (int, []byte, error) { return 0, nil, e }
+	return nodeAPIJSON(context.Background(), 1, "GET", "/api/x", nil, nil)
 }

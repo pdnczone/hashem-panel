@@ -213,7 +213,7 @@ func apiErrOf(err error) *nodeAPIError {
 func nodeAPIJSON(ctx context.Context, id int, method, path string, body, out any) error {
 	st, b, err := nodeAPIFn(ctx, id, method, path, body)
 	if err != nil {
-		return fmt.Errorf("%s: %v", nodeTunName(id), err)
+		return fmt.Errorf("%s: %w", nodeTunName(id), err)
 	}
 	if st < 200 || st > 299 {
 		var e struct {
@@ -718,6 +718,12 @@ type nodeTunLink struct {
 // (an HMAC of a fresh nonce). Servers that claim the same address are not
 // paired at all (one of them is not honest).
 func nodeTunLinks(ctx context.Context) ([]nodeTunLink, []string) {
+	links, errs, _ := nodeTunLinksPlans(ctx)
+	return links, errs
+}
+
+// nodeTunLinksPlans is nodeTunLinks with the plans it read (by server id).
+func nodeTunLinksPlans(ctx context.Context) ([]nodeTunLink, []string, map[int]setupPlan) {
 	ids := []int{0}
 	nodesMu.Lock()
 	nodesLoadLocked()
@@ -790,7 +796,7 @@ func nodeTunLinks(ctx context.Context) ([]nodeTunLink, []string) {
 		return a.PeerID - b.PeerID
 	})
 	slices.Sort(errs)
-	return links, errs
+	return links, errs, plans
 }
 
 type nodeTunRemoveReq struct {

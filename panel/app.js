@@ -243,9 +243,8 @@ async function api(path, body, method) {
 // download saves what path answers. In a node's view it is fetched, so an
 // error is a message and the view stays (navigating the frame would replace it).
 async function download(path) {
-  if (!NV) { location.href = at(path); return; }
   try {
-    await NV_READY;
+    if (NV) await NV_READY;
     const r = await fetch(at(path), { cache: 'no-store' });
     if (!r.ok) {
       let msg = r.statusText;
@@ -7737,7 +7736,7 @@ if ($('docCopyBtn')) $('docCopyBtn').onclick = () => { if (doctorData) copyTextS
     try {
       await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); alertsRefresh(); histRefresh(); advisorRefresh();
       const tb = new URLSearchParams(location.search).get('tab'); // opened from the central on a page (its customers list)
-      if (tb && /^[a-z-]{2,20}$/.test(tb) && $('tab-' + tb)) goTab(tb);
+      if (tb === 'customers') goTab(tb); // the one page the central opens a node on
     }
     catch(e) { showApp(); toastErr(tr('', 'Failed'), e.message); }
     return;
@@ -12113,8 +12112,8 @@ function nodeFleetRender() {
   const pct = v => (typeof v === 'number' && v >= 0) ? v.toFixed(0) + '%' : '—';
   const sum = `<div class="cs-sum">${[
     [String(f.online || 0) + ' / ' + String((f.servers || []).length), tr('', 'Servers online')],
-    [fmtRate(t.speed_down || 0), tr('', 'Download')], [fmtRate(t.speed_up || 0), tr('', 'Upload')],
-    [fmtBytes((t.up || 0) + (t.down || 0)), tr('', 'Total transferred')],
+    [fmtRate(Number(t.speed) || 0), tr('', 'Throughput (both ways)')],
+    [fmtBytes(Number(t.total) || 0), tr('', 'Total transferred')],
   ].map(([v, k]) => `<div><b class="lm-num">${esc(v)}</b><span>${esc(k)}</span></div>`).join('')}</div>`;
   const rows = (f.servers || []).map(s => {
     const st = !s.online ? ['err', tr('', 'Offline')] : s.held ? ['warn', tr('', 'not approved')] : s.error ? ['err', tr('', 'Not read')]
@@ -12124,8 +12123,8 @@ function nodeFleetRender() {
       <small class="lm-num">${esc([s.public || '', s.role || '', s.version ? displayVer(s.version) : ''].filter(Boolean).join(' · '))}</small></div>
       <span class="badge ${st[0]}">${esc(st[1])}</span></div>
       ${s.error ? `<div class="xr-err">${esc(s.error)}</div>` : ''}
-      <div class="qs-hint lm-num">${esc(tr('', 'Tunnels'))} ${Number(s.tunnels || 0)} · ↓ ${esc(fmtRate(tr0.speed_down || 0))} ↑ ${esc(fmtRate(tr0.speed_up || 0))}
-        · CPU ${esc(pct(s.cpu_pct))} · RAM ${esc(pct(s.mem_pct))} · ${esc(tr('', 'Disk'))} ${esc(pct(s.disk_pct))}${s.license_ok ? '' : ' · ' + esc(tr('', 'No license'))}${s.online && !s.counted && s.traffic ? ' · ' + esc(tr('', 'its traffic is counted at its Iran server')) : ''}</div>
+      <div class="qs-hint lm-num">${esc(tr('', 'Tunnels'))} ${Number(s.tunnels || 0)} · ↓ ${esc(fmtRate(Number(tr0.speed_down) || 0))} ↑ ${esc(fmtRate(Number(tr0.speed_up) || 0))}
+        · CPU ${esc(pct(s.cpu_pct))} · RAM ${esc(pct(s.mem_pct))} · ${esc(tr('', 'Disk'))} ${esc(pct(s.disk_pct))}${s.license_ok ? '' : ' · ' + esc(tr('', 'No license'))}${s.online && !s.counted && s.traffic ? ' · ' + esc(s.partial ? tr('', 'counted at its Iran server; its other tunnels are not in the totals') : tr('', 'its traffic is counted at its Iran server')) : ''}</div>
       ${s.id && s.online && !s.held ? `<div class="lm-acts"><button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openNodeHere(${Number(s.id)})">${esc(tr('', 'Open'))}</button></div>` : ''}
     </div>`;
   }).join('');
@@ -12346,7 +12345,7 @@ async function nodeViewOpen() {
     try {
       const d = await api('/api/nodes', { action: 'view', id });
       _nodeViewTok = { id, token: d.token };
-    } catch (e) { toastErr(tr('', 'Failed'), e.message); nodePickSet(null); return; }
+    } catch (e) { _nodeViewTab = ''; toastErr(tr('', 'Failed'), e.message); nodePickSet(null); return; }
   }
   if (NODE !== id || $('nodeFrame')) return; // changed meanwhile
   const f = document.createElement('iframe');
