@@ -3166,8 +3166,6 @@ window.FA_TEXT = {
 "Address nodes dial": "آدرسی که نودها به آن وصل می‌شوند",
 "Cancel open codes": "لغو کدهای باز",
 "Central key": "کلید مرکز",
-"Hashem is installed there": "هاشم روی آن نصب است",
-"Hashem is not installed yet": "هاشم هنوز نصب نیست",
 "Is this the right server?": "سرور درست همین است؟",
 "Its central manages it; this panel still works for anything you want to do by hand here.": "مرکزش آن را مدیریت می‌کند؛ این پنل همچنان برای هر کاری که بخواهید اینجا دستی انجام دهید کار می‌کند.",
 "Join": "اتصال",
@@ -3206,5 +3204,7 @@ window.FA_TEXT = {
 "e.g. Germany 1": "مثلاً آلمان ۱",
 "until": "تا",
 "Manage all your servers from one panel. This panel is the central; the other servers join it as nodes. Every node keeps its own panel and its tunnels keep running when the central is away.": "همه سرورهایتان را از یک پنل مدیریت کنید. این پنل مرکز است و بقیه سرورها به‌صورت نود به آن وصل می‌شوند. هر نود پنل خودش را نگه می‌دارد و وقتی مرکز در دسترس نیست تانل‌هایش کار می‌کنند.",
-"Give the SSH password or a private key.": "رمز SSH یا کلید خصوصی را بدهید."
+"Give the SSH password or a private key.": "رمز SSH یا کلید خصوصی را بدهید.",
+"Any server (installs or updates Hashem, then joins)": "هر سروری (هاشم را نصب یا به‌روز می‌کند و بعد وصل می‌شود)",
+"A server that already has this Hashem version or newer": "سروری که همین نسخه هاشم یا جدیدتر را دارد"
 };

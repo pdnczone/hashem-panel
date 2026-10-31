@@ -399,6 +399,12 @@ func nodeServeEnroll(nc *nodeConn, f nodeFrame, key, addr string) {
 func nodeServeHello(nc *nodeConn, f nodeFrame, key, addr string) {
 	nodesMu.Lock()
 	nodesLoadLocked()
+	if nodesEr != "" { // the list cannot be read: not a reason to tell nodes they are unknown
+		nodesMu.Unlock()
+		_ = nc.send(nodeFrame{T: "refused", Reason: "unavailable"})
+		_ = nc.c.Close()
+		return
+	}
 	rec := nodeFindKeyLocked(key)
 	if rec == nil {
 		nodesMu.Unlock()
@@ -524,7 +530,15 @@ func nodeKick(id int) {
 	nodesMu.Unlock()
 	if s != nil {
 		_ = s.conn.send(nodeFrame{T: "bye", Reason: "removed"})
-		s.close()
+		// closing at once can reset the connection and lose the bye (unread
+		// answers in the socket): let the node close it, or give up in 3 s
+		go func() {
+			select {
+			case <-s.done:
+			case <-time.After(3 * time.Second):
+				s.close()
+			}
+		}()
 	}
 }
 
@@ -675,7 +689,7 @@ func nodeSleepWhile(s nodeSelf, d time.Duration) {
 	for time.Now().Before(end) {
 		time.Sleep(min(2*time.Second, time.Until(end)+time.Millisecond))
 		cur, err := nodeSelfLoad()
-		if err != nil || cur.Role != s.Role || cur.ID != s.ID || cur.Central != s.Central || cur.CentralKey != s.CentralKey {
+		if err != nil || cur.Role != s.Role || cur.ID != s.ID || cur.Central != s.Central || cur.CentralKey != s.CentralKey || cur.JoinedAt != s.JoinedAt {
 			return
 		}
 	}
@@ -701,9 +715,13 @@ func nodeRunOnce(s nodeSelf) string {
 		nodeLinkSet(false, "the central did not answer: "+err.Error())
 		return "fail"
 	}
+	if f.T == "refused" && f.Reason != "unknown" {
+		nodeLinkSet(false, "the central cannot take this node now: "+f.Reason)
+		return "fail"
+	}
 	if f.T == "refused" {
 		nodesMu.Lock()
-		if cur, err := nodeSelfLoad(); err == nil && cur.Role == nodeRoleNode && cur.CentralKey == s.CentralKey {
+		if cur, err := nodeSelfLoad(); err == nil && cur.Role == nodeRoleNode && cur.CentralKey == s.CentralKey && cur.JoinedAt == s.JoinedAt {
 			cur.Refused = time.Now().UTC().Format(time.RFC3339)
 			_ = nodeSelfSave(cur)
 		}
@@ -804,7 +822,9 @@ func nodeCPUPct() float64 {
 	if !had || cur.total <= prev.total {
 		return -1
 	}
-	return float64(cur.total-prev.total-(cur.idle-prev.idle)) * 100 / float64(cur.total-prev.total)
+	// signed: the idle counters (iowait) can go back a little
+	dt, di := float64(cur.total-prev.total), float64(int64(cur.idle-prev.idle))
+	return max(0, min(100, (dt-di)*100/dt))
 }
 
 func pctOf(v any) float64 {

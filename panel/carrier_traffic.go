@@ -549,12 +549,18 @@ func readCarrierCounters() (rx, tx uint64, ok bool) {
 	rx, tx, byEnd, ready := parseAcctSaveEnds(string(out))
 	if !ready || rules != carrierState.sig {
 		// New or changed tunnels, a reboot or a firewall reload: build the
-		// chains again (their counters start over from 0).
+		// chains again (their counters start over from 0). Chains this
+		// process built that are still there are counted up to now first
+		// (at start the old chains' counts are not this run's to count).
+		if ready && carrierState.sig != "" {
+			carrierAddFam("v4", rx, tx, carrierTagsOf(ends, byEnd))
+		}
 		if err := carrierLoad(rules); err != nil {
 			carrierState.lastFailed = time.Now()
 			return 0, 0, false
 		}
 		carrierState.sig = rules
+		carrierForgetFam("v4")
 		rx, tx, byEnd = 0, 0, nil
 	}
 	carrierAddFam("v4", rx, tx, carrierTagsOf(ends, byEnd))
@@ -567,12 +573,17 @@ func readCarrierCounters() (rx, tx uint64, ok bool) {
 		if out6, err := runCmdTimeoutOut(5*time.Second, "ip6tables-save", "-c", "-t", "filter"); err == nil {
 			rx6, tx6, byEnd6, ready6 := parseAcctSaveEnds(string(out6))
 			if !ready6 || rules6 != carrierState.sig6 {
+				if ready6 && carrierState.sig6 != "" {
+					carrierAddFam("v6", rx6, tx6, carrierTagsOf(ends, byEnd6))
+				}
 				if carrierLoadFam("ip6tables", rules6) == nil {
 					carrierState.sig6 = rules6
+					carrierForgetFam("v6")
+					carrierAddFam("v6", 0, 0, nil)
 				}
-				rx6, tx6, byEnd6 = 0, 0, nil
+			} else {
+				carrierAddFam("v6", rx6, tx6, carrierTagsOf(ends, byEnd6))
 			}
-			carrierAddFam("v6", rx6, tx6, carrierTagsOf(ends, byEnd6))
 		}
 	}
 	carrierState.lastFailed = time.Time{}

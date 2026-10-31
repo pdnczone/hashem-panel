@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -357,10 +356,6 @@ func invalidatePeerIfsCache() {
 	peerIfsMu.Unlock()
 }
 
-// custBuyerGRERe: the GRE of a link bought from a seller
-// (tools/hashem-customer.sh gre_if).
-var custBuyerGRERe = regexp.MustCompile(`^hcc[0-9a-f]{8}$`)
-
 // isTunnelInterface determines if an interface is a GRE or Backhaul tunnel.
 func isTunnelInterface(ifname string) bool {
 	if ifname == "lo" || ifname == "gre0" || ifname == "gretap0" || ifname == "erspan0" {
@@ -372,9 +367,10 @@ func isTunnelInterface(ifname string) bool {
 		strings.HasPrefix(ifname, "enp") || strings.HasPrefix(ifname, "wl") {
 		return false
 	}
-	// sold tunnels inside GRE (customers_gre.go: hcg* here, hcc* on a
-	// customer's server): their traffic is the customer's, billed apart
-	if custGRENameRe.MatchString(ifname) || custBuyerGRERe.MatchString(ifname) {
+	// a sold tunnel inside GRE (customers_gre.go): the customer's traffic,
+	// billed apart, not this server's tunnels. (hcc*, the buyer's end, is
+	// that server's own tunnel and counts there.)
+	if custGRENameRe.MatchString(ifname) {
 		return false
 	}
 	if strings.HasPrefix(ifname, "gre-") || strings.HasPrefix(ifname, "tun") || ifname == spoofIface {
@@ -503,6 +499,14 @@ func trafficSample(devData string, carrierRx, carrierTx uint64, carrierOK bool, 
 	// taken for a counter reset and counted again. An interface seen for the
 	// first time is only a baseline; one seen before this process started
 	// (traffic_state.json) counts what it moved while the panel was down.
+	// A failed carrier reading keeps its baseline: the carrier total only
+	// grows, so the next good reading counts what moved in between (as a
+	// new baseline it was lost).
+	if _, ok := cur[carrierKey]; !ok {
+		if prev, seen := lastRawIf[carrierKey]; seen {
+			cur[carrierKey] = prev
+		}
+	}
 	var dU, dD, rawUp, rawDown uint64
 	for name, c := range cur {
 		rawDown += c[0]

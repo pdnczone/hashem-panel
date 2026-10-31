@@ -466,4 +466,11 @@ func TestCarrierCountersFamilyFlap(t *testing.T) {
 	read("IPv4 rebuilt: no drop, IPv6 goes on", 11_000_000_160)
 	v4 = save(40)
 	read("the new IPv4 chains from 0", 11_000_000_200)
+	// a tunnel is added: the chains are rebuilt, but what the old ones
+	// counted since the last reading is kept
+	_ = os.WriteFile(filepath.Join(backhaulDir, "server-2.toml"), []byte("[server]\nbind_addr = \"0.0.0.0:3081\"\n"), 0o600)
+	v4 = save(100)
+	read("rebuilt for a new tunnel: the last 60 bytes kept", 11_000_000_260)
+	v4, v6 = save(10), save(20) // the new chains of both families
+	read("then from 0 again", 11_000_000_290)
 }

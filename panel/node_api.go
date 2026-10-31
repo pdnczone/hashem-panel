@@ -489,7 +489,9 @@ func nodeSSHStart(self nodeSelf, req nodeRequest) (nodeSSHResult, error) {
 // The code goes on stdin ("-"), not in the command line, where other users
 // of the server (ps, the sudo log) could read it.
 func nodeSSHCommand(name string, sudo bool) string {
-	script := "set -e; if command -v hashem >/dev/null 2>&1; then " + nodeJoinCommandArg("-", name, false) +
+	// a Hashem older than nodes has no node-join: the installer brings the
+	// current one (and keeps the tunnels)
+	script := "set -e; if command -v hashem >/dev/null 2>&1 && hashem help 2>/dev/null | grep -q node-join; then " + nodeJoinCommandArg("-", name, false) +
 		"; else " + nodeJoinCommandArg("-", name, true) + "; fi"
 	cmd := "bash -c " + shellQuote(script)
 	if sudo {

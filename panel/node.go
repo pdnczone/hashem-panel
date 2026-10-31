@@ -85,6 +85,7 @@ type nodeInvite struct {
 type nodesFile struct {
 	Nodes   []nodeRecord `json:"nodes"`
 	Invites []nodeInvite `json:"invites,omitempty"`
+	NextID  int          `json:"next_id,omitempty"` // ids are never given out twice
 }
 
 // nodeInfo is what a node reports about itself (the "info" call).
@@ -114,10 +115,11 @@ type nodeLicense struct {
 }
 
 var (
-	nodesMu sync.Mutex // nodes.json, node.json writes, the sessions
-	nodesF  nodesFile
-	nodesOK bool   // nodesF was loaded
-	nodesEr string // why nodes.json could not be read ("" = fine)
+	nodesMu  sync.Mutex // nodes.json, node.json writes, the sessions
+	nodesF   nodesFile
+	nodesOK  bool      // nodesF was loaded
+	nodesMod time.Time // nodes.json's mtime when loaded or saved: the CLI may change it
+	nodesEr  string    // why nodes.json could not be read ("" = fine)
 
 	nodeKeyMu   sync.Mutex
 	nodeKeyPriv ed25519.PrivateKey
@@ -135,16 +137,34 @@ func nodeFingerprint(keyB64 string) string {
 	return hex.EncodeToString(h[:8])
 }
 
-// writeFile0600 writes path atomically.
+// writeFile0600 writes path atomically: a temp file of its own (the CLI and
+// the service may write at once), synced before it takes the name.
 func writeFile0600(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	tmp := f.Name()
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Chmod(0600)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
 }
 
 // nodeSelfLoad reads node.json; a missing file is standalone.
@@ -409,12 +429,17 @@ func nodeSecretHash(secret string) string {
 // ---- nodes.json (central) ----
 
 // nodesLoadLocked reads nodes.json once. A file that cannot be read is
-// kept as it is (nodesEr) and nothing is saved over it.
+// kept as it is (nodesEr), nothing is saved over it, and it is read again
+// on the next call.
 func nodesLoadLocked() {
-	if nodesOK {
-		return
+	fi, statErr := os.Stat(nodesPath())
+	if nodesOK && nodesEr == "" && (statErr != nil || fi.ModTime().Equal(nodesMod)) {
+		return // a file that could not be read, or was changed by the CLI, is read again
 	}
 	nodesOK, nodesEr, nodesF = true, "", nodesFile{}
+	if statErr == nil {
+		nodesMod = fi.ModTime()
+	}
 	data, err := os.ReadFile(nodesPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return
@@ -436,7 +461,13 @@ func nodesSaveLocked() error {
 	if err != nil {
 		return err
 	}
-	return writeFile0600(nodesPath(), data)
+	if err := writeFile0600(nodesPath(), data); err != nil {
+		return err
+	}
+	if fi, err := os.Stat(nodesPath()); err == nil {
+		nodesMod = fi.ModTime()
+	}
+	return nil
 }
 
 func nodeFindLocked(id int) *nodeRecord {
@@ -515,12 +546,13 @@ func nodeEnrollLocked(secret, key, name, addr string, now time.Time) (int, error
 	if name == "" {
 		name = "node"
 	}
-	id := 1
+	id := max(nodesF.NextID, 1)
 	for _, r := range nodesF.Nodes {
 		if r.ID >= id {
 			id = r.ID + 1
 		}
 	}
+	nodesF.NextID = id + 1 // a removed node's id is not given to the next one
 	nodesF.Nodes = append(nodesF.Nodes, nodeRecord{ID: id, Name: name, Key: key, Added: now.Unix(), LastSeen: now.Unix(), Addr: addr})
 	return id, nil
 }
