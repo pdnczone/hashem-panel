@@ -292,7 +292,7 @@ func handleNodesPost(w http.ResponseWriter, r *http.Request) {
 			nodesLoadLocked()
 			i := slices.IndexFunc(nodesF.Left, func(l nodeTunLeft) bool { return l.ID == q.Left })
 			if i >= 0 {
-				q.Server, q.Client, q.PeerID = nodesF.Left[i].Server, nodesF.Left[i].Client, nodesF.Left[i].PeerID
+				q.Server, q.Client = nodesF.Left[i].Server, nodesF.Left[i].Client
 			}
 			nodesMu.Unlock()
 			if i < 0 {
@@ -324,10 +324,14 @@ func handleNodesPost(w http.ResponseWriter, r *http.Request) {
 		nodesLoadLocked()
 		n := len(nodesF.Left)
 		nodesF.Left = slices.DeleteFunc(nodesF.Left, func(l nodeTunLeft) bool { return l.ID == req.Left })
-		if len(nodesF.Left) != n {
+		changed := len(nodesF.Left) != n
+		if changed {
 			err = nodesSaveLocked()
 		}
 		nodesMu.Unlock()
+		if err == nil && changed {
+			LogSecurityAudit("node_tunnel_forget", cfg.Username, ClientIP(r), fmt.Sprintf("left=%d", req.Left))
+		}
 	default:
 		writeAPIError(w, r, "E-NODE-01", "unknown action")
 		return

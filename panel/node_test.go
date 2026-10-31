@@ -126,7 +126,9 @@ func TestNodeHelperProcess(t *testing.T) {
 			var b map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&b)
 			_ = os.WriteFile(filepath.Join(configDir, "tun-made"), []byte(fmt.Sprint(b["remote_public"])), 0600)
-			writeJSON(w, map[string]string{"status": "ok", "bundle": "hsh1_lab_" + fmt.Sprint(b["frp_port"])})
+			port, _ := b["frp_port"].(float64)
+			writeJSON(w, map[string]string{"status": "ok", "bundle": MakeBundle("198.51.100.1", int(port), fmt.Sprint(b["local_gre"]),
+				fmt.Sprint(b["peer_gre"]), "labtok", parsePorts(fmt.Sprint(b["ports"])))})
 		})))
 		m.HandleFunc("POST /x/api/action", requireAuth(requireCSRF(func(w http.ResponseWriter, r *http.Request) {
 			_ = os.Remove(filepath.Join(configDir, "tun-made"))
@@ -151,6 +153,7 @@ func TestNodeHelperProcess(t *testing.T) {
 		os.Stdout.WriteString("OK " + s.Central + "\n")
 	case "migrate": // a foreign server of a central's tunnel: NODE_HELPER_CODE is the offer, NODE_HELPER_LIC unused
 		_ = savePeerConfig(PeerConfig{Role: "worker", PeerSecret: os.Getenv("NODE_HELPER_TOKEN"), PeerURL: "http://192.0.2.1"})
+		firstTunnelInfo = func() firstTunnel { return firstTunnel{Exists: true, Side: "foreign", RemotePub: "192.0.2.1"} }
 		nodeMigrateFetch = func() ([]byte, error) { return []byte(os.Getenv("NODE_HELPER_CODE")), nil }
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
@@ -1071,7 +1074,7 @@ func TestNodeTunnelOverChannel(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(nd, "tun-made")); string(b) != "192.0.2.7" {
 		t.Fatalf("the server end on the node: %q", b)
 	}
-	if len(got) != 1 || got[0] != "foreign hsh1_lab_7001" {
+	if len(got) != 1 || !strings.HasPrefix(got[0], "foreign hsh1_198.51.100.1_7001_") {
 		t.Fatalf("the foreign end got: %v", got)
 	}
 	// the foreign end fails: the node's end is removed again

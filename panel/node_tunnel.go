@@ -6,15 +6,19 @@ package main
 // API, in order:
 //
 //  1. the server end (Iran side): POST /api/setup role "iran" (its first
-//     tunnel) or "add-peer"; it answers with the bundle it makes today;
+//     tunnel) or "add-peer"; it answers with the bundle it makes today, and
+//     the central checks that bundle against what was planned;
 //  2. the client end (foreign side): POST /api/setup role "foreign" with
 //     that bundle, or POST /api/cluster/join-hub when it already has a
 //     tunnel to another Iran server.
 //
-// When step 2 fails, step 1 is removed again. When that fails too, the
-// tunnel is kept in nodes.json as "left over" with a remove button. Removal
-// goes the other way round: the client end first, then the server end.
-// Server 0 is the central itself.
+// When step 2 fails, step 1 is removed again. When that fails too, or when
+// step 1 failed half-way, the server end is kept in nodes.json as "left
+// over". A left-over end is only ever removed by finding it again on its
+// server (the peer whose remote is the client), never by a stored id alone.
+// Removal goes the other way round: the client end first, then the server
+// end. Server 0 is the central itself. A server's plan is its own claim:
+// two plans claiming one address are not paired at all.
 
 import (
 	"context"
@@ -27,6 +31,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,18 +42,20 @@ const (
 	nodeTunSetupTO  = 20 * time.Minute
 	nodeTunActionTO = 2 * time.Minute
 	nodeTunJobsMax  = 20
+	nodeTunLeftMax  = 50
+	nodeTunPlanMax  = 256 // entries of each list a plan may carry
 )
 
-// nodeTunLeft is a server end whose client end failed and whose rollback
-// failed too: it is listed until it is removed.
+// nodeTunLeft is a server end whose tunnel was not finished and that could
+// not be removed: it is listed until it is removed.
 type nodeTunLeft struct {
-	ID       int    `json:"id"`
-	Server   int    `json:"server"`
-	Client   int    `json:"client"`
-	PeerID   int    `json:"peer_id"` // 0: the server's first tunnel
-	ClientIP string `json:"client_ip"`
-	Error    string `json:"error"`
-	At       int64  `json:"at"`
+	ID         int    `json:"id"`
+	Server     int    `json:"server"`
+	Client     int    `json:"client"`
+	ServerRole string `json:"server_role"` // iran (the server's first tunnel) | add-peer
+	ClientIP   string `json:"client_ip"`   // how it is found again on the server
+	Error      string `json:"error"`
+	At         int64  `json:"at"`
 }
 
 type nodeTunJob struct {
@@ -163,18 +170,38 @@ func nodeAPI(ctx context.Context, id int, method, path string, body any) (int, [
 	return res.Status, res.Body, nil
 }
 
+// nodeAPIError is a server's own error answer (an HTTP status, not a
+// failure to reach it).
+type nodeAPIError struct {
+	Status int
+	Code   string
+	Msg    string
+}
+
+func (e *nodeAPIError) Error() string { return e.Msg }
+
+// installed: the server's installer ran (and may have left something).
+func (e *nodeAPIError) installed() bool { return strings.HasPrefix(e.Code, "E-INSTALL") }
+
+func apiErrOf(err error) *nodeAPIError {
+	var e *nodeAPIError
+	if errors.As(err, &e) {
+		return e
+	}
+	return nil
+}
+
 // nodeAPIJSON calls and decodes a 2xx answer into out; any other answer is
-// an error with the server's own message.
+// a *nodeAPIError with the server's own message.
 func nodeAPIJSON(ctx context.Context, id int, method, path string, body, out any) error {
 	st, b, err := nodeAPIFn(ctx, id, method, path, body)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: %v", nodeTunName(id), err)
 	}
 	if st < 200 || st > 299 {
 		var e struct {
-			Code  string   `json:"error_code"`
-			Error string   `json:"error"`
-			Steps []string `json:"steps"`
+			Code  string `json:"error_code"`
+			Error string `json:"error"`
 		}
 		_ = json.Unmarshal(b, &e)
 		msg := e.Error
@@ -184,11 +211,11 @@ func nodeAPIJSON(ctx context.Context, id int, method, path string, body, out any
 		if e.Code != "" {
 			msg = "[" + e.Code + "] " + msg
 		}
-		return fmt.Errorf("%s: %s", nodeTunName(id), nodeLogText([]byte(msg)))
+		return &nodeAPIError{Status: st, Code: e.Code, Msg: nodeTunName(id) + ": " + nodeLogText([]byte(msg))}
 	}
 	if out != nil {
 		if err := json.Unmarshal(b, out); err != nil {
-			return fmt.Errorf("%s: a bad answer", nodeTunName(id))
+			return &nodeAPIError{Status: st, Msg: nodeTunName(id) + ": a bad answer"}
 		}
 	}
 	return nil
@@ -207,8 +234,9 @@ func nodeTunName(id int) string {
 	return fmt.Sprintf("node %d", id)
 }
 
-// nodeTunLabel is a node's name as a tunnel label on the other server.
-func nodeTunLabel(id int) string {
+// nodeTunLabel is a node's name as a tunnel label on the other server:
+// plain characters, at most max bytes (join-hub takes 32, Setup 40 runes).
+func nodeTunLabel(id, max int) string {
 	name := "central"
 	if id != 0 {
 		nodesMu.Lock()
@@ -218,30 +246,51 @@ func nodeTunLabel(id int) string {
 		nodesMu.Unlock()
 	}
 	name = strings.Map(func(r rune) rune {
-		if strings.ContainsRune("<>\"'`\\\n\r\t", r) {
+		if strings.ContainsRune("<>\"'`$\\\n\r\t", r) {
 			return -1
 		}
 		return r
 	}, name)
-	if r := []rune(name); len(r) > 40 {
-		name = string(r[:40])
+	for len(name) > max {
+		r := []rune(name)
+		name = string(r[:len(r)-1])
 	}
 	return strings.TrimSpace(name)
 }
 
-func nodeTunPlan(ctx context.Context, id int, ports string) (setupPlan, error) {
+func nodeTunPlan(ctx context.Context, id int, ports string, relay int) (setupPlan, error) {
 	var p setupPlan
-	path := "/api/setup/plan"
+	v := url.Values{}
 	if ports != "" {
-		path += "?ports=" + url.QueryEscape(ports)
+		v.Set("ports", ports)
+	}
+	if relay > 0 {
+		v.Set("relay", strconv.Itoa(relay))
+	}
+	path := "/api/setup/plan"
+	if len(v) > 0 {
+		path += "?" + v.Encode()
 	}
 	if err := nodeAPIJSON(ctx, id, http.MethodGet, path, nil, &p); err != nil {
-		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "E-NODE-06") {
+		// an older panel has no plan: the page (HTML), or not relayed
+		if e := apiErrOf(err); e != nil && (e.Status == http.StatusOK || e.Status == http.StatusNotFound || e.Code == "E-NODE-06") {
 			return p, fmt.Errorf("%s runs an older Hashem: update it first", nodeTunName(id))
 		}
 		return p, err
 	}
+	// a server's plan is its own claim: keep it small
+	p.Peers, p.Uplinks, p.GreUsed = capList(p.Peers), capList(p.Uplinks), capList(p.GreUsed)
+	if len(p.Clashes) > nodeTunPlanMax {
+		p.Clashes = map[string]string{"…": fmt.Sprintf("%d ports", len(p.Clashes))}
+	}
 	return p, nil
+}
+
+func capList[T any](l []T) []T {
+	if len(l) > nodeTunPlanMax {
+		return l[:nodeTunPlanMax]
+	}
+	return l
 }
 
 // ---- create ----
@@ -256,10 +305,14 @@ type nodeTunReq struct {
 	AcceptUDP bool   `json:"accept_udp"`
 }
 
-var (
-	nodeTunPortsRe = regexp.MustCompile(`^[0-9 ,=:\-]{1,300}$`)
-	nodeTunTransRe = regexp.MustCompile(`^[a-z]{0,12}$`)
-)
+var nodeTunPortsRe = regexp.MustCompile(`^[0-9 ,=:\-]{1,300}$`)
+
+// nodeTunTransports: what each engine's Setup takes ("" = its default).
+var nodeTunTransports = map[string][]string{
+	"frp":          {"", "tcp", "kcp", "quic", "websocket", "wss"},
+	"backhaul":     {"", "tcp", "tcpmux", "udp", "ws", "wss", "wsmux", "wssmux"},
+	"gre-backhaul": {"", "tcp", "tcpmux", "udp", "ws", "wss", "wsmux", "wssmux"},
+}
 
 func (q *nodeTunReq) check() error {
 	q.Engine, q.Transport, q.Ports = strings.TrimSpace(q.Engine), strings.TrimSpace(q.Transport), strings.TrimSpace(q.Ports)
@@ -271,14 +324,17 @@ func (q *nodeTunReq) check() error {
 		return nodeErr{"E-NODE-01", "pick two different servers"}
 	case q.Server < 0 || q.Client < 0:
 		return nodeErr{"E-NODE-01", "bad server"}
-	case !slices.Contains([]string{"frp", "backhaul", "gre-backhaul"}, q.Engine):
+	case nodeTunTransports[q.Engine] == nil:
 		return nodeErr{"E-NODE-01", "engine: frp, backhaul or gre-backhaul"}
-	case !nodeTunTransRe.MatchString(q.Transport):
-		return nodeErr{"E-NODE-01", "bad transport"}
+	case !slices.Contains(nodeTunTransports[q.Engine], q.Transport):
+		return nodeErr{"E-NODE-01", fmt.Sprintf("transport for %s: one of %s", q.Engine, strings.Join(nodeTunTransports[q.Engine][1:], ", "))}
 	case !nodeTunPortsRe.MatchString(q.Ports):
 		return nodeErr{"E-NODE-01", "ports: numbers separated by commas, e.g. 443, 2083"}
 	case q.FrpPort < 0 || q.FrpPort > 65535:
 		return nodeErr{"E-NODE-01", "bad control port"}
+	}
+	if q.Engine == "frp" {
+		q.AcceptUDP = false
 	}
 	for _, id := range []int{q.Server, q.Client} {
 		if id == 0 {
@@ -300,7 +356,7 @@ type nodeTunDraft struct {
 	Client     setupPlan `json:"client"`
 	ServerRole string    `json:"server_role"` // iran | add-peer
 	ClientMode string    `json:"client_mode"` // foreign | join-hub
-	LocalGre   string    `json:"local_gre"`   // on the server
+	LocalGre   string    `json:"local_gre"`   // on the server ("" for Backhaul without GRE)
 	PeerGre    string    `json:"peer_gre"`    // on the client
 	FrpPort    int       `json:"frp_port"`
 	Problems   []string  `json:"problems,omitempty"` // a create would fail: say why first
@@ -309,10 +365,10 @@ type nodeTunDraft struct {
 func nodeTunDraftFor(ctx context.Context, q nodeTunReq) (nodeTunDraft, error) {
 	var d nodeTunDraft
 	var err error
-	if d.Server, err = nodeTunPlan(ctx, q.Server, q.Ports); err != nil {
+	if d.Server, err = nodeTunPlan(ctx, q.Server, q.Ports, q.FrpPort); err != nil {
 		return d, err
 	}
-	if d.Client, err = nodeTunPlan(ctx, q.Client, ""); err != nil {
+	if d.Client, err = nodeTunPlan(ctx, q.Client, "", 0); err != nil {
 		return d, err
 	}
 	s, c := d.Server, d.Client
@@ -344,18 +400,39 @@ func nodeTunDraftFor(ctx context.Context, q nodeTunReq) (nodeTunDraft, error) {
 			problem("these two servers already have a tunnel")
 		}
 	}
+	for _, u := range c.Uplinks {
+		if u.IranPub == s.Public && s.Public != "" {
+			problem("%s already dials %s", nodeTunName(q.Client), nodeTunName(q.Server))
+		}
+	}
 	for port, who := range s.Clashes {
 		problem("port %s is already used on %s by %s", port, nodeTunName(q.Server), who)
 	}
-	if strings.TrimSpace(q.Ports) == "" {
-		problem("give the ports users connect to")
+	// what each server's own license allows (it decides again when asked)
+	if q.Engine != "frp" {
+		for _, x := range []struct {
+			id int
+			p  setupPlan
+		}{{q.Server, s}, {q.Client, c}} {
+			if !x.p.Pro["backhaul"] {
+				problem("Backhaul is a Pro feature and %s has no license for it", nodeTunName(x.id))
+			}
+		}
+	}
+	if d.ClientMode == "join-hub" && !c.Pro["cluster"] {
+		problem("%s already has a tunnel, so it would join as one more Iran hub: that is Cluster, a Pro feature it has no license for", nodeTunName(q.Client))
 	}
 	d.FrpPort = q.FrpPort
 	if d.FrpPort == 0 {
 		d.FrpPort = s.RelayPort
+	} else if s.RelayTaken != "" {
+		problem("control port %d is already used on %s by %s", q.FrpPort, nodeTunName(q.Server), s.RelayTaken)
 	}
 	if d.FrpPort == 0 {
 		problem("no free control port on %s", nodeTunName(q.Server))
+	}
+	if q.Engine == "backhaul" {
+		return d, nil // no GRE
 	}
 	used := map[string]bool{}
 	for _, a := range append(append([]string{}, s.GreUsed...), c.GreUsed...) {
@@ -377,6 +454,52 @@ func nodeTunDraftFor(ctx context.Context, q nodeTunReq) (nodeTunDraft, error) {
 	return d, nil
 }
 
+// nodeTunBundleCheck: the server end's bundle is what was planned (the
+// client trusts it as a pasted bundle; a server end that is not honest must
+// not point the client elsewhere or publish other ports).
+func nodeTunBundleCheck(bundle string, q nodeTunReq, d nodeTunDraft) error {
+	b, err := ParseBundle(bundle)
+	if err != nil {
+		return fmt.Errorf("the server end's bundle cannot be read: %v", err)
+	}
+	engine := b.Engine
+	if engine == "" {
+		engine = "frp"
+	}
+	want := extractNumericPorts(parseRawPorts(q.Ports))
+	got := append([]int{}, b.Ports...)
+	slices.Sort(want)
+	slices.Sort(got)
+	switch {
+	case b.IranPub != d.Server.Public:
+		return fmt.Errorf("the server end's bundle names %s, not %s", b.IranPub, d.Server.Public)
+	case b.FrpPort != d.FrpPort:
+		return fmt.Errorf("the server end's bundle has control port %d, not %d", b.FrpPort, d.FrpPort)
+	case engine != q.Engine:
+		return fmt.Errorf("the server end's bundle is %s, not %s", engine, q.Engine)
+	case q.Engine != "backhaul" && (b.IranGre != d.LocalGre || b.ForeignGre != d.PeerGre):
+		return errors.New("the server end's bundle has other GRE addresses than planned")
+	case !slices.Equal(slices.Compact(want), slices.Compact(got)):
+		return errors.New("the server end's bundle has other ports than planned")
+	}
+	return nil
+}
+
+// nodeTunFindPeer finds the server end of a tunnel to clientIP on server id
+// again: its peer id (0: the first tunnel), or -1.
+func nodeTunFindPeer(ctx context.Context, id int, clientIP string) (int, error) {
+	p, err := nodeTunPlan(ctx, id, "", 0)
+	if err != nil {
+		return -1, err
+	}
+	for _, x := range p.Peers {
+		if clientIP != "" && x.RemotePub == clientIP {
+			return x.ID, nil
+		}
+	}
+	return -1, nil
+}
+
 func nodeTunCreate(ctx context.Context, j *nodeTunJob, q nodeTunReq) error {
 	j.logf("reading the plan of both servers")
 	pctx, cancel := context.WithTimeout(ctx, nodeTunPlanTO)
@@ -395,7 +518,7 @@ func nodeTunCreate(ctx context.Context, j *nodeTunJob, q nodeTunReq) error {
 	}
 	body := map[string]any{
 		"role": d.ServerRole, "engine": q.Engine, "transport": q.Transport, "accept_udp": q.AcceptUDP,
-		"name": nodeTunLabel(q.Client), "local_public": d.Server.Public, "remote_public": d.Client.Public,
+		"name": nodeTunLabel(q.Client, 40), "local_public": d.Server.Public, "remote_public": d.Client.Public,
 		"local_gre": d.LocalGre, "peer_gre": d.PeerGre, "frp_port": d.FrpPort, "ports": q.Ports, "autogen": true,
 	}
 	if q.Engine == "frp" {
@@ -408,36 +531,57 @@ func nodeTunCreate(ctx context.Context, j *nodeTunJob, q nodeTunReq) error {
 	sctx, cancel := context.WithTimeout(ctx, nodeTunSetupTO)
 	err = nodeAPIJSON(sctx, q.Server, http.MethodPost, "/api/setup", body, &res)
 	cancel()
+	findNew := func() int { // the new server end, by the client's address
+		fctx, cancel := context.WithTimeout(ctx, nodeTunPlanTO)
+		defer cancel()
+		id, ferr := nodeTunFindPeer(fctx, q.Server, d.Client.Public)
+		if ferr != nil || id < 0 || (before[id] && d.ServerRole == "add-peer") {
+			return -1
+		}
+		return id
+	}
 	if err != nil {
-		return err // nothing to roll back: the server's own setup failed as a whole
+		// the server answered "no" before installing anything: nothing to undo
+		if e := apiErrOf(err); e != nil && !e.installed() {
+			return err
+		}
+		// it may be half-made (the installer ran, or the answer was lost)
+		if findNew() >= 0 {
+			nodeTunKeep(q, d.ServerRole, d.Client.Public, err.Error())
+			return fmt.Errorf("%v; the server end exists, so it is listed as left over", err)
+		}
+		return err
 	}
-	if res.Bundle == "" {
-		return errors.New("the server end gave no bundle")
+	peerID := findNew()
+	if peerID < 0 {
+		j.logf("warning: the new tunnel on the server is not found in its plan")
 	}
-	peerID := 0 // the server's first tunnel
-	if d.ServerRole == "add-peer" {
-		actx, cancel := context.WithTimeout(ctx, nodeTunPlanTO)
-		after, perr := nodeTunPlan(actx, q.Server, "")
+	undo := func(cause error) error { // remove the server end again
+		j.logf("removing the server end again")
+		if peerID < 0 {
+			nodeTunKeep(q, d.ServerRole, d.Client.Public, "not found on the server after it was made")
+			return fmt.Errorf("%v; the server end could not be found to remove it, so it is listed as left over", cause)
+		}
+		rctx, cancel := context.WithTimeout(ctx, nodeTunActionTO)
+		rerr := nodeAPIJSON(rctx, q.Server, http.MethodPost, "/api/action", map[string]any{"action": "remove-tunnel", "peer_id": peerID}, nil)
 		cancel()
-		if perr == nil {
-			for _, p := range after.Peers {
-				if !before[p.ID] && p.RemotePub == d.Client.Public {
-					peerID = p.ID
-				}
-			}
+		if rerr != nil {
+			nodeTunKeep(q, d.ServerRole, d.Client.Public, rerr.Error())
+			return fmt.Errorf("%v; removing the server end failed too (%v), so it is listed as left over", cause, rerr)
 		}
-		if peerID == 0 {
-			j.logf("warning: the new tunnel's id on the server is not known")
-		}
+		return fmt.Errorf("%v; the server end was removed again", cause)
+	}
+	if berr := nodeTunBundleCheck(res.Bundle, q, d); berr != nil {
+		return undo(berr)
 	}
 	// 2. the client end
 	j.logf("making the client end on %s (%s)", nodeTunName(q.Client), d.ClientMode)
 	cctx, cancel := context.WithTimeout(ctx, nodeTunSetupTO)
 	if d.ClientMode == "join-hub" {
-		err = nodeAPIJSON(cctx, q.Client, http.MethodPost, "/api/cluster/join-hub", map[string]any{"bundle": res.Bundle, "name": nodeTunLabel(q.Server)}, nil)
+		err = nodeAPIJSON(cctx, q.Client, http.MethodPost, "/api/cluster/join-hub", map[string]any{"bundle": res.Bundle, "name": nodeTunLabel(q.Server, 32)}, nil)
 	} else {
 		err = nodeAPIJSON(cctx, q.Client, http.MethodPost, "/api/setup", map[string]any{"role": "foreign", "token": res.Bundle,
-			"local_public": d.Client.Public, "name": nodeTunLabel(q.Server)}, nil)
+			"local_public": d.Client.Public, "name": nodeTunLabel(q.Server, 40), "accept_udp": q.AcceptUDP}, nil)
 	}
 	cancel()
 	if err == nil {
@@ -445,41 +589,33 @@ func nodeTunCreate(ctx context.Context, j *nodeTunJob, q nodeTunReq) error {
 		return nil
 	}
 	j.logf("the client end failed: %v", err)
-	// roll back: the half-made client end (only when it had no tunnel
-	// before), then the server end
-	if d.ClientMode == "foreign" {
+	// the half-made client end, only when this job's install ran there (it
+	// had no tunnel before: a "foreign" client)
+	if e := apiErrOf(err); d.ClientMode == "foreign" && e != nil && e.installed() {
 		rctx, cancel := context.WithTimeout(ctx, nodeTunActionTO)
 		if rerr := nodeAPIJSON(rctx, q.Client, http.MethodPost, "/api/action", map[string]any{"action": "remove-tunnel", "peer_id": 0}, nil); rerr != nil {
 			j.logf("cleaning the client end: %v", rerr)
 		}
 		cancel()
 	}
-	if d.ServerRole == "add-peer" && peerID == 0 {
-		nodeTunKeep(q, 0, d.Client.Public, "the new tunnel's id on the server is not known: remove it there by hand")
-		return fmt.Errorf("%v; the server end could not be found to remove it, so it is listed as left over", err)
-	}
-	j.logf("removing the server end again")
-	rctx, cancel := context.WithTimeout(ctx, nodeTunActionTO)
-	rerr := nodeAPIJSON(rctx, q.Server, http.MethodPost, "/api/action", map[string]any{"action": "remove-tunnel", "peer_id": peerID}, nil)
-	cancel()
-	if rerr != nil {
-		nodeTunKeep(q, peerID, d.Client.Public, rerr.Error())
-		return fmt.Errorf("%v; removing the server end failed too (%v), so it is listed as left over", err, rerr)
-	}
-	return fmt.Errorf("%v; the server end was removed again", err)
+	return undo(err)
 }
 
 // nodeTunKeep lists a server end that is left over.
-func nodeTunKeep(q nodeTunReq, peerID int, clientIP, why string) {
+func nodeTunKeep(q nodeTunReq, role, clientIP, why string) {
 	nodesMu.Lock()
 	defer nodesMu.Unlock()
 	nodesLoadLocked()
-	id := 1
+	nodesF.LeftNext = max(nodesF.LeftNext, 1)
 	for _, l := range nodesF.Left {
-		id = max(id, l.ID+1)
+		nodesF.LeftNext = max(nodesF.LeftNext, l.ID+1)
 	}
-	nodesF.Left = append(nodesF.Left, nodeTunLeft{ID: id, Server: q.Server, Client: q.Client, PeerID: peerID,
+	nodesF.Left = append(nodesF.Left, nodeTunLeft{ID: nodesF.LeftNext, Server: q.Server, Client: q.Client, ServerRole: role,
 		ClientIP: clientIP, Error: why, At: time.Now().Unix()})
+	nodesF.LeftNext++
+	if len(nodesF.Left) > nodeTunLeftMax {
+		nodesF.Left = nodesF.Left[len(nodesF.Left)-nodeTunLeftMax:]
+	}
 	if err := nodesSaveLocked(); err != nil {
 		log.Printf("nodes: cannot save a left-over tunnel: %v", err)
 	}
@@ -499,7 +635,8 @@ type nodeTunLink struct {
 	ClientIP string `json:"client_ip"`
 }
 
-// nodeTunLinks reads every online server's plan and pairs the ends.
+// nodeTunLinks reads every online server's plan and pairs the ends. Servers
+// that claim the same address are not paired (one of them is not honest).
 func nodeTunLinks(ctx context.Context) ([]nodeTunLink, []string) {
 	ids := []int{0}
 	nodesMu.Lock()
@@ -518,7 +655,7 @@ func nodeTunLinks(ctx context.Context) ([]nodeTunLink, []string) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			p, err := nodeTunPlan(ctx, id, "")
+			p, err := nodeTunPlan(ctx, id, "", 0)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -529,6 +666,23 @@ func nodeTunLinks(ctx context.Context) ([]nodeTunLink, []string) {
 		}(id)
 	}
 	wg.Wait()
+	claims := map[string][]int{}
+	for id, p := range plans {
+		if p.Public != "" {
+			claims[p.Public] = append(claims[p.Public], id)
+		}
+	}
+	for ip, who := range claims {
+		if len(who) > 1 {
+			slices.Sort(who)
+			names := make([]string, len(who))
+			for i, id := range who {
+				names[i] = nodeTunName(id)
+				delete(plans, id)
+			}
+			errs = append(errs, fmt.Sprintf("%s all say they are %s: their tunnels are not listed", strings.Join(names, ", "), ip))
+		}
+	}
 	links := []nodeTunLink{}
 	for sid, s := range plans {
 		for _, p := range s.Peers {
@@ -551,6 +705,7 @@ func nodeTunLinks(ctx context.Context) ([]nodeTunLink, []string) {
 		}
 		return a.PeerID - b.PeerID
 	})
+	slices.Sort(errs)
 	return links, errs
 }
 
@@ -562,41 +717,72 @@ type nodeTunRemoveReq struct {
 	Left   int `json:"left"` // a left-over server end: its id
 }
 
-// nodeTunRemove removes the client end, then the server end. The pair is
-// checked against both servers' plans first.
+// nodeTunRemoveLeft removes a left-over server end: found again on its
+// server by the client's address, never by a stored id.
+func nodeTunRemoveLeft(ctx context.Context, j *nodeTunJob, left int) error {
+	nodesMu.Lock()
+	nodesLoadLocked()
+	i := slices.IndexFunc(nodesF.Left, func(l nodeTunLeft) bool { return l.ID == left })
+	var l nodeTunLeft
+	if i >= 0 {
+		l = nodesF.Left[i]
+	}
+	nodesMu.Unlock()
+	if i < 0 {
+		return errors.New("no such left-over tunnel")
+	}
+	j.logf("finding the left-over server end on %s (the tunnel to %s)", nodeTunName(l.Server), l.ClientIP)
+	fctx, cancel := context.WithTimeout(ctx, nodeTunPlanTO)
+	peer, err := nodeTunFindPeer(fctx, l.Server, l.ClientIP)
+	cancel()
+	switch {
+	case err != nil:
+		return err
+	case peer < 0:
+		return errors.New("it is not on the server any more: press \"Removed by hand\"")
+	case peer == 0 && l.ServerRole != "iran":
+		return errors.New("the tunnel to that address is the server's first tunnel, which this job did not make: remove it on that server if you mean to")
+	}
+	j.logf("removing it (peer %d)", peer)
+	rctx, cancel := context.WithTimeout(ctx, nodeTunActionTO)
+	err = nodeAPIJSON(rctx, l.Server, http.MethodPost, "/api/action", map[string]any{"action": "remove-tunnel", "peer_id": peer}, nil)
+	cancel()
+	if err != nil {
+		return err
+	}
+	nodesMu.Lock()
+	nodesLoadLocked()
+	nodesF.Left = slices.DeleteFunc(nodesF.Left, func(x nodeTunLeft) bool { return x.ID == left })
+	err = nodesSaveLocked()
+	nodesMu.Unlock()
+	return err
+}
+
+// nodeTunRemove removes the client end, then the server end. The pair must
+// be listed exactly once from both servers' plans.
 func nodeTunRemove(ctx context.Context, j *nodeTunJob, q nodeTunRemoveReq) error {
 	if q.Left > 0 {
-		j.logf("removing the left-over server end on %s", nodeTunName(q.Server))
-		rctx, cancel := context.WithTimeout(ctx, nodeTunActionTO)
-		err := nodeAPIJSON(rctx, q.Server, http.MethodPost, "/api/action", map[string]any{"action": "remove-tunnel", "peer_id": q.PeerID}, nil)
-		cancel()
-		if err != nil {
-			return err
-		}
-		nodesMu.Lock()
-		nodesLoadLocked()
-		nodesF.Left = slices.DeleteFunc(nodesF.Left, func(l nodeTunLeft) bool { return l.ID == q.Left })
-		err = nodesSaveLocked()
-		nodesMu.Unlock()
-		return err
+		return nodeTunRemoveLeft(ctx, j, q.Left)
 	}
 	pctx, cancel := context.WithTimeout(ctx, nodeTunPlanTO)
 	links, _ := nodeTunLinks(pctx)
 	cancel()
-	found := false
-	for _, l := range links {
+	var link *nodeTunLink
+	n := 0
+	for i, l := range links {
 		if l.Server == q.Server && l.Client == q.Client && l.PeerID == q.PeerID && l.Hub == q.Hub {
-			found = true
+			link = &links[i]
+			n++
 		}
 	}
-	if !found {
-		return errors.New("this tunnel is not between these servers any more: refresh the list")
+	if n != 1 {
+		return errors.New("this tunnel is not listed between these servers (any more): refresh the list")
 	}
 	if q.Hub == 1 {
 		// the client's first tunnel: removing it removes the whole client
 		// set-up, so not while it also serves other Iran servers
 		cctx, cancel := context.WithTimeout(ctx, nodeTunPlanTO)
-		c, err := nodeTunPlan(cctx, q.Client, "")
+		c, err := nodeTunPlan(cctx, q.Client, "", 0)
 		cancel()
 		if err != nil {
 			return err
@@ -622,7 +808,12 @@ func nodeTunRemove(ctx context.Context, j *nodeTunJob, q nodeTunRemoveReq) error
 	err = nodeAPIJSON(sctx, q.Server, http.MethodPost, "/api/action", map[string]any{"action": "remove-tunnel", "peer_id": q.PeerID}, nil)
 	cancel()
 	if err != nil {
-		return fmt.Errorf("the client end is removed; the server end: %v (remove it on that server)", err)
+		role := "add-peer"
+		if q.PeerID == 0 {
+			role = "iran"
+		}
+		nodeTunKeep(nodeTunReq{Server: q.Server, Client: q.Client}, role, link.ClientIP, err.Error())
+		return fmt.Errorf("the client end is removed; the server end: %v (listed as left over)", err)
 	}
 	nodeAuditf("node_tunnel_removed", "server=%d client=%d peer=%d", q.Server, q.Client, q.PeerID)
 	return nil

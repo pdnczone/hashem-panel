@@ -8990,7 +8990,8 @@ node_migrate_hint() {
     local d="$PANEL_CONFIG_DIR" mark="$PANEL_CONFIG_DIR/node_migrate_hint"
     [[ -f $mark || -f $d/node.json ]] && return 0
     grep -q '"never": *true' "$d/node_migrate.json" 2>/dev/null && return 0
-    if [[ -s $d/peers.json ]] || { grep -q '"role": *"master"' "$d/peer_link.json" 2>/dev/null && grep -q '"remote_public": *"[^"]' "$d/setup.json" 2>/dev/null; }; then
+    if [[ -s $d/peers.json ]] || { grep -q '"role": *"master"' "$d/peer_link.json" 2>/dev/null &&
+        { [[ -f $d/first_tunnel.json ]] || ip link show gre-tunnel >/dev/null 2>&1 || [[ -f /etc/frp/frps.toml ]]; }; }; then
         echo -e "${CYAN}[i] New: manage all your foreign servers from this panel. Open the panel → Nodes → \"Yes, move to nodes\". Running tunnels are not touched.${NC}"
         : >"$mark" 2>/dev/null || true
     fi

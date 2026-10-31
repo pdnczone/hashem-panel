@@ -3213,6 +3213,7 @@ window.FA_TEXT = {
 "The node view was closed: open the node again.": "نمای نود بسته شد: نود را دوباره باز کنید.",
 "Node": "نود",
 "Download failed": "دانلود نشد",
+"Also forward UDP (Backhaul)": "UDP را هم عبور بده (Backhaul)",
 "Don't ask again": "دیگر نپرس",
 "Each one joins by itself, proven by its tunnel token. Tunnels are not touched.": "هر کدام خودش وصل می‌شود و توکن تانلش هویتش را ثابت می‌کند. به تانل‌ها دست زده نمی‌شود.",
 "Manage all your servers from this panel?": "همه سرورهایتان را از همین پنل مدیریت کنید؟",

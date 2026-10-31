@@ -318,7 +318,9 @@ func tunnelExists() bool {
 			return true
 		}
 	}
-	for _, f := range []string{filepath.Join(frpDir, "frps.toml"), filepath.Join(frpDir, "frpc.toml")} {
+	// FRP, and Backhaul without GRE (its first tunnel has no gre-tunnel)
+	for _, f := range []string{filepath.Join(frpDir, "frps.toml"), filepath.Join(frpDir, "frpc.toml"),
+		filepath.Join(backhaulDir, "config.toml"), filepath.Join(backhaulDir, "server.toml"), filepath.Join(backhaulDir, "client.toml")} {
 		if _, err := os.Stat(f); err == nil {
 			return true
 		}
@@ -741,6 +743,11 @@ func handleSetupPost(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 
+	// what the first tunnel is, for the central's plan (setup_plan.go)
+	if body.Role == "iran" || body.Role == "foreign" {
+		firstTunnelSave(firstTunnelRec{Side: body.Role, LocalPub: body.LocalPub, RemotePub: body.RemotePub,
+			LocalGre: body.LocalGre, PeerGre: body.PeerGre, Engine: body.Engine})
+	}
 	// the first tunnel's other server: named in the setup form
 	if (body.Role == "iran" || body.Role == "foreign") && body.Name != "" {
 		_ = setLinkName("main", body.Name)
