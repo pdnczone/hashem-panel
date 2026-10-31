@@ -101,17 +101,27 @@ func nodeTunJobsView() []nodeTunJob {
 	return out
 }
 
-// nodeTunStart runs fn as a job on servers ids, one job per server at a time.
+// nodeTunStart runs fn as a job on a server and a client, one job per
+// server at a time.
 func nodeTunStart(kind string, server, client int, fn func(j *nodeTunJob) error) (int, error) {
+	return nodeJobStart(kind, server, client, []int{server, client}, fn)
+}
+
+// nodeJobStart runs fn as a job that changes servers ids.
+func nodeJobStart(kind string, server, client int, ids []int, fn func(j *nodeTunJob) error) (int, error) {
 	nodeTun.Lock()
 	if nodeTun.busy == nil {
 		nodeTun.busy = map[int]bool{}
 	}
-	if nodeTun.busy[server] || nodeTun.busy[client] {
-		nodeTun.Unlock()
-		return 0, nodeErr{"E-NODE-07", "a tunnel job on one of these servers is still running: wait for it"}
+	for _, id := range ids {
+		if nodeTun.busy[id] {
+			nodeTun.Unlock()
+			return 0, nodeErr{"E-NODE-07", "a job on one of these servers is still running: wait for it"}
+		}
 	}
-	nodeTun.busy[server], nodeTun.busy[client] = true, true
+	for _, id := range ids {
+		nodeTun.busy[id] = true
+	}
 	nodeTun.next++
 	j := &nodeTunJob{ID: nodeTun.next, Kind: kind, Server: server, Client: client, State: "running", Started: time.Now().Unix()}
 	nodeTun.jobs = append(nodeTun.jobs, j)
@@ -131,8 +141,9 @@ func nodeTunStart(kind string, server, client int, fn func(j *nodeTunJob) error)
 		if err != nil {
 			j.State = "failed"
 		}
-		delete(nodeTun.busy, server)
-		delete(nodeTun.busy, client)
+		for _, id := range ids {
+			delete(nodeTun.busy, id)
+		}
 		nodeTun.Unlock()
 	}()
 	return j.ID, nil

@@ -234,10 +234,20 @@ func deliverAlerts(cfg alertConfig, events []alertEvent) {
 
 // alertsOnSnapshot is called after every snapshot build.
 func alertsOnSnapshot(s *HubSnapshot) {
+	now := time.Now()
+	nodeAlertsObserve(now, alertLinks(s, now, nodeAlertTrk)) // for this node's central (node_fleet.go)
 	cfg := loadAlertConfig()
 	if !cfg.Enabled {
 		return
 	}
+	links := alertLinks(s, now, alertTrk)
+	if ev := alertTrk.observe(now, links, cfg); len(ev) > 0 {
+		go alertSend(cfg, ev)
+	}
+}
+
+// alertLinks: every link's state in s, and the host's resources.
+func alertLinks(s *HubSnapshot, now time.Time, t *alertTracker) []linkSnap {
 	var links []linkSnap
 	for _, l := range s.All() {
 		name := l.Name
@@ -246,11 +256,7 @@ func alertsOnSnapshot(s *HubSnapshot) {
 		}
 		links = append(links, linkSnap{Name: name, State: l.HealthState, Why: reasonsText(l.Reasons)})
 	}
-	now := time.Now()
-	links = append(links, hostResourceLinks(now, alertHostReaders, alertTrk.lastState)...)
-	if ev := alertTrk.observe(now, links, cfg); len(ev) > 0 {
-		go alertSend(cfg, ev)
-	}
+	return append(links, hostResourceLinks(now, alertHostReaders, t.lastState)...)
 }
 
 // ---- API ----

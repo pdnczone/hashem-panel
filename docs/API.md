@@ -81,6 +81,7 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/metrics-token` | session + CSRF | `handleMetricsTokenPost` |
 | `GET` | `/api/nodes` | session | `handleNodesGet` |
 | `POST` | `/api/nodes` | session + CSRF | `handleNodesPost` |
+| `GET` | `/api/nodes/backup` | session | `handleNodeBackupGet` |
 | `POST` | `/api/password` | session + CSRF | `handlePassword` |
 | `GET` | `/api/pathtest` | session | `handlePathTestGet` |
 | `POST` | `/api/pathtest` | session + CSRF | `handlePathTestPost` |
@@ -166,4 +167,4 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/xray` | session + CSRF | `handleXrayPost` |
 | `GET` | `/metrics` | none | `handleMetrics` |
 
-Total: 142 routes.
+Total: 143 routes.

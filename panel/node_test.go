@@ -48,6 +48,7 @@ func nodeTestCentral(t *testing.T) string {
 		}
 		nodesOK = false
 		nodesMu.Unlock()
+		nodeInfoLoops.Wait() // they read configDir
 		nodeKeyMu.Lock()
 		nodeKeyPriv, nodeCertTLS = nil, nil
 		nodeKeyMu.Unlock()

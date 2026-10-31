@@ -3131,6 +3131,21 @@
           <div class="xr-err hidden" id="nodeErr" role="alert"></div>
           <div id="nodeBody"><div class="ent-skel u-h-14"></div></div>
         </div>
+        <div class="tunnel-card u-mb-20" id="nodeFleetCard" hidden>
+          <div class="tc-header u-bb-ln u-pb-16 u-mb-16">
+            <div>
+              <span class="tc-title u-fs-18 u-fw-700">All servers</span>
+              <div class="qs-hint u-mt-4">Every server's health and traffic, read live from each. A tunnel between two of these servers is counted once, at its Iran server.</div>
+            </div>
+            <div class="lm-acts">
+              <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="nodeFleetCustomersOpen()">Customers</button>
+              <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="nodeFleetBackupsOpen()">Backups</button>
+              <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="nodeFleetUpdateOpen()">Update nodes</button>
+              <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="nodeFleetLoad()">Refresh</button>
+            </div>
+          </div>
+          <div id="nodeFleetBody"><div class="ent-skel u-h-14"></div></div>
+        </div>
         <div class="tunnel-card u-mb-20" id="ntCard" hidden>
           <div class="tc-header u-bb-ln u-pb-16 u-mb-16">
             <div>
