@@ -79,10 +79,31 @@ func TestNodeHelperProcess(t *testing.T) {
 	}
 	configDir = os.Getenv("NODE_HELPER_DIR")
 	nodeInfoFn = func() nodeInfo {
-		return nodeInfo{Proto: nodeProto, Version: "helper-v1", Hostname: "helper", MachineHash: getMachineHash(), CPUPct: -1}
+		return nodeInfo{Proto: nodeProto, Version: "helper-v1", Hostname: "helper", MachineHash: getMachineHash(), CPUPct: -1,
+			License: nodeLicense{Reported: os.Getenv("NODE_HELPER_LIC") == "1"}}
 	}
 	if os.Getenv("NODE_HELPER_FAST") == "1" {
 		nodeLabFast()
+	}
+	// the node's panel, as far as the relay tests need it
+	cfg.BasePath = "x"
+	nodeRelayMux = func() http.Handler {
+		m := http.NewServeMux()
+		m.HandleFunc("GET /x/api/status", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Snapshot-Age-Ms", "7")
+			writeJSON(w, map[string]any{"relayed": nodeRelayed(r), "q": r.URL.RawQuery})
+		}))
+		m.HandleFunc("POST /x/api/license", requireAuth(requireCSRF(func(w http.ResponseWriter, r *http.Request) {
+			var b struct{ Key string }
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			_ = os.WriteFile(filepath.Join(configDir, "got-key"), []byte(b.Key), 0600)
+			writeJSON(w, map[string]string{"status": "ok"})
+		})))
+		m.HandleFunc("GET /x/api/logs", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write(make([]byte, nodeRelayBodyMax+1))
+		}))
+		m.HandleFunc("GET /x/api/access", requireAuth(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, "secret") }))
+		return m
 	}
 	switch os.Getenv("NODE_HELPER_CMD") {
 	case "loop":
@@ -596,4 +617,168 @@ func TestNodePreAuthIPv6ByPrefix(t *testing.T) {
 	if n != 0 {
 		t.Fatalf("leak: %d", n)
 	}
+}
+
+func TestNodeRelayAllowed(t *testing.T) {
+	for p, want := range map[string]bool{
+		"/api/status": true, "/api/dashboard": true, "/api/customers/export.csv": true, "/api/license": true,
+		"/api/term/ws": false, "/api/login": false, "/api/access": false, "/api/password": false, "/api/2fa/setup": false,
+		"/api/nodes": false, "/api/node/1/status": false, "/api/peer/handshake": false, "/api/session-settings": false,
+		"/api/status/../access": false, "/api//access": false, "/api/status%2f..": false, "/status": false, "/api/tls/ip": false,
+	} {
+		if got := nodeRelayAllowed(p); got != want {
+			t.Errorf("nodeRelayAllowed(%q) = %v, want %v", p, got, want)
+		}
+	}
+}
+
+// Only the channel can mark a request as relayed: a request with no
+// session is refused however it is dressed up.
+func TestNodeRelayedOnlyFromContext(t *testing.T) {
+	h := requireAuth(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, "in") })
+	r := httptest.NewRequest("GET", "/x/api/status", nil)
+	r.Header.Set("X-Hashem-Node", "1")
+	r.Header.Set("X-Relayed", "central")
+	w := httptest.NewRecorder()
+	h(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("a request without a session: %d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	h(w, r.WithContext(context.WithValue(r.Context(), nodeRelayKey, "admin")))
+	if w.Code != 200 {
+		t.Fatalf("a relayed request: %d", w.Code)
+	}
+	c := requireCSRF(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, "in") })
+	w = httptest.NewRecorder()
+	c(w, httptest.NewRequest("POST", "/x/api/limits", strings.NewReader("{}")))
+	if w.Code == 200 {
+		t.Fatal("a POST without a session or token got through")
+	}
+}
+
+func TestNodeRelayEndToEnd(t *testing.T) {
+	central := nodeTestCentral(t)
+	nd := t.TempDir()
+	if out, err := nodeHelper(t, nd, "join", nodeTestInvite(t, central, "r"), 0).CombinedOutput(); err != nil {
+		t.Fatalf("join: %v\n%s", err, out)
+	}
+	srv := nodeHelper(t, nd, "serve", "", 20*time.Second)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = srv.Process.Kill(); _ = srv.Wait() }()
+	nodeTestWait(t, "the node online", func() bool { return nodeSessionFor(1) != nil })
+	relay := func(method, id, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "/c/api/node/"+id+"/"+path, strings.NewReader(body))
+		if i := strings.Index(path, "?"); i >= 0 {
+			r.SetPathValue("path", path[:i])
+		} else {
+			r.SetPathValue("path", path)
+		}
+		r.SetPathValue("id", id)
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handleNodeRelay(w, r)
+		return w
+	}
+	w := relay("GET", "1", "status?range=1h", "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"relayed":true`) || !strings.Contains(w.Body.String(), `"q":"range=1h"`) ||
+		w.Header().Get("X-Snapshot-Age-Ms") != "7" || w.Header().Get("X-Hashem-Node") != "1" {
+		t.Fatalf("relayed GET: %d %s %v", w.Code, w.Body, w.Header())
+	}
+	if w := relay("POST", "1", "license", `{"key":"k1"}`); w.Code != 200 {
+		t.Fatalf("relayed POST: %d %s", w.Code, w.Body)
+	}
+	if b, _ := os.ReadFile(filepath.Join(nd, "got-key")); string(b) != "k1" {
+		t.Fatalf("the node's handler did not run: %q", b)
+	}
+	if w := relay("GET", "1", "access", ""); w.Code != http.StatusForbidden || strings.Contains(w.Body.String(), "secret") {
+		t.Fatalf("a path that is not relayed: %d %s", w.Code, w.Body)
+	}
+	if w := relay("GET", "1", "logs", ""); w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "bigger than") {
+		t.Fatalf("an answer over the cap: %d %s", w.Code, w.Body)
+	}
+	if w := relay("GET", "9", "status", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("an unknown node: %d", w.Code)
+	}
+	nodesMu.Lock()
+	nodesF.Nodes = append(nodesF.Nodes, nodeRecord{ID: 9, Name: "off", Key: "K9"})
+	nodesMu.Unlock()
+	if w := relay("GET", "9", "status", ""); w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "offline") {
+		t.Fatalf("an offline node: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestNodeLicensePlan(t *testing.T) {
+	k := "payload.sig"
+	h := nodeKeyHash(k)
+	none := nodeInfo{MachineHash: "m1"}
+	own := nodeInfo{MachineHash: "m1", License: nodeLicense{Active: true, KeyHash: "ownkey"}}
+	copied := nodeInfo{MachineHash: "m1", License: nodeLicense{Active: true, KeyHash: h}}
+	old := nodeInfo{MachineHash: "m1", License: nodeLicense{Active: true, KeyHash: "oldcopy"}}
+	for _, c := range []struct {
+		name, key, machine string
+		info               nodeInfo
+		pushed, want       string
+	}{
+		{"an unlocked key goes to a node without one", k, "", none, "", "push"},
+		{"a key for any machine (*)", k, "*", none, "", "push"},
+		{"locked to this node's machine", k, "M1", none, "", "push"},
+		{"locked to another machine: not sent", k, "m2", none, "", ""},
+		{"the node has its own key: left alone", k, "", own, "", ""},
+		{"the node has the same key already", k, "", copied, h, ""},
+		{"a renewal replaces the copy the central gave", k, "", old, "oldcopy", "push"},
+		{"the central's key removed: the copy goes too", "", "", copied, h, "remove"},
+		{"the central's key removed: a node's own key stays", "", "", own, h, ""},
+		{"no key anywhere", "", "", none, "", ""},
+	} {
+		if got := nodeLicensePlan(c.key, c.machine, c.info, c.pushed); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// The central's key reaches a node without one, through the node's own
+// /api/license (here a stand-in that records what it got).
+func TestNodeLicenseCopied(t *testing.T) {
+	central := nodeTestCentral(t)
+	oldLic, oldKey := activeLicense, cfg.LicenseKey
+	t.Cleanup(func() {
+		activeLicenseMu.Lock()
+		activeLicense = oldLic
+		activeLicenseMu.Unlock()
+		mu.Lock()
+		cfg.LicenseKey = oldKey
+		mu.Unlock()
+		nodeLicTried.Lock()
+		nodeLicTried.at = map[int]time.Time{}
+		nodeLicTried.Unlock()
+	})
+	activeLicenseMu.Lock()
+	activeLicense = &LicensePayload{Customer: "test", MachineHash: "", ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	activeLicenseMu.Unlock()
+	mu.Lock()
+	cfg.LicenseKey = "central-key"
+	mu.Unlock()
+	nd := t.TempDir()
+	if out, err := nodeHelper(t, nd, "join", nodeTestInvite(t, central, "l"), 0).CombinedOutput(); err != nil {
+		t.Fatalf("join: %v\n%s", err, out)
+	}
+	srv := nodeHelper(t, nd, "serve", "", 20*time.Second)
+	srv.Env = append(srv.Env, "NODE_HELPER_LIC=1")
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = srv.Process.Kill(); _ = srv.Wait() }()
+	nodeTestWait(t, "the key on the node", func() bool {
+		b, _ := os.ReadFile(filepath.Join(nd, "got-key"))
+		return string(b) == "central-key"
+	})
+	nodeTestWait(t, "the central to remember it pushed it", func() bool {
+		nodesMu.Lock()
+		defer nodesMu.Unlock()
+		r := nodeFindLocked(1)
+		return r != nil && r.LicensePushed == nodeKeyHash("central-key")
+	})
 }

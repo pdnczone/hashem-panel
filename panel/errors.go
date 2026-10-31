@@ -128,6 +128,7 @@ var errCatalog = map[string]errInfo{
 	"E-NODE-02": {409, "not possible in this panel's role", "The detail says what to do first (leave the central, remove the nodes, or make this panel the central)."},
 	"E-NODE-03": {404, "unknown node", "Refresh the page; it may have been removed."},
 	"E-NODE-04": {502, "the node or server cannot be reached", "Check the address and that the server is up; the detail has the network error."},
+	"E-NODE-06": {403, "not available through the central", "Open the node's own panel for this (terminal, logins and the panel's access settings stay local)."},
 	"E-NODE-05": {500, "cannot save the node settings", "The detail names the file: check free space and /etc/gre-panel permissions."},
 	"E-CUST-06": {500, "cannot save customers.json", "Disk write failed: check free space and /etc/gre-panel permissions."},
 	// log diagnostics (annotation only, also reused by status hints)

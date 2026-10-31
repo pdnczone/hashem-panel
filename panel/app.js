@@ -1,5 +1,12 @@
 const BASE = document.documentElement.dataset.base || '';
-const at = p => BASE + p;
+// NODE: the node this page shows (on a central; null = this server). Every
+// API call then goes to /api/node/<id>/... and the central relays it; the
+// central's own login, node list and session stay local.
+let NODE = null;
+try { NODE = parseInt(sessionStorage.getItem('hashemNode') || '', 10) || null; } catch (_) { NODE = null; }
+// the central's own: its login, access, HTTPS, 2FA, terminal and node list
+const NODE_LOCAL = /^\/api\/(nodes|login|logout|session-settings|access|password|2fa|tls|metrics-token|term)(\/|\?|$)/;
+const at = p => (NODE && p.startsWith('/api/') && !NODE_LOCAL.test(p)) ? BASE + '/api/node/' + NODE + p.slice(4) : BASE + p;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const escapeHtml = esc;
@@ -335,6 +342,7 @@ function proSync() {
 function goTab(name) {
   if (name === 'terminal' && !$('termNav').classList.contains('hidden') && $('tab-terminal').hidden && !termState.ready) { /* allowed: overlay shows connect */ }
   if (name === 'terminal' && $('termNav').classList.contains('hidden')) return; // flag off: tab doesn't exist
+  if (name === 'terminal' && NODE) { toastErr(tr('', 'The terminal is not relayed'), tr('', 'Open the node\'s own panel for its terminal, or pick This server.')); return; }
   if (name === 'add-peer') { goTab('setup'); const c = $('setupAddPeerStep'); if (c && c.scrollIntoView) c.scrollIntoView({behavior: 'smooth', block: 'start'}); return; }
   // Bagher lives in Setup (create) and Tunnel (run) like every other tunnel.
   if (name === 'sshfwd' || name === 'bagher') { openBagherSetup(); return; }
@@ -508,6 +516,11 @@ const I18N = {
     nav_xray: "Xray",
     nav_customers: "Customers",
     nav_nodes: "Nodes",
+    node_bar: "You are managing node",
+    node_bar_sub: "Changes apply to that server.",
+    node_bar_back: "Back to this server",
+    node_pick: "Server shown",
+    settings_node_note: "The login, HTTPS, 2FA and terminal settings on this page are this panel's (the central). A node's own are on its own panel; its license and Telegram alerts are relayed.",
     xray_title: "Xray Tunnel",
     xray_sub: "Forward ports from the Iran server to a foreign server over Xray: Reality, XHTTP, gRPC or mKCP, direct or reverse. It runs its own Xray-core next to any Xray panel (3x-ui, Marzban) and never touches its files, services or ports.",
     xray_idle: "No tunnel yet",
@@ -11823,6 +11836,7 @@ function nodeRow(n) {
     </div>
     <div class="qs-hint lm-num">${esc(tr('', 'Key'))} ${esc(n.key_fp)}${i.machine_hash ? ' · ' + esc(tr('', 'Machine ID')) + ' ' + esc(i.machine_hash) : ''}</div>
     <div class="lm-acts">
+      ${n.online ? `<button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openNodeHere(${n.id})">${esc(tr('', 'Open'))}</button>` : ''}
       <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openNodeRename(${n.id})">${esc(tr('', 'Rename'))}</button>
       <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30 u-c-er" onclick="nodeRemove(${n.id})">${esc(tr('', 'Remove'))}</button>
     </div></div>`;
@@ -11867,7 +11881,12 @@ function renderNodes(d) {
     <div class="lm-list">${jobs.map(nodeJobRow).join('')}${nodes.map(nodeRow).join('')}</div>`;
 }
 async function loadNodes() {
-  try { renderNodes(await api('/api/nodes')); } catch (e) { reportErr('nodes', e); }
+  try {
+    const d = await api('/api/nodes');
+    renderNodes(d);
+    _nodePickList = (d.role === 'central' && d.nodes) || [];
+    nodePickRender();
+  } catch (e) { reportErr('nodes', e); }
 }
 (function initNodes() {
   if (!nodesTimer) nodesTimer = setInterval(() => {
@@ -11952,3 +11971,55 @@ async function nodeLeave() {
 async function nodeCancelInvites() {
   try { renderNodes(await api('/api/nodes', { action: 'cancel-invites' })); } catch (e) { toastErr(tr('', 'Failed'), e.message); }
 }
+
+// ---- the node picker (header): which server the pages show ----
+let _nodePickList = [];
+function nodePickRender() {
+  const sel = $('nodePick');
+  if (!sel) return;
+  const show = _nodePickList.length > 0;
+  sel.classList.toggle('hidden', !show);
+  if (!show) return;
+  const opts = [`<option value="">${esc(tr('', 'This server'))}</option>`].concat(_nodePickList.map(n =>
+    `<option value="${n.id}"${n.online ? '' : ' disabled'}>${esc(n.name)}${n.online ? '' : ' — ' + esc(tr('', 'Offline'))}</option>`));
+  sel.innerHTML = opts.join('');
+  sel.value = NODE ? String(NODE) : '';
+  const bar = $('nodeBar');
+  if (bar) {
+    const n = _nodePickList.find(x => x.id === NODE);
+    bar.hidden = !n;
+    if (n) $('nodeBarName').textContent = n.name + ((n.info && n.info.public_ip) ? ' · ' + n.info.public_ip : '');
+  }
+  const term = $('termNav');
+  if (term) term.classList.toggle('node-off', !!NODE);
+  const note = $('settingsNodeNote');
+  if (note) note.hidden = !NODE;
+}
+async function nodePickLoad() {
+  let d;
+  try { d = await (await fetch(BASE + '/api/nodes', { cache: 'no-store' })).json(); } catch (_) { return; }
+  _nodePickList = (d && d.role === 'central' && d.nodes) || [];
+  if (NODE && !_nodePickList.some(n => n.id === NODE)) nodePickSet(null); // removed
+  nodePickRender();
+}
+function nodePickSet(id) {
+  NODE = id || null;
+  try { if (NODE) sessionStorage.setItem('hashemNode', String(NODE)); else sessionStorage.removeItem('hashemNode'); } catch (_) { /* private mode */ }
+  nodePickRender();
+  // the license and every page come from the chosen server now
+  if (typeof _licenseData !== 'undefined') _licenseData = null;
+  try { loadLicense(); } catch (_) { /* not ready */ }
+  const cur = [...document.querySelectorAll('main.page > section[role=tabpanel]')].find(x => !x.hidden);
+  const tab = cur ? cur.id.replace(/^tab-/, '') : 'dashboard';
+  goTab(NODE && tab === 'terminal' ? 'dashboard' : tab);
+  try { refreshDash(); } catch (_) { /* not ready */ }
+}
+function openNodeHere(id) { nodePickSet(id); goTab('dashboard'); }
+(function initNodePick() {
+  const sel = $('nodePick');
+  if (sel) sel.onchange = () => nodePickSet(parseInt(sel.value, 10) || null);
+  const back = $('nodeBarBack');
+  if (back) back.onclick = () => nodePickSet(null);
+  nodePickLoad();
+  setInterval(() => { if (!document.hidden) nodePickLoad(); }, 30000);
+})();

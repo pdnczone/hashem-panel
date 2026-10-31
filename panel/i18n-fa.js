@@ -3206,5 +3206,13 @@ window.FA_TEXT = {
 "Manage all your servers from one panel. This panel is the central; the other servers join it as nodes. Every node keeps its own panel and its tunnels keep running when the central is away.": "همه سرورهایتان را از یک پنل مدیریت کنید. این پنل مرکز است و بقیه سرورها به‌صورت نود به آن وصل می‌شوند. هر نود پنل خودش را نگه می‌دارد و وقتی مرکز در دسترس نیست تانل‌هایش کار می‌کنند.",
 "Give the SSH password or a private key.": "رمز SSH یا کلید خصوصی را بدهید.",
 "Any server (installs or updates Hashem, then joins)": "هر سروری (هاشم را نصب یا به‌روز می‌کند و بعد وصل می‌شود)",
-"A server that already has this Hashem version or newer": "سروری که همین نسخه هاشم یا جدیدتر را دارد"
+"A server that already has this Hashem version or newer": "سروری که همین نسخه هاشم یا جدیدتر را دارد",
+"You are managing node": "در حال مدیریت نود هستید:",
+"Changes apply to that server.": "تغییرها روی همان سرور اعمال می‌شوند.",
+"Back to this server": "بازگشت به این سرور",
+"Server shown": "سرور نمایش‌داده‌شده",
+"Open": "باز کردن",
+"The terminal is not relayed": "ترمینال از مرکز در دسترس نیست",
+"Open the node's own panel for its terminal, or pick This server.": "برای ترمینال نود، پنل خود آن را باز کنید یا «این سرور» را انتخاب کنید.",
+"The login, HTTPS, 2FA and terminal settings on this page are this panel's (the central). A node's own are on its own panel; its license and Telegram alerts are relayed.": "تنظیمات ورود، HTTPS، تأیید دومرحله‌ای و ترمینال در این صفحه مال همین پنل (مرکز) است. تنظیمات خود نود در پنل خودش است؛ لایسنس و هشدارهای تلگرام آن از مرکز در دسترس است."
 };

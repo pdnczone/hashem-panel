@@ -1222,3 +1222,10 @@ html[dir="rtl"] .ht-wires { transform: scaleX(-1); }
   .cs-link-acts { grid-column: 2; justify-content: flex-start; }
 }
 .cs-adv { padding: 12px; }
+
+/* nodes: the server picker and the bar while a node is shown */
+.node-pick { width: auto; max-width: 220px; height: 34px; padding: 0 10px; }
+.node-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 14px; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--ac) 45%, var(--ln)); border-radius: var(--r-md, 12px); background: color-mix(in srgb, var(--ac) 8%, var(--s1)); font-size: 13px; }
+.node-bar[hidden] { display: none; }
+.nav-item.node-off { opacity: .45; }
+@media (max-width: 640px) { .node-pick { max-width: 130px; } }

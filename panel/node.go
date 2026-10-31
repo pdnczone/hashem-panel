@@ -72,6 +72,9 @@ type nodeRecord struct {
 	LastSeen int64    `json:"last_seen,omitempty"`
 	Addr     string   `json:"addr,omitempty"` // where it connected from
 	Info     nodeInfo `json:"info"`
+	// LicensePushed: nodeKeyHash of the central's key the central put on
+	// this node (so a renewal replaces it, and a node's own key is left alone)
+	LicensePushed string `json:"license_pushed,omitempty"`
 }
 
 // nodeInvite is a one-time join code; only its hash is kept.
@@ -112,6 +115,8 @@ type nodeLicense struct {
 	Expires  int64    `json:"expires,omitempty"`
 	Locked   bool     `json:"locked,omitempty"` // locked to this machine
 	Features []string `json:"features,omitempty"`
+	KeyHash  string   `json:"key_hash,omitempty"` // nodeKeyHash of its key (never the key)
+	Reported bool     `json:"reported,omitempty"` // a node that reports KeyHash (N2 and later)
 }
 
 var (

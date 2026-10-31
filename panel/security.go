@@ -66,6 +66,14 @@ func requireCSRF(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		if nodeRelayed(r) {
+			// from the central: it checked its own login and CSRF token, and
+			// the request can only come in over the pinned channel
+			// (nodeServeHTTP writes its audit line)
+			next(w, r)
+			return
+		}
+
 		c, err := r.Cookie("gre_session")
 		if err != nil || c.Value == "" {
 			writeAPIError(w, r, "E-AUTH-01", "")

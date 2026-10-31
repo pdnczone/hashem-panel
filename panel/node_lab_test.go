@@ -3,6 +3,7 @@ package main
 import (
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -104,6 +105,17 @@ func TestNodesLab(t *testing.T) {
 		r := nodeFindLocked(1)
 		return nodeSessions[1] != nil && r != nil && r.Info.Version == "helper-v1" && r.Addr != ""
 	})
+
+	// the central relays a page's call to the node over the real network
+	r := httptest.NewRequest("GET", "/c/api/node/1/status", nil)
+	r.SetPathValue("id", "1")
+	r.SetPathValue("path", "status")
+	rw := httptest.NewRecorder()
+	handleNodeRelay(rw, r)
+	if rw.Code != 200 || !strings.Contains(rw.Body.String(), `"relayed":true`) {
+		t.Fatalf("relay over the lab network: %d %s", rw.Code, rw.Body)
+	}
+	t.Logf("ok: a relayed call answered by the node")
 
 	// the path drops packets silently (no reset)
 	fw("-I", "OUTPUT", "-d", ip, "-j", "DROP")
