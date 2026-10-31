@@ -122,9 +122,9 @@ get_component_status() {
             if [[ ! -f "$bin" || ! -f "/etc/systemd/system/${svc}.service" ]]; then
                 echo "NOT_INSTALLED"; return 0
             fi
-            if systemctl is-active --quiet "$svc" 2>/dev/null; then
+            if timeout 5 systemctl is-active --quiet "$svc" 2>/dev/null; then
                 echo "RUNNING"; return 0
-            elif systemctl is-failed --quiet "$svc" 2>/dev/null; then
+            elif timeout 5 systemctl is-failed --quiet "$svc" 2>/dev/null; then
                 echo "BROKEN"; return 0
             elif [[ -f "$bin" ]]; then
                 echo "STOPPED"; return 0
@@ -9480,19 +9480,21 @@ ui_status_refresh() {
     if tunnel_present 2>/dev/null; then
         local up=0 u
         for u in frps frpc backhaul-server backhaul-client gre-tunnel; do
-            systemctl is-active --quiet "$u" 2>/dev/null && up=1
+            timeout 3 systemctl is-active --quiet "$u" 2>/dev/null && { up=1; break; }
         done
         if (( up )); then UI_TUN="${GREEN}up${NC}"; else UI_TUN="${RED}down${NC}"; fi
     fi
     UI_PANEL="${RED}stopped${NC}"
     UI_URL=""
-    if systemctl is-active --quiet gre-panel 2>/dev/null; then
+    if timeout 3 systemctl is-active --quiet gre-panel 2>/dev/null; then
         UI_PANEL="${GREEN}running${NC}"
         UI_URL=$(panel_address)
     fi
     UI_LIC="Free"
-    [[ -x "$PANEL_BIN" ]] && "$PANEL_BIN" license check performance >/dev/null 2>&1 && UI_LIC="${GREEN}Pro${NC}"
-    UI_VER=$("$PANEL_BIN" --version 2>/dev/null | head -n1)
+    # bounded: a panel binary or systemd that does not answer must not hang
+    # the menu before it is drawn (a timeout reads as Free, never as Pro)
+    [[ -x "$PANEL_BIN" ]] && timeout 5 "$PANEL_BIN" license check performance </dev/null >/dev/null 2>&1 && UI_LIC="${GREEN}Pro${NC}"
+    UI_VER=$(timeout 5 "$PANEL_BIN" --version </dev/null 2>/dev/null | head -n1)
 }
 
 # ui_header TITLE [BREADCRUMB]: clears the screen and draws the app bar.
@@ -10346,6 +10348,7 @@ menu_uninstall() {
 # ------------------------------------------------------------- Main menu ----
 menu_loop() {
     ui_init
+    echo -e "${CYAN}[*] Opening the Hashem menu...${NC}"
     trap 'ui_cleanup; echo; exit 0' INT TERM
     trap ui_cleanup EXIT
     local c

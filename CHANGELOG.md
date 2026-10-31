@@ -11,6 +11,7 @@ Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 - Each stop is limited to 15 seconds, and a unit that will not stop is killed, so the uninstall no longer hangs on a stuck unit.
 - The Rescue (`hashem_rescue`) and DNAT (`hashem_dnat`) nftables tables are deleted.
 - Other software's units (Sentinel, x-ui, Xray, sing-box, WireGuard) are not touched.
+- **The installer and `hashem` no longer hang before the menu.** When the panel was already installed, the installer opened the menu, and the status line at its top waited without a limit on `systemctl` and on the panel binary. Each of those checks now has a few seconds at most; a license check that does not answer counts as Free.
 
 ## v3.0.0 — 2026-10-31
 
