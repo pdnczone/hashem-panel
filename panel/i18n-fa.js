@@ -3205,5 +3205,6 @@ window.FA_TEXT = {
 "days ago": "روز پیش",
 "e.g. Germany 1": "مثلاً آلمان ۱",
 "until": "تا",
-"Manage all your servers from one panel. This panel is the central; the other servers join it as nodes. Every node keeps its own panel and its tunnels keep running when the central is away.": "همه سرورهایتان را از یک پنل مدیریت کنید. این پنل مرکز است و بقیه سرورها به‌صورت نود به آن وصل می‌شوند. هر نود پنل خودش را نگه می‌دارد و وقتی مرکز در دسترس نیست تانل‌هایش کار می‌کنند."
+"Manage all your servers from one panel. This panel is the central; the other servers join it as nodes. Every node keeps its own panel and its tunnels keep running when the central is away.": "همه سرورهایتان را از یک پنل مدیریت کنید. این پنل مرکز است و بقیه سرورها به‌صورت نود به آن وصل می‌شوند. هر نود پنل خودش را نگه می‌دارد و وقتی مرکز در دسترس نیست تانل‌هایش کار می‌کنند.",
+"Give the SSH password or a private key.": "رمز SSH یا کلید خصوصی را بدهید."
 };

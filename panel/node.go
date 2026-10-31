@@ -302,6 +302,9 @@ func nodeTLSConfig(server bool, verify func(peerKey string) error) (*tls.Config,
 		MinVersion:         tls.VersionTLS13,
 		Certificates:       []tls.Certificate{*cert},
 		InsecureSkipVerify: true, // replaced by VerifyPeerCertificate: the key is pinned
+		// no resumption: every connection is a full handshake, so the key is
+		// always checked and always in the connection state
+		SessionTicketsDisabled: true,
 		VerifyPeerCertificate: func(raw [][]byte, _ [][]*x509.Certificate) error {
 			k, err := nodePeerKey(raw)
 			if err != nil {

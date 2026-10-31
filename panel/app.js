@@ -11907,7 +11907,9 @@ function openNodeSSH() {
     password: $('nsPass').value, ssh_key: $('nsKey').value, name: $('ndName').value, url: $('ndUrl').value });
   custModal(tr('', 'Add with SSH'), html, tr('', 'Connect'), async () => {
     const body = req();
-    const r = await api('/api/nodes', body);
+    if (!body.password && !body.ssh_key) throw new Error(tr('', 'Give the SSH password or a private key.'));
+    // the first call only reads the host key: no password or key in it
+    const r = await api('/api/nodes', Object.assign({}, body, { password: '', ssh_key: '' }));
     if (!r.host_key) return;
     // the server's host key, before any secret is sent: the user confirms it
     custModal(tr('', 'Is this the right server?'), `<div class="qs-hint">${esc(tr('', 'The server at {h} has this SSH host key. If you are not sure, compare it with: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub on the server.').replace('{h}', body.host))}</div>

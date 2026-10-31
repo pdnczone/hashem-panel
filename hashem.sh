@@ -11404,11 +11404,19 @@ cli_node_join() {
     while [[ $# -gt 0 ]]; do
         a="$1"
         case "$a" in
-            --name) name="${2:-}"; shift 2 ;;
-            -h|--help) echo "Usage: hashem node-join <hn1.code> [--name NAME]"; return 0 ;;
+            --name)
+                [[ $# -ge 2 ]] || { echo -e "${RED}[!] --name needs a value${NC}"; return 1; }
+                name="$2"; shift 2 ;;
+            -h|--help) echo "Usage: hashem node-join <hn1.code | -> [--name NAME]   (-: the code on stdin)"; return 0 ;;
             *) [[ -z "$code" ]] && code="$a"; shift ;;
         esac
     done
+    # "-": the code on stdin (the central's SSH setup sends it so: not in
+    # the process list). Read before anything else can read stdin.
+    if [[ "$code" == "-" ]]; then
+        IFS= read -r code || true
+        code="${code//[[:space:]]/}"
+    fi
     if [[ "$code" != hn1.* ]]; then
         echo -e "${RED}[!] Usage: hashem node-join <hn1.code> [--name NAME] (the central's Nodes page gives the line)${NC}"
         return 1
@@ -11424,7 +11432,9 @@ cli_node_join() {
         echo -e "${RED}[!] The installed panel has no node support (is the update channel on a release that has it?).${NC}"
         return 1
     fi
-    if [[ -n "$name" ]]; then "$PANEL_BIN" node join "$code" --name "$name"; else "$PANEL_BIN" node join "$code"; fi
+    # on stdin to the panel too: printf is a builtin, so the code is in no argv
+    if [[ -n "$name" ]]; then printf '%s\n' "$code" | "$PANEL_BIN" node join - --name "$name"
+    else printf '%s\n' "$code" | "$PANEL_BIN" node join -; fi
 }
 
 cli_cluster() {

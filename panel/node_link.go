@@ -12,6 +12,7 @@ package main
 // (central) = this node was removed: it goes back to standalone.
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/binary"
@@ -35,6 +36,9 @@ import (
 
 const (
 	nodeFrameMax    = 16 << 20 // one frame
+	nodeFirstMax    = 4 << 10  // the first frame (enroll / hello), before anything is known
+	nodePreAuthMax  = 32       // connections not past their first frame yet
+	nodePreAuthIP   = 4        // ... from one address
 	nodeSeenFlush   = 5 * time.Minute
 	nodeReqParallel = 8
 )
@@ -142,7 +146,9 @@ func (n *nodeConn) send(f nodeFrame) error {
 	return err
 }
 
-func (n *nodeConn) recv(timeout time.Duration) (nodeFrame, error) {
+// recv reads one frame of at most max bytes. The buffer grows with what
+// arrives, not with the size the header claims.
+func (n *nodeConn) recv(timeout time.Duration, max int) (nodeFrame, error) {
 	var f nodeFrame
 	if timeout > 0 {
 		_ = n.c.SetReadDeadline(time.Now().Add(timeout))
@@ -154,14 +160,14 @@ func (n *nodeConn) recv(timeout time.Duration) (nodeFrame, error) {
 		return f, err
 	}
 	size := binary.BigEndian.Uint32(hdr[:])
-	if size == 0 || size > nodeFrameMax {
+	if size == 0 || size > uint32(max) {
 		return f, fmt.Errorf("bad frame size %d", size)
 	}
-	b := make([]byte, size)
-	if _, err := io.ReadFull(n.c, b); err != nil {
+	var buf bytes.Buffer
+	if _, err := io.CopyN(&buf, n.c, int64(size)); err != nil {
 		return f, err
 	}
-	if err := json.Unmarshal(b, &f); err != nil {
+	if err := json.Unmarshal(buf.Bytes(), &f); err != nil {
 		return f, fmt.Errorf("bad frame: %v", err)
 	}
 	return f, nil
@@ -244,6 +250,64 @@ var nodeUpgrader = websocket.Upgrader{
 	CheckOrigin: func(*http.Request) bool { return true },
 }
 
+// Connections that have not sent their first frame yet: capped, in all and
+// per address, so a flood of half-open links cannot use up the central.
+var nodePreAuth = struct {
+	sync.Mutex
+	n    int
+	byIP map[string]int
+}{byIP: map[string]int{}}
+
+func nodePreAuthTake(ip string) bool {
+	nodePreAuth.Lock()
+	defer nodePreAuth.Unlock()
+	if nodePreAuth.n >= nodePreAuthMax || nodePreAuth.byIP[ip] >= nodePreAuthIP {
+		return false
+	}
+	nodePreAuth.n++
+	nodePreAuth.byIP[ip]++
+	return true
+}
+
+func nodePreAuthDone(ip string) {
+	nodePreAuth.Lock()
+	defer nodePreAuth.Unlock()
+	nodePreAuth.n--
+	if nodePreAuth.byIP[ip]--; nodePreAuth.byIP[ip] <= 0 {
+		delete(nodePreAuth.byIP, ip)
+	}
+}
+
+// nodeRawCerts is the other end's certificate chain as sent.
+func nodeRawCerts(cs tls.ConnectionState) [][]byte {
+	raw := make([][]byte, 0, len(cs.PeerCertificates))
+	for _, c := range cs.PeerCertificates {
+		raw = append(raw, c.Raw)
+	}
+	return raw
+}
+
+// nodeAuditEvery: one refused-enroll line per address a minute (a flood
+// would rotate the real entries out of the audit log).
+var nodeAuditSeen = struct {
+	sync.Mutex
+	at map[string]time.Time
+}{at: map[string]time.Time{}}
+
+func nodeAuditOnce(ip string) bool {
+	nodeAuditSeen.Lock()
+	defer nodeAuditSeen.Unlock()
+	now := time.Now()
+	if t, ok := nodeAuditSeen.at[ip]; ok && now.Sub(t) < time.Minute {
+		return false
+	}
+	if len(nodeAuditSeen.at) > 1000 {
+		nodeAuditSeen.at = map[string]time.Time{}
+	}
+	nodeAuditSeen.at[ip] = now
+	return true
+}
+
 // handleNodeLink is the central's end of the channel. Anything that is not a
 // node's websocket on a central gets a plain 404.
 func handleNodeLink(w http.ResponseWriter, r *http.Request) {
@@ -252,33 +316,54 @@ func handleNodeLink(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	addr := ClientIP(r)
+	if !nodePreAuthTake(addr) {
+		http.Error(w, "busy", http.StatusServiceUnavailable)
+		return
+	}
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			nodePreAuthDone(addr)
+		}
+	}
+	defer release()
 	ws, err := nodeUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
-	_ = ws.UnderlyingConn().SetDeadline(time.Time{}) // the server's deadlines do not apply to a hijacked conn
+	// one deadline for the TLS handshake and the first frame (the server's
+	// own deadlines do not apply to a hijacked conn)
+	deadline := time.Now().Add(nodeHandshakeTO)
+	_ = ws.UnderlyingConn().SetDeadline(deadline)
 	ws.SetReadLimit(nodeFrameMax + 64<<10)
-	addr := ClientIP(r)
-	var peerKey string
-	tc, err := nodeTLSConfig(true, func(k string) error { peerKey = k; return nil })
+	tc, err := nodeTLSConfig(true, func(string) error { return nil }) // any key here: enroll or hello decides
 	if err != nil {
 		_ = ws.Close()
 		log.Printf("nodes: %v", err)
 		return
 	}
 	tlsc := tls.Server(&wsStream{ws: ws}, tc)
-	_ = tlsc.SetDeadline(time.Now().Add(nodeHandshakeTO))
+	_ = tlsc.SetDeadline(deadline)
 	if err := tlsc.Handshake(); err != nil {
 		_ = tlsc.Close()
 		return
 	}
-	_ = tlsc.SetDeadline(time.Time{})
+	peerKey, err := nodePeerKey(nodeRawCerts(tlsc.ConnectionState()))
+	if err != nil || peerKey == "" {
+		_ = tlsc.Close()
+		return
+	}
 	nc := &nodeConn{c: tlsc}
-	first, err := nc.recv(nodeHandshakeTO)
+	first, err := nc.recv(time.Until(deadline), nodeFirstMax)
 	if err != nil {
 		_ = tlsc.Close()
 		return
 	}
+	_ = tlsc.SetDeadline(time.Time{})
+	_ = ws.UnderlyingConn().SetDeadline(time.Time{})
+	release()
 	switch first.T {
 	case "enroll":
 		nodeServeEnroll(nc, first, peerKey, addr)
@@ -301,7 +386,9 @@ func nodeServeEnroll(nc *nodeConn, f nodeFrame, key, addr string) {
 	}
 	nodesMu.Unlock()
 	if err != nil {
-		LogSecurityAudit("node_enroll_refused", "node", addr, err.Error())
+		if nodeAuditOnce(addr) {
+			LogSecurityAudit("node_enroll_refused", "node", addr, err.Error())
+		}
 		_ = nc.send(nodeFrame{T: "refused", Reason: err.Error()})
 		return
 	}
@@ -334,7 +421,7 @@ func nodeServeHello(nc *nodeConn, f nodeFrame, key, addr string) {
 	}
 	go nodeInfoLoop(s)
 	for {
-		fr, err := nc.recv(0)
+		fr, err := nc.recv(0, nodeFrameMax)
 		if err != nil {
 			break
 		}
@@ -391,6 +478,7 @@ func nodeInfoLoop(s *nodeSession) {
 		}
 		var info nodeInfo
 		if json.Unmarshal(raw, &info) == nil {
+			info = nodeInfoClean(info)
 			now := time.Now()
 			nodesMu.Lock()
 			if nodeSessions[s.id] == s {
@@ -513,7 +601,7 @@ func nodeJoin(ctx context.Context, code, name string) (nodeSelf, error) {
 	if err := nc.send(nodeFrame{T: "enroll", Proto: nodeProto, Secret: c.Secret, Name: name, Version: panelVersion}); err != nil {
 		return nodeSelf{}, err
 	}
-	f, err := nc.recv(nodeHandshakeTO)
+	f, err := nc.recv(nodeHandshakeTO, nodeFirstMax)
 	if err != nil {
 		return nodeSelf{}, fmt.Errorf("the central did not answer: %v", err)
 	}
@@ -608,7 +696,7 @@ func nodeRunOnce(s nodeSelf) string {
 		nodeLinkSet(false, err.Error())
 		return "fail"
 	}
-	f, err := nc.recv(nodeHandshakeTO)
+	f, err := nc.recv(nodeHandshakeTO, nodeFirstMax)
 	if err != nil {
 		nodeLinkSet(false, "the central did not answer: "+err.Error())
 		return "fail"
@@ -660,7 +748,7 @@ func nodeRunOnce(s nodeSelf) string {
 	}()
 	sem := make(chan struct{}, nodeReqParallel)
 	for {
-		fr, err := nc.recv(nodeIdleTO)
+		fr, err := nc.recv(nodeIdleTO, nodeFrameMax)
 		if err != nil {
 			return "ok"
 		}
@@ -726,6 +814,26 @@ func pctOf(v any) float64 {
 		}
 	}
 	return -1
+}
+
+// nodeInfoClean caps what a node reports before the central keeps it.
+func nodeInfoClean(i nodeInfo) nodeInfo {
+	cut := func(s string, n int) string {
+		if len(s) <= n {
+			return s
+		}
+		r := []rune(s[:n])
+		return string(r[:len(r)-1])
+	}
+	i.Version, i.Hostname, i.PublicIP, i.Side = cut(i.Version, 64), cut(i.Hostname, 128), cut(i.PublicIP, 64), cut(i.Side, 16)
+	i.MachineHash, i.License.Customer = cut(i.MachineHash, 64), cut(i.License.Customer, 128)
+	if len(i.License.Features) > 32 {
+		i.License.Features = i.License.Features[:32]
+	}
+	for k, f := range i.License.Features {
+		i.License.Features[k] = cut(f, 64)
+	}
+	return i
 }
 
 var nodeInfoFn = nodeLocalInfo // tests

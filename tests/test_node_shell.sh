@@ -20,7 +20,7 @@ if [[ "\$1" == "--help" ]]; then
   [[ "$1" == new ]] && echo "Usage: gre-panel [license [status] | node [status|join CODE|leave]]" || echo "Usage: gre-panel [license [status]]"
   exit 0
 fi
-echo "panel \$*" >> "$LOG"
+if [[ "\$1 \$2 \$3" == "node join -" ]]; then read -r c; echo "panel \$* <\$c" >> "$LOG"; else echo "panel \$*" >> "$LOG"; fi
 FAKE
     chmod +x "$PANEL_BIN"
 }
@@ -33,15 +33,21 @@ check "nothing was run for it" "" "$(cat "$LOG")"
 
 : > "$LOG"; rm -f "$PANEL_BIN"
 cli_node_join hn1.abc --name "DE 1" >/dev/null
-check "no panel: install, then join" "install_panel_smart|panel node join hn1.abc --name DE 1" "$(paste -sd'|' "$LOG")"
+check "no panel: install, then join" "install_panel_smart|panel node join - --name DE 1 <hn1.abc" "$(paste -sd'|' "$LOG")"
 
 : > "$LOG"; fake_panel old
 cli_node_join hn1.abc >/dev/null
-check "an old panel: update, then join" "install_panel|panel node join hn1.abc" "$(paste -sd'|' "$LOG")"
+check "an old panel: update, then join" "install_panel|panel node join - <hn1.abc" "$(paste -sd'|' "$LOG")"
 
 : > "$LOG"; fake_panel new
 cli_node_join hn1.abc >/dev/null
-check "a new panel: join only" "panel node join hn1.abc" "$(paste -sd'|' "$LOG")"
+check "a new panel: join only, the code on stdin" "panel node join - <hn1.abc" "$(paste -sd'|' "$LOG")"
+
+: > "$LOG"
+printf 'hn1.fromstdin\n' | cli_node_join - --name x >/dev/null
+check "the code read from stdin (-)" "panel node join - --name x <hn1.fromstdin" "$(paste -sd'|' "$LOG")"
+: > "$LOG"
+check "--name without a value: an error, not a hang" 1 "$(timeout 5 bash -c "$(declare -f cli_node_join panel_supports); RED= NC=; PANEL_BIN=$PANEL_BIN; cli_node_join hn1.abc --name" >/dev/null 2>&1; echo $?)"
 
 : > "$LOG"; fake_panel old
 install_panel() { echo "install_panel" >> "$LOG"; }  # the update brings no node support
