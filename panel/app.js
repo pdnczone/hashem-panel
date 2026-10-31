@@ -12119,7 +12119,7 @@ function nodeFleetRender() {
     const st = !s.online ? ['err', tr('', 'Offline')] : s.held ? ['warn', tr('', 'not approved')] : s.error ? ['err', tr('', 'Not read')]
       : !s.role ? ['info', tr('', 'Not set up')] : s.health === 'healthy' ? ['ok', tr('', 'Healthy')] : s.health === 'degraded' ? ['warn', tr('', 'Degraded')] : s.health === 'down' ? ['err', tr('', 'Down')] : ['info', s.role ? String(s.health || '—') : tr('', 'Not set up')];
     const tr0 = s.traffic || {};
-    return `<div class="lm-row${s.online ? '' : ' cut'}"><div class="lm-head"><div class="lm-name"><b>${esc(s.name)}</b>
+    return `<div class="lm-row${s.online ? '' : ' cut'}"><div class="lm-head"><div class="lm-name"><b>${esc(s.id === 0 ? ntName(0) : s.name)}</b>
       <small class="lm-num">${esc([s.public || '', s.role || '', s.version ? displayVer(s.version) : ''].filter(Boolean).join(' · '))}</small></div>
       <span class="badge ${st[0]}">${esc(st[1])}</span></div>
       ${s.error ? `<div class="xr-err">${esc(s.error)}</div>` : ''}
