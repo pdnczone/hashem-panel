@@ -217,7 +217,7 @@ func resetTrafficState(t *testing.T) {
 	histMu.Unlock()
 	trafficStateMu.Lock()
 	trafficStateInit, lifetimeUp, lifetimeDown, lastRawUp, lastRawDown, lastRawIf = false, 0, 0, 0, 0, nil
-	lastSampleAt, speedDeltaUp, speedDeltaDown, currentSpeedUp, currentSpeedDown = time.Time{}, 0, 0, 0, 0
+	lastSampleAt, lastReadAt, speedDeltaUp, speedDeltaDown, currentSpeedUp, currentSpeedDown = time.Time{}, time.Time{}, 0, 0, 0, 0
 	trafficStateMu.Unlock()
 	t.Cleanup(func() { configDir = old })
 }

@@ -37,6 +37,7 @@ type histRing struct {
 	lastT int64
 	rx    uint64
 	tx    uint64
+	cT    int64 // when rx/tx were read (points without counters move lastT only)
 	haveC bool
 }
 
@@ -98,12 +99,14 @@ func (h *histStore) recordSample(name string, now time.Time, state string, ms fl
 	}
 	p := histPoint{T: t, State: stateNum(state), Ms: ms}
 	if rx != nil && tx != nil {
-		if r.haveC && r.lastT != 0 && t > r.lastT && *rx >= r.rx && *tx >= r.tx {
-			dt := float64(t - r.lastT)
+		// over the time since the counters were last read, not since the
+		// last point: points without counters in between would inflate it
+		if r.haveC && t > r.cT && *rx >= r.rx && *tx >= r.tx {
+			dt := float64(t - r.cT)
 			p.RxBps = float64(*rx-r.rx) / dt
 			p.TxBps = float64(*tx-r.tx) / dt
 		}
-		r.rx, r.tx, r.haveC = *rx, *tx, true
+		r.rx, r.tx, r.cT, r.haveC = *rx, *tx, t, true
 	}
 	r.lastT = t
 	r.add(p)

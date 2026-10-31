@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -237,6 +238,7 @@ var (
 	lifetimeDown     uint64
 	trafficStateInit bool
 	lastSampleAt     time.Time // when the counters of the last speed window were read
+	lastReadAt       time.Time // when the last reading taken into the totals was read
 	lastStateSave    time.Time
 	speedDeltaUp     uint64
 	speedDeltaDown   uint64
@@ -258,7 +260,22 @@ type persistentTrafficState struct {
 
 func trafficStateFile() string { return filepath.Join(configDir, "traffic_state.json") }
 
-func loadTrafficStateLocked() {
+// trafficHistoryLast is the last lifetime total in traffic.json.
+func trafficHistoryLast() (up, down uint64) {
+	histMu.Lock()
+	defer histMu.Unlock()
+	hist := loadHistory()
+	for i := len(hist) - 1; i >= 0; i-- {
+		if hist[i].Up != nil && hist[i].Down != nil {
+			return *hist[i].Up, *hist[i].Down
+		}
+	}
+	return 0, 0
+}
+
+// loadTrafficStateLocked reads traffic_state.json once; histUp and
+// histDown (trafficHistoryLast) are the totals when it has none.
+func loadTrafficStateLocked(histUp, histDown uint64) {
 	if trafficStateInit {
 		return
 	}
@@ -281,14 +298,7 @@ func loadTrafficStateLocked() {
 	}
 
 	// 2. Fallback to latest sample in traffic.json history
-	hist := loadHistory()
-	for i := len(hist) - 1; i >= 0; i-- {
-		if hist[i].Up != nil && hist[i].Down != nil {
-			lifetimeUp = *hist[i].Up
-			lifetimeDown = *hist[i].Down
-			break
-		}
-	}
+	lifetimeUp, lifetimeDown = histUp, histDown
 }
 
 func saveTrafficStateLocked() {
@@ -347,6 +357,10 @@ func invalidatePeerIfsCache() {
 	peerIfsMu.Unlock()
 }
 
+// custBuyerGRERe: the GRE of a link bought from a seller
+// (tools/hashem-customer.sh gre_if).
+var custBuyerGRERe = regexp.MustCompile(`^hcc[0-9a-f]{8}$`)
+
 // isTunnelInterface determines if an interface is a GRE or Backhaul tunnel.
 func isTunnelInterface(ifname string) bool {
 	if ifname == "lo" || ifname == "gre0" || ifname == "gretap0" || ifname == "erspan0" {
@@ -356,6 +370,11 @@ func isTunnelInterface(ifname string) bool {
 		strings.HasPrefix(ifname, "br-") || strings.HasPrefix(ifname, "dummy") ||
 		strings.HasPrefix(ifname, "eth") || strings.HasPrefix(ifname, "ens") ||
 		strings.HasPrefix(ifname, "enp") || strings.HasPrefix(ifname, "wl") {
+		return false
+	}
+	// sold tunnels inside GRE (customers_gre.go: hcg* here, hcc* on a
+	// customer's server): their traffic is the customer's, billed apart
+	if custGRENameRe.MatchString(ifname) || custBuyerGRERe.MatchString(ifname) {
 		return false
 	}
 	if strings.HasPrefix(ifname, "gre-") || strings.HasPrefix(ifname, "tun") || ifname == spoofIface {
@@ -453,16 +472,31 @@ func trafficSample(devData string, carrierRx, carrierTx uint64, carrierOK bool, 
 		cur[carrierKey] = [2]uint64{carrierRx, carrierTx}
 	}
 
+	// The fallback for a missing state file is in the history, which has
+	// its own lock: read it first (histMu is always taken before
+	// trafficStateMu, as in flushHistoryIfDirty).
+	trafficStateMu.Lock()
+	need := !trafficStateInit
+	trafficStateMu.Unlock()
+	var fbUp, fbDown uint64
+	if need {
+		fbUp, fbDown = trafficHistoryLast()
+	}
+
 	trafficStateMu.Lock()
 	defer trafficStateMu.Unlock()
 
 	first := !trafficStateInit
 	if first {
-		loadTrafficStateLocked()
+		loadTrafficStateLocked(fbUp, fbDown)
 	}
-	if !lastSampleAt.IsZero() && at.Before(lastSampleAt) {
+	// lastReadAt, not lastSampleAt: the speed window only closes after a
+	// second, and a stale reading inside it looked like every counter went
+	// down (each interface's whole count was taken again).
+	if !lastReadAt.IsZero() && !at.After(lastReadAt) {
 		return trafficResultLocked() // out of order: already counted past it
 	}
+	lastReadAt = at
 
 	// Deltas are taken per interface. Comparing one summed counter made the
 	// chart spike: when one of several tunnels dropped, the smaller sum was
@@ -861,7 +895,11 @@ func flushHistoryIfDirty() {
 		saveHistoryLocked()
 	}
 	trafficStateMu.Lock()
-	saveTrafficStateLocked()
+	// before the first reading the totals are not loaded yet: saving them
+	// would write zeros over the saved state
+	if trafficStateInit {
+		saveTrafficStateLocked()
+	}
 	trafficStateMu.Unlock()
 }
 
