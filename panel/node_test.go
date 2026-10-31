@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -112,6 +113,25 @@ func TestNodeHelperProcess(t *testing.T) {
 			time.Sleep(300 * time.Millisecond) // slow: more of these than the node's slots
 			writeJSON(w, "done")
 		}))
+		// the server end of a tunnel (node_tunnel.go), as far as the central sees it
+		m.HandleFunc("GET /x/api/setup/plan", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+			p := setupPlan{Public: "198.51.100.1", RelayPort: 7001, Peers: []setupPlanPeer{}, Uplinks: []setupPlanUplink{}, GreUsed: []string{}}
+			if b, err := os.ReadFile(filepath.Join(configDir, "tun-made")); err == nil {
+				p.Exists, p.Side = true, "iran"
+				p.Peers = append(p.Peers, setupPlanPeer{ID: 0, RemotePub: string(b)})
+			}
+			writeJSON(w, p)
+		}))
+		m.HandleFunc("POST /x/api/setup", requireAuth(requireCSRF(func(w http.ResponseWriter, r *http.Request) {
+			var b map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			_ = os.WriteFile(filepath.Join(configDir, "tun-made"), []byte(fmt.Sprint(b["remote_public"])), 0600)
+			writeJSON(w, map[string]string{"status": "ok", "bundle": "hsh1_lab_" + fmt.Sprint(b["frp_port"])})
+		})))
+		m.HandleFunc("POST /x/api/action", requireAuth(requireCSRF(func(w http.ResponseWriter, r *http.Request) {
+			_ = os.Remove(filepath.Join(configDir, "tun-made"))
+			writeJSON(w, map[string]string{"status": "ok"})
+		})))
 		m.HandleFunc("GET /x/api/access", requireAuth(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, "secret") }))
 		return m
 	}
@@ -972,5 +992,84 @@ func TestNodeViewRedact(t *testing.T) {
 	defer func() { cfg.BasePath = old }()
 	if got := routeLabel("/b/api/nv/" + tok + "/status"); strings.Contains(got, tok) {
 		t.Fatalf("route label: %s", got)
+	}
+}
+
+// A tunnel made by the central over a real channel: node 1 is the Iran end,
+// the central itself (id 0) the foreign end.
+func TestNodeTunnelOverChannel(t *testing.T) {
+	central := nodeTestCentral(t)
+	nd := t.TempDir()
+	if out, err := nodeHelper(t, nd, "join", nodeTestInvite(t, central, "iran"), 0).CombinedOutput(); err != nil {
+		t.Fatalf("join: %v\n%s", err, out)
+	}
+	srv := nodeHelper(t, nd, "serve", "", 30*time.Second)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = srv.Process.Kill(); _ = srv.Wait() }()
+	nodeTestWait(t, "the node online", func() bool { return nodeSessionFor(1) != nil })
+	// this panel's own handlers, as far as the foreign end needs them
+	var got []string
+	var gmu sync.Mutex
+	failClient := false
+	oldMux, oldInfo := nodeRelayMux, nodeInfoFn
+	t.Cleanup(func() { nodeRelayMux, nodeInfoFn = oldMux, oldInfo })
+	m := http.NewServeMux()
+	m.HandleFunc("GET /x/api/setup/plan", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, setupPlan{Public: "192.0.2.7", RelayPort: 7001, Peers: []setupPlanPeer{}, Uplinks: []setupPlanUplink{}, GreUsed: []string{}})
+	}))
+	m.HandleFunc("POST /x/api/setup", requireAuth(requireCSRF(func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		gmu.Lock()
+		got = append(got, fmt.Sprint(b["role"], " ", b["token"]))
+		gmu.Unlock()
+		if failClient {
+			writeAPIError(w, r, "E-INSTALL-02", "no route to the Iran server")
+			return
+		}
+		writeJSON(w, map[string]string{"status": "ok"})
+	})))
+	m.HandleFunc("POST /x/api/action", requireAuth(requireCSRF(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, "ok") })))
+	nodeRelayMux = func() http.Handler { return m }
+	old := cfg.BasePath
+	cfg.BasePath = "x"
+	t.Cleanup(func() { cfg.BasePath = old })
+
+	run := func(q nodeTunReq) nodeTunJob {
+		id, err := nodeTunStart("create", q.Server, q.Client, func(j *nodeTunJob) error { return nodeTunCreate(context.Background(), j, q) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 500; i++ {
+			for _, j := range nodeTunJobsView() {
+				if j.ID == id && j.State != "running" {
+					return j
+				}
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatal("the job did not end")
+		return nodeTunJob{}
+	}
+	q := nodeTunReq{Server: 1, Client: 0, Engine: "frp", Ports: "443"}
+	if j := run(q); j.State != "done" {
+		t.Fatalf("create: %+v", j)
+	}
+	if b, _ := os.ReadFile(filepath.Join(nd, "tun-made")); string(b) != "192.0.2.7" {
+		t.Fatalf("the server end on the node: %q", b)
+	}
+	if len(got) != 1 || got[0] != "foreign hsh1_lab_7001" {
+		t.Fatalf("the foreign end got: %v", got)
+	}
+	// the foreign end fails: the node's end is removed again
+	_ = os.Remove(filepath.Join(nd, "tun-made"))
+	failClient = true
+	if j := run(q); j.State != "failed" || !strings.Contains(j.Log, "no route") || !strings.Contains(j.Log, "removed again") {
+		t.Fatalf("rollback: %+v", j)
+	}
+	if _, err := os.Stat(filepath.Join(nd, "tun-made")); err == nil {
+		t.Fatal("the node's end stayed after the rollback")
 	}
 }

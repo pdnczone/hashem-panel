@@ -442,7 +442,7 @@ function goTab(name) {
   if (name === 'spoof') loadSpoof();
   if (name === 'xray') loadXray();
   if (name === 'customers') loadCustomers();
-  if (name === 'nodes') loadNodes();
+  if (name === 'nodes') { _ntLinks = null; loadNodes().then(loadNodeTunnels); }
   if (name === 'update') loadVersion();
   if (name === 'logs') { refreshLogPeers(); loadLogs(); loadErrors(); armLogFollow(); }
   if (name === 'terminal') termOnShow();
@@ -11913,6 +11913,7 @@ function nodeJobRow(j) {
 }
 function renderNodes(d) {
   _nodes = d;
+  renderNodeTunnels(d);
   const acts = $('nodeActs'), body = $('nodeBody'), err = $('nodeErr');
   if (err) { err.textContent = d.error || ''; err.classList.toggle('hidden', !d.error); }
   if (!body) return;
@@ -12034,6 +12035,108 @@ async function nodeLeave() {
 }
 async function nodeCancelInvites() {
   try { renderNodes(await api('/api/nodes', { action: 'cancel-invites' })); } catch (e) { toastErr(tr('', 'Failed'), e.message); }
+}
+
+// ---- tunnels between servers (node_tunnel.go): made and removed from here ----
+let _ntLinks = null, _ntLinkErrs = [], _ntOpen = {}, _ntJobsRunning = false;
+const ntName = id => id === 0 ? tr('', 'This server (the central)') : ((nodeFind(id) || {}).name || ('#' + id));
+function ntServerOpts(sel) {
+  const ids = [0].concat(((_nodes && _nodes.nodes) || []).filter(n => n.online).map(n => n.id));
+  return ids.map(id => `<option value="${Number(id)}"${id === sel ? ' selected' : ''}>${esc(ntName(id))}</option>`).join('');
+}
+function ntJobRow(j) {
+  const st = j.state === 'done' ? ['ok', tr('', 'Done')] : j.state === 'failed' ? ['err', tr('', 'Failed')] : ['info', tr('', 'Working…')];
+  const open = j.id in _ntOpen ? _ntOpen[j.id] : j.state !== 'done';
+  const what = j.kind === 'remove' ? tr('', 'Removing a tunnel') : tr('', 'Making a tunnel');
+  return `<details class="lm-row"${open ? ' open' : ''} ontoggle="_ntOpen[${Number(j.id)}] = this.open"><summary class="lm-head"><div class="lm-name"><b>${esc(what)}</b>
+    <small>${esc(ntName(j.server))} → ${esc(ntName(j.client))}</small></div><span class="badge ${st[0]}">${esc(st[1])}</span></summary>
+    <pre class="cs-code">${esc(j.log || '')}</pre></details>`;
+}
+function ntLinkRow(l) {
+  return `<div class="lm-row"><div class="lm-head"><div class="lm-name"><b>${esc(ntName(l.server))} → ${esc(ntName(l.client))}</b>
+    <small class="lm-num">${esc([l.server_ip + ' → ' + l.client_ip, l.engine || 'frp', l.name || ''].filter(Boolean).join(' · '))}</small></div>
+    <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30 u-c-er" onclick="ntRemove(${Number(l.server)}, ${Number(l.client)}, ${Number(l.peer_id)}, ${Number(l.hub)})">${esc(tr('', 'Remove both ends'))}</button></div></div>`;
+}
+function ntLeftRow(l) {
+  return `<div class="lm-row cut"><div class="lm-head"><div class="lm-name"><b>${esc(tr('', 'Left over'))}: ${esc(ntName(l.server))}</b>
+    <small>${esc(tr('', 'Its client end failed and it could not be removed'))} · ${esc(l.client_ip)}</small></div></div>
+    <div class="xr-err">${esc(l.error || '')}</div>
+    <div class="lm-acts"><button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="ntRemoveLeft(${Number(l.id)})">${esc(tr('', 'Remove it now'))}</button>
+    <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="ntForget(${Number(l.id)})">${esc(tr('', 'Removed by hand'))}</button></div></div>`;
+}
+function renderNodeTunnels(d) {
+  const card = $('ntCard'), body = $('ntBody');
+  if (!card || !body) return;
+  card.hidden = d.role !== 'central';
+  if (card.hidden) return;
+  const jobs = (d.tunnel_jobs || []).filter(j => j.state === 'running' || Date.now() / 1000 - (j.ended || 0) < 1800);
+  const running = jobs.some(j => j.state === 'running');
+  if (_ntJobsRunning && !running) loadNodeTunnels(); // a job ended: the list changed
+  _ntJobsRunning = running;
+  const links = _ntLinks || [];
+  let html = jobs.map(ntJobRow).join('') + (d.left || []).map(ntLeftRow).join('');
+  if (_ntLinks === null) html += '<div class="ent-skel u-h-14"></div>';
+  else if (!links.length) html += `<div class="qs-hint">${esc(tr('', 'No tunnel between these servers yet.'))}</div>`;
+  html += links.map(ntLinkRow).join('');
+  if (_ntLinkErrs.length) html += `<div class="qs-hint">${esc(tr('', 'Not read'))}: ${esc(_ntLinkErrs.join(' · '))}</div>`;
+  body.innerHTML = `<div class="lm-list">${html}</div>`;
+}
+async function loadNodeTunnels() {
+  if (!_nodes || _nodes.role !== 'central') return;
+  try {
+    const r = await api('/api/nodes', { action: 'tunnel-list' });
+    _ntLinks = r.links || [];
+    _ntLinkErrs = r.errors || [];
+  } catch (e) { _ntLinks = []; _ntLinkErrs = [e.message]; }
+  renderNodeTunnels(_nodes);
+}
+function openNodeTunnel() {
+  const nodes = ((_nodes && _nodes.nodes) || []).filter(n => n.online);
+  const iran = nodes.find(n => n.info && n.info.side === 'iran'), out = nodes.find(n => !(n.info && n.info.side === 'iran'));
+  const html = `<div class="xr-fields">
+      <div class="xr-field"><label class="qs-label" for="ntS">${esc(tr('', 'Iran server (users connect to it)'))}</label><select class="hashem-input" id="ntS">${ntServerOpts(iran ? iran.id : 0)}</select></div>
+      <div class="xr-field"><label class="qs-label" for="ntC">${esc(tr('', 'Foreign server'))}</label><select class="hashem-input" id="ntC">${ntServerOpts(out ? out.id : -1)}</select></div>
+    </div>
+    <div class="xr-fields">
+      <div class="xr-field"><label class="qs-label" for="ntE">${esc(tr('', 'Engine'))}</label><select class="hashem-input" id="ntE">
+        <option value="frp">FRP</option><option value="backhaul">Backhaul</option><option value="gre-backhaul">Backhaul + GRE</option></select></div>
+      <div class="xr-field"><label class="qs-label" for="ntT">${esc(tr('', 'Transport'))}</label><input class="hashem-input lm-num" id="ntT" dir="ltr" maxlength="12" placeholder="${esc(tr('', 'default'))}"></div>
+      <div class="xr-field"><label class="qs-label" for="ntF">${esc(tr('', 'Control port'))}</label><input class="hashem-input lm-num" id="ntF" type="number" min="1" max="65535" placeholder="${esc(tr('', 'automatic'))}"></div>
+    </div>
+    <div class="xr-field"><label class="qs-label" for="ntP">${esc(tr('', 'Ports users connect to'))}</label><input class="hashem-input lm-num" id="ntP" dir="ltr" maxlength="300" placeholder="443, 2083"></div>
+    <div class="qs-hint">${esc(tr('', 'The Iran server\'s end is made first, then the foreign server\'s with its bundle. If the second fails, the first is removed again. Tunnels already running are not touched.'))}</div>
+    <div id="ntPlan"></div>`;
+  let checked = false;
+  const req = () => ({ server: parseInt($('ntS').value, 10), client: parseInt($('ntC').value, 10), engine: $('ntE').value,
+    transport: $('ntT').value.trim(), ports: $('ntP').value.trim(), frp_port: parseInt($('ntF').value, 10) || 0 });
+  custModal(tr('', 'New tunnel between servers'), html, tr('', 'Check'), async () => {
+    const q = req();
+    if (!checked) {
+      const d = await api('/api/nodes', Object.assign({ action: 'tunnel-plan' }, q));
+      const li = (k, v) => `<li>${esc(k)}: <b class="lm-num">${esc(v)}</b></li>`;
+      $('ntPlan').innerHTML = `<ul class="qs-hint">${li(tr('', 'Iran server'), ntName(q.server) + ' · ' + (d.server_role === 'iran' ? tr('', 'its first tunnel') : tr('', 'one more tunnel')))}
+        ${li(tr('', 'Foreign server'), ntName(q.client) + ' · ' + (d.client_mode === 'join-hub' ? tr('', 'joins as one more Iran hub (Cluster, Pro)') : tr('', 'its first tunnel')))}
+        ${li(tr('', 'Control port'), String(d.frp_port))}${li('GRE', d.local_gre + ' ↔ ' + d.peer_gre)}</ul>`;
+      if ((d.problems || []).length) throw new Error(d.problems.join('\n'));
+      checked = true;
+      $('custModalYes').textContent = tr('', 'Make the tunnel');
+      ['ntS', 'ntC', 'ntE', 'ntT', 'ntF', 'ntP'].forEach(id => { $(id).oninput = $(id).onchange = () => { checked = false; $('custModalYes').textContent = tr('', 'Check'); $('ntPlan').innerHTML = ''; }; });
+      return false;
+    }
+    await api('/api/nodes', Object.assign({ action: 'tunnel-create' }, q));
+    toastOk(tr('', 'Making the tunnel'), ntName(q.server) + ' → ' + ntName(q.client));
+    loadNodes();
+  });
+}
+async function ntRemove(server, client, peer, hub) {
+  if (!await entConfirm(tr('', 'Remove this tunnel?'), tr('', 'The foreign server\'s end is removed first, then the Iran server\'s. Users of this tunnel are cut.'), tr('', 'Remove'))) return;
+  try { await api('/api/nodes', { action: 'tunnel-remove', server, client, peer_id: peer, hub }); loadNodes(); } catch (e) { toastErr(tr('', 'Failed'), e.message); }
+}
+async function ntRemoveLeft(id) {
+  try { await api('/api/nodes', { action: 'tunnel-remove', left: id }); loadNodes(); } catch (e) { toastErr(tr('', 'Failed'), e.message); }
+}
+async function ntForget(id) {
+  try { renderNodes(await api('/api/nodes', { action: 'tunnel-forget', left: id })); } catch (e) { toastErr(tr('', 'Failed'), e.message); }
 }
 
 // ---- the node picker (header): which server the pages show ----

@@ -121,6 +121,7 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/session-settings` | session + CSRF | `handleSessionSettingsPost` |
 | `GET` | `/api/setup` | session | `handleSetupGet` |
 | `POST` | `/api/setup` | session + CSRF | `handleSetupPost` |
+| `GET` | `/api/setup/plan` | session | `handleSetupPlan` |
 | `GET` | `/api/spoof` | session | `handleSpoofGet` |
 | `POST` | `/api/spoof` | session + CSRF | `handleSpoofPost` |
 | `GET` | `/api/spoof/tester` | session | `handleSpoofTester` |
@@ -165,4 +166,4 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/xray` | session + CSRF | `handleXrayPost` |
 | `GET` | `/metrics` | none | `handleMetrics` |
 
-Total: 141 routes.
+Total: 142 routes.
