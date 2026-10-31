@@ -199,8 +199,9 @@ func writePeerConfig(c PeerConfig) error {
 // or via shared X-Peer-Secret / Bearer token header.
 func requirePeerAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// 1. Check if authenticated via active admin session cookie
-		if authed(r) {
+		// 1. Check if authenticated via active admin session cookie, or
+		// relayed from this node's central (only /api/peer/status is: node_relay.go)
+		if nodeRelayed(r) || authed(r) {
 			next(w, r)
 			return
 		}

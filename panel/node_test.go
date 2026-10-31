@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -101,6 +103,10 @@ func TestNodeHelperProcess(t *testing.T) {
 		})))
 		m.HandleFunc("GET /x/api/logs", requireAuth(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write(make([]byte, nodeRelayBodyMax+1))
+		}))
+		m.HandleFunc("PATCH /x/api/status", requireAuth(requireCSRF(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, "patched") })))
+		m.HandleFunc("GET /x/api/history", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, strings.Repeat("h", 3<<20)) // goes in parts
 		}))
 		m.HandleFunc("GET /x/api/access", requireAuth(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, "secret") }))
 		return m
@@ -624,6 +630,7 @@ func TestNodeRelayAllowed(t *testing.T) {
 		"/api/status": true, "/api/dashboard": true, "/api/customers/export.csv": true, "/api/license": true,
 		"/api/term/ws": false, "/api/login": false, "/api/access": false, "/api/password": false, "/api/2fa/setup": false,
 		"/api/nodes": false, "/api/node/1/status": false, "/api/peer/handshake": false, "/api/session-settings": false,
+		"/api/peer/status": true, "/api/peer/config": true, "/api/peer/apply-engine": false, "/api/nv/x/status": false,
 		"/api/status/../access": false, "/api//access": false, "/api/status%2f..": false, "/status": false, "/api/tls/ip": false,
 	} {
 		if got := nodeRelayAllowed(p); got != want {
@@ -670,22 +677,23 @@ func TestNodeRelayEndToEnd(t *testing.T) {
 	defer func() { _ = srv.Process.Kill(); _ = srv.Wait() }()
 	nodeTestWait(t, "the node online", func() bool { return nodeSessionFor(1) != nil })
 	relay := func(method, id, path, body string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, "/c/api/node/"+id+"/"+path, strings.NewReader(body))
-		if i := strings.Index(path, "?"); i >= 0 {
-			r.SetPathValue("path", path[:i])
-		} else {
-			r.SetPathValue("path", path)
-		}
-		r.SetPathValue("id", id)
-		r.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		handleNodeRelay(w, r)
-		return w
+		n, _ := strconv.Atoi(id)
+		return nodeTestViewCall(nodeTestView(t, n), method, path, body)
 	}
 	w := relay("GET", "1", "status?range=1h", "")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"relayed":true`) || !strings.Contains(w.Body.String(), `"q":"range=1h"`) ||
 		w.Header().Get("X-Snapshot-Age-Ms") != "7" || w.Header().Get("X-Hashem-Node") != "1" {
 		t.Fatalf("relayed GET: %d %s %v", w.Code, w.Body, w.Header())
+	}
+	if w.Header().Get("Content-Security-Policy") != "sandbox; default-src 'none'" || w.Header().Get("Content-Type") != "application/json; charset=utf-8" ||
+		w.Header().Get("Access-Control-Allow-Origin") != "null" || w.Header().Get("Content-Disposition") != "" {
+		t.Fatalf("relayed answer headers: %v", w.Header())
+	}
+	if w := relay("PATCH", "1", "status", `{}`); w.Code != 200 {
+		t.Fatalf("relayed PATCH: %d %s", w.Code, w.Body)
+	}
+	if w := relay("GET", "1", "history", ""); w.Code != 200 || w.Body.Len() < 3<<20 {
+		t.Fatalf("a big answer in parts: %d, %d bytes", w.Code, w.Body.Len())
 	}
 	if w := relay("POST", "1", "license", `{"key":"k1"}`); w.Code != 200 {
 		t.Fatalf("relayed POST: %d %s", w.Code, w.Body)
@@ -781,4 +789,134 @@ func TestNodeLicenseCopied(t *testing.T) {
 		r := nodeFindLocked(1)
 		return r != nil && r.LicensePushed == nodeKeyHash("central-key")
 	})
+}
+
+// nodeTestView is a view token for node id in a fresh login session.
+func nodeTestView(t *testing.T, id int) string {
+	t.Helper()
+	sess := newSessionToken()
+	addSession(sess)
+	t.Cleanup(func() { dropSession(sess) })
+	return nodeViewNew(sess, id)
+}
+
+// nodeTestViewCall calls /api/nv/<tok>/<path> as the node's frame does.
+func nodeTestViewCall(tok, method, path, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, "/c/api/nv/"+tok+"/"+path, strings.NewReader(body))
+	p, _, _ := strings.Cut(path, "?")
+	r.SetPathValue("tok", tok)
+	r.SetPathValue("path", p)
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", "null")
+	w := httptest.NewRecorder()
+	handleNodeView(w, r)
+	return w
+}
+
+// The frame's token is its only credential: a wrong one, or one whose login
+// session ended, gets nothing; the preflight is answered for the frame.
+func TestNodeViewToken(t *testing.T) {
+	nodeTestInvite(t, nodeTestCentral(t), "v") // makes this panel the central
+	tok := nodeTestView(t, 1)
+	if w := nodeTestViewCall(strings.Repeat("0", 64), "GET", "status", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("a wrong token: %d", w.Code)
+	}
+	if w := nodeTestViewCall(tok, "GET", "access", ""); w.Code != http.StatusForbidden {
+		t.Fatalf("a path that is not relayed: %d", w.Code)
+	}
+	if w := nodeTestViewCall(tok, "PUT", "status", ""); w.Code != http.StatusForbidden {
+		t.Fatalf("a method that is not relayed: %d", w.Code)
+	}
+	r := httptest.NewRequest("OPTIONS", "/c/api/nv/"+tok+"/status", nil)
+	w := httptest.NewRecorder()
+	handleNodeView(w, r)
+	if w.Code != http.StatusNoContent || w.Header().Get("Access-Control-Allow-Origin") != "null" ||
+		!strings.Contains(w.Header().Get("Access-Control-Allow-Headers"), "Content-Type") {
+		t.Fatalf("preflight: %d %v", w.Code, w.Header())
+	}
+	sess := newSessionToken()
+	addSession(sess)
+	tok2 := nodeViewNew(sess, 1)
+	dropSession(sess) // logout
+	if w := nodeTestViewCall(tok2, "GET", "status", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("a token of an ended session: %d", w.Code)
+	}
+	if len(tok) != 64 || strings.Trim(tok, "0123456789abcdef") != "" {
+		t.Fatalf("token form: %q", tok)
+	}
+}
+
+// What a node answers cannot make the central's browser run it.
+func TestNodeRelayHeadersOut(t *testing.T) {
+	for _, c := range []struct {
+		from              map[string]string
+		ct, cd, cache, ra string
+	}{
+		{map[string]string{"Content-Type": "application/json"}, "application/json; charset=utf-8", "", "", ""},
+		{map[string]string{"Content-Type": "text/html; charset=utf-8"}, "application/octet-stream", `attachment; filename="download"`, "", ""},
+		{map[string]string{"Content-Type": "image/svg+xml"}, "application/octet-stream", `attachment; filename="download"`, "", ""},
+		{map[string]string{"Content-Type": "text/csv", "Content-Disposition": `inline; filename="../a\"b<x>.csv"`}, "text/csv; charset=utf-8", `attachment; filename="abx.csv"`, "", ""},
+		{map[string]string{"Content-Type": "application/json", "Content-Disposition": `attachment; filename="backup.json"`, "Cache-Control": "no-store", "Retry-After": "5"},
+			"application/json; charset=utf-8", `attachment; filename="backup.json"`, "no-store", "5"},
+		{map[string]string{"Content-Type": "", "Cache-Control": "x\r\nSet-Cookie: a=b", "Retry-After": "1; x"}, "application/octet-stream", `attachment; filename="download"`, "", ""},
+	} {
+		h := http.Header{}
+		nodeRelayHeadersOut(h, c.from)
+		if h.Get("Content-Type") != c.ct || h.Get("Content-Disposition") != c.cd || h.Get("Cache-Control") != c.cache || h.Get("Retry-After") != c.ra ||
+			h.Get("Content-Security-Policy") != "sandbox; default-src 'none'" || h.Get("X-Content-Type-Options") != "nosniff" {
+			t.Errorf("%v: %v", c.from, h)
+		}
+	}
+}
+
+// A big answer goes in parts and comes out whole; other frames can pass
+// between the parts.
+func TestNodeAnswerInParts(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	node, central := &nodeConn{c: a}, &nodeConn{c: b}
+	body := make([]byte, 3*nodePartMax+17)
+	for i := range body {
+		body[i] = 'a' + byte(i%26)
+	}
+	raw, _ := json.Marshal(string(body))
+	go nodeSendRes(node, 7, raw, nil)
+	s := &nodeSession{pending: map[uint64]chan nodeFrame{}, parts: map[uint64]*bytes.Buffer{}}
+	n := 0
+	for {
+		f, err := central.recv(5*time.Second, nodeFrameMax)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n++
+		s.pm.Lock()
+		f = s.addPartLocked(f)
+		s.pm.Unlock()
+		if f.T == "res" {
+			if f.Err != "" || string(f.Body) != string(raw) {
+				t.Fatalf("the answer put together: err %q, %d bytes of %d", f.Err, len(f.Body), len(raw))
+			}
+			break
+		}
+	}
+	if n < 4 || len(s.parts) != 0 {
+		t.Fatalf("%d frames, %d left over", n, len(s.parts))
+	}
+	// too big in all: refused, nothing kept
+	s.parts[9] = bytes.NewBuffer(make([]byte, nodeFrameMax))
+	if f := s.addPartLocked(nodeFrame{T: "part", ID: 9, Data: []byte("x")}); f.T != "res" || f.Err == "" || s.parts[9] != nil {
+		t.Fatalf("an answer over the cap: %+v", f)
+	}
+}
+
+// The node's view page is sandboxed and may be framed only by the central.
+func TestNodeViewIndexHeaders(t *testing.T) {
+	w := httptest.NewRecorder()
+	serveIndex(w, httptest.NewRequest("GET", "/x/?nv=1", nil))
+	csp := w.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "sandbox allow-scripts") || strings.Contains(csp, "allow-same-origin") ||
+		!strings.Contains(csp, "frame-ancestors 'self'") || w.Header().Get("X-Frame-Options") != "SAMEORIGIN" {
+		t.Fatalf("the node view: %v", w.Header())
+	}
 }

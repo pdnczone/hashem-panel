@@ -147,6 +147,21 @@ func handleNodesPost(w http.ResponseWriter, r *http.Request) {
 		nodesF.Invites = nil
 		err = nodesSaveLocked()
 		nodesMu.Unlock()
+	case "view": // a token for the node's sandboxed frame (node_relay.go)
+		if !isCentral() {
+			return
+		}
+		nodesMu.Lock()
+		nodesLoadLocked()
+		known := nodeFindLocked(req.ID) != nil
+		nodesMu.Unlock()
+		c, cerr := r.Cookie("gre_session")
+		if !known || cerr != nil || c.Value == "" {
+			writeAPIError(w, r, "E-NODE-03", fmt.Sprintf("no node %d", req.ID))
+			return
+		}
+		writeJSON(w, map[string]any{"status": "ok", "token": nodeViewNew(c.Value, req.ID)})
+		return
 	case "rename":
 		if !isCentral() {
 			return

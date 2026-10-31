@@ -3179,7 +3179,6 @@ window.FA_TEXT = {
 "Make this server a node of another panel: on the central, Nodes → Add a server gives the code. Tunnels are not touched.": "این سرور را نودِ پنل دیگری کنید: در مرکز، نودها ← افزودن سرور کد را می‌دهد. به تانل‌ها دست زده نمی‌شود.",
 "No license": "بدون لایسنس",
 "No nodes yet": "هنوز نودی نیست",
-"Node": "نود",
 "Node removed": "نود حذف شد",
 "Nodes": "نودها",
 "Or a private key": "یا کلید خصوصی",
@@ -3208,11 +3207,12 @@ window.FA_TEXT = {
 "Any server (installs or updates Hashem, then joins)": "هر سروری (هاشم را نصب یا به‌روز می‌کند و بعد وصل می‌شود)",
 "A server that already has this Hashem version or newer": "سروری که همین نسخه هاشم یا جدیدتر را دارد",
 "You are managing node": "در حال مدیریت نود هستید:",
-"Changes apply to that server.": "تغییرها روی همان سرور اعمال می‌شوند.",
+"Changes apply to that server; a password asked here is that server's.": "تغییرها روی همان سرور اعمال می‌شوند؛ رمزی که این‌جا خواسته شود رمز همان سرور است.",
+"This node is offline. Its tunnels keep running; open its own panel on that server, or wait for it to connect.": "این نود آفلاین است. تانل‌هایش کار می‌کنند؛ پنل خود آن سرور را باز کنید یا صبر کنید تا وصل شود.",
+"The session ended: reload the page": "نشست تمام شد: صفحه را دوباره باز کنید",
+"Node": "نود",
 "Back to this server": "بازگشت به این سرور",
 "Server shown": "سرور نمایش‌داده‌شده",
 "Open": "باز کردن",
-"The terminal is not relayed": "ترمینال از مرکز در دسترس نیست",
-"Open the node's own panel for its terminal, or pick This server.": "برای ترمینال نود، پنل خود آن را باز کنید یا «این سرور» را انتخاب کنید.",
-"The login, HTTPS, 2FA and terminal settings on this page are this panel's (the central). A node's own are on its own panel; its license and Telegram alerts are relayed.": "تنظیمات ورود، HTTPS، تأیید دومرحله‌ای و ترمینال در این صفحه مال همین پنل (مرکز) است. تنظیمات خود نود در پنل خودش است؛ لایسنس و هشدارهای تلگرام آن از مرکز در دسترس است."
+"This node's login, HTTPS, 2FA and terminal settings are on its own panel, not here. Its license and Telegram alerts are shown here.": "تنظیمات ورود، HTTPS، تأیید دومرحله‌ای و ترمینال این نود در پنل خودش است، نه این‌جا. لایسنس و هشدارهای تلگرام آن این‌جا نشان داده می‌شود."
 };

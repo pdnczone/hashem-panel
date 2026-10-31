@@ -618,7 +618,12 @@ func main() {
 	mux.HandleFunc("GET "+base+"/i18n-fa.js", serveAsset("i18n-fa.js", "text/javascript; charset=utf-8"))
 	mux.HandleFunc("GET "+base+"/tokens.css", serveAsset("tokens.css", "text/css; charset=utf-8"))
 	mux.HandleFunc("GET "+base+"/fonts.css", serveAsset("fonts.css", "text/css; charset=utf-8"))
-	mux.HandleFunc("GET "+base+"/fonts/vazirmatn.woff2", serveAsset("fonts/vazirmatn.woff2", "font/woff2"))
+	fontH := serveAsset("fonts/vazirmatn.woff2", "font/woff2")
+	mux.HandleFunc("GET "+base+"/fonts/vazirmatn.woff2", func(w http.ResponseWriter, r *http.Request) {
+		// a public file: a node's view (a sandboxed frame, origin "null") loads it too
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		fontH(w, r)
+	})
 	mux.HandleFunc("GET "+base+"/base.css", serveAsset("base.css", "text/css; charset=utf-8"))
 	mux.HandleFunc("GET "+base+"/enterprise.css", serveAsset("enterprise.css", "text/css; charset=utf-8"))
 	mux.HandleFunc("GET "+base+"/favicon.png", serveAsset("favicon.png", "image/png"))
@@ -770,8 +775,10 @@ func main() {
 	mux.HandleFunc("GET "+base+"/api/nodes", requireAuth(handleNodesGet))
 	mux.HandleFunc("POST "+base+"/api/nodes", requireAuth(requireCSRF(handleNodesPost)))
 	mux.HandleFunc("GET "+nodeLinkPath, handleNodeLink)
-	mux.HandleFunc("GET "+base+"/api/node/{id}/{path...}", requireAuth(handleNodeRelay))
-	mux.HandleFunc("POST "+base+"/api/node/{id}/{path...}", requireAuth(requireCSRF(handleNodeRelay)))
+	// a node shown in its sandboxed frame: the token is its only credential
+	for _, m := range []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"} {
+		mux.HandleFunc(m+" "+base+"/api/nv/{tok}/{path...}", handleNodeView)
+	}
 	mux.HandleFunc("GET "+base+"/api/bagher", requireAuth(handleSSHFwdGet))
 	mux.HandleFunc("POST "+base+"/api/bagher", requireAuth(requireCSRF(handleSSHFwdPost)))
 	mux.HandleFunc("GET "+base+"/api/license", requireAuth(handleLicenseGet))
@@ -927,7 +934,14 @@ func assetTag() string {
 }
 
 func serveIndex(w http.ResponseWriter, r *http.Request) {
-	if authed(r) {
+	// a node's view inside the central's page: sandboxed, see node_relay.go
+	nv := r.URL.Query().Has("nv")
+	if nv {
+		w.Header().Set("Content-Security-Policy", nodeViewCSP())
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+	}
+	if !nv && authed(r) {
 		if c, err := r.Cookie("gre_session"); err == nil && c.Value != "" {
 			csrfTok := GenerateCSRFToken(c.Value)
 			http.SetCookie(w, csrfCookie(r, csrfTok, 86400))

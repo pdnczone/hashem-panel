@@ -1225,7 +1225,14 @@ html[dir="rtl"] .ht-wires { transform: scaleX(-1); }
 
 /* nodes: the server picker and the bar while a node is shown */
 .node-pick { width: auto; max-width: 220px; height: 34px; padding: 0 10px; }
-.node-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 14px; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--ac) 45%, var(--ln)); border-radius: var(--r-md, 12px); background: color-mix(in srgb, var(--ac) 8%, var(--s1)); font-size: 13px; }
-.node-bar[hidden] { display: none; }
-.nav-item.node-off { opacity: .45; }
+/* a node's view: a sandboxed frame over the whole page (app.js nodeViewOpen) */
+.node-view { position: fixed; inset: 0; z-index: 900; display: flex; flex-direction: column; gap: 8px; padding: 8px; background: var(--bg); }
+.node-view[hidden] { display: none; }
+.node-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--ac) 45%, var(--ln)); border-radius: var(--r-md, 12px); background: color-mix(in srgb, var(--ac) 8%, var(--s1)); font-size: 13px; }
+.node-bar-txt { flex: 1 1 240px; min-width: 0; }
+.node-view-off[hidden] { display: none; }
+.node-view-box { flex: 1; min-height: 0; display: flex; }
+.node-frame { flex: 1; width: 100%; border: 1px solid var(--ln); border-radius: var(--r-md, 12px); background: var(--bg); }
+html.nv-open body { overflow: hidden; }
+html.nv .nv-off { display: none !important; }
 @media (max-width: 640px) { .node-pick { max-width: 130px; } }
