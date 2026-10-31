@@ -164,6 +164,11 @@ func (s *usageStore) observeIfs(key, name string, now time.Time, cur map[string]
 	if len(cur) == 0 {
 		return // nothing readable now: keep the baselines for when it comes back
 	}
+	if _, ok := cur[carrierKey]; !ok { // a failed carrier reading keeps its baseline (see trafficSample)
+		if prev, seen := l.LastIf[carrierKey]; seen {
+			cur[carrierKey] = prev
+		}
+	}
 	var dRx, dTx uint64
 	for ifname, c := range cur {
 		if prev, ok := l.LastIf[ifname]; ok {

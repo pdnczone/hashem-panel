@@ -482,3 +482,93 @@ func TestNodeInfoClean(t *testing.T) {
 		t.Fatalf("not capped: %d %d %d", len(i.Hostname), len(i.Version), len(i.License.Features))
 	}
 }
+
+// Correctness review: a removed node's id is never given to the next one,
+// a list the central cannot read is retried (and never answered "unknown"),
+// and changes the CLI makes to nodes.json reach the service.
+func TestNodeListReloadAndIDs(t *testing.T) {
+	nodeTestCentral(t)
+	now := time.Now()
+	nodesMu.Lock()
+	nodesLoadLocked()
+	c, _, _ := nodeInviteLocked("", "http://1.2.3.4:8080", now)
+	id1, _ := nodeEnrollLocked(c.Secret, "K1", "", "", now)
+	nodesF.Nodes = nil // removed
+	c, _, _ = nodeInviteLocked("", "http://1.2.3.4:8080", now)
+	id2, _ := nodeEnrollLocked(c.Secret, "K2", "", "", now)
+	if id1 != 1 || id2 != 2 {
+		t.Fatalf("ids %d then %d: a removed node's id was given again", id1, id2)
+	}
+	_ = nodesSaveLocked()
+	nodesMu.Unlock()
+
+	// the CLI (another process) clears the invites on disk
+	time.Sleep(20 * time.Millisecond)
+	_ = os.WriteFile(nodesPath(), []byte(`{"nodes":[],"next_id":3}`), 0600)
+	future := time.Now().Add(time.Second)
+	_ = os.Chtimes(nodesPath(), future, future)
+	nodesMu.Lock()
+	nodesLoadLocked()
+	n, next := len(nodesF.Nodes), nodesF.NextID
+	nodesMu.Unlock()
+	if n != 0 || next != 3 {
+		t.Fatalf("the service kept its old list: %d nodes, next %d", n, next)
+	}
+
+	// a damaged file: an error, kept as is, read again once fixed
+	_ = os.WriteFile(nodesPath(), []byte(`{bad`), 0600)
+	_ = os.Chtimes(nodesPath(), future.Add(time.Second), future.Add(time.Second))
+	nodesMu.Lock()
+	nodesLoadLocked()
+	er := nodesEr
+	saveErr := nodesSaveLocked()
+	nodesMu.Unlock()
+	if er == "" || saveErr == nil {
+		t.Fatalf("a damaged nodes.json: err %q, save %v", er, saveErr)
+	}
+	if b, _ := os.ReadFile(nodesPath()); string(b) != `{bad` {
+		t.Fatal("a damaged nodes.json was written over")
+	}
+	_ = os.WriteFile(nodesPath(), []byte(`{"nodes":[{"id":5,"name":"x","key":"K5"}]}`), 0600)
+	nodesMu.Lock()
+	nodesLoadLocked()
+	er, n = nodesEr, len(nodesF.Nodes)
+	nodesMu.Unlock()
+	if er != "" || n != 1 {
+		t.Fatalf("fixed file not read again: %q %d", er, n)
+	}
+}
+
+func TestNodeWriteFileAtomic(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "x.json")
+	done := make(chan struct{})
+	for i := 0; i < 8; i++ {
+		go func(i int) {
+			defer func() { done <- struct{}{} }()
+			for j := 0; j < 50; j++ {
+				_ = writeFile0600(p, []byte(strings.Repeat(string(rune('a'+i)), 1000)))
+			}
+		}(i)
+	}
+	for i := 0; i < 8; i++ {
+		<-done
+	}
+	b, _ := os.ReadFile(p)
+	if len(b) != 1000 || strings.Count(string(b), string(b[:1])) != 1000 {
+		t.Fatalf("mixed or short file after concurrent writes: %d bytes", len(b))
+	}
+	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0600 {
+		t.Fatalf("mode %v", fi.Mode().Perm())
+	}
+	left, _ := filepath.Glob(p + ".*.tmp")
+	if len(left) != 0 {
+		t.Fatalf("temp files left: %v", left)
+	}
+}
+
+func TestNodeSSHCommandChecksVersion(t *testing.T) {
+	cmd := nodeSSHCommand("n", false)
+	if !strings.Contains(cmd, "hashem help 2>/dev/null | grep -q node-join") || !strings.Contains(cmd, nodeInstallURL) {
+		t.Fatalf("an old Hashem must go through the installer: %s", cmd)
+	}
+}

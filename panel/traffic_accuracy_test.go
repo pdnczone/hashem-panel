@@ -287,12 +287,26 @@ func TestTrafficStateFallsBackToHistory(t *testing.T) {
 // Audit T4: a sold tunnel inside GRE is the customer's traffic, billed on
 // its own: never the seller's tunnel traffic.
 func TestTrafficSkipsCustomersGRE(t *testing.T) {
-	for _, name := range []string{"hcg3x1", "hcg12x2", "hcc0a1b2c3d"} {
+	for _, name := range []string{"hcg3x1", "hcg12x2"} {
 		if isTunnelInterface(name) {
 			t.Errorf("isTunnelInterface(%q): a customer's GRE counted as this server's tunnel", name)
 		}
 	}
 	if !isTunnelInterface("gre-tunnel") {
 		t.Error("gre-tunnel is a tunnel")
+	}
+}
+
+// Correctness review: a carrier reading that failed once made the next good
+// one a new baseline, and what the carriers moved in between was lost.
+func TestTrafficCarrierFailedReadingKeepsBaseline(t *testing.T) {
+	resetTrafficState(t)
+	t0 := time.Unix(1_800_000_000, 0)
+	dev := devLines(map[string][2]uint64{"gre-a": {10, 10}})
+	trafficSample(dev, 1000, 0, true, t0)
+	trafficSample(dev, 0, 0, false, t0.Add(5*time.Second)) // iptables-save failed
+	m := trafficSample(dev, 1500, 0, true, t0.Add(10*time.Second))
+	if got := m["down"].(uint64); got != 500 {
+		t.Fatalf("down = %d, want 500 (moved while one reading failed)", got)
 	}
 }

@@ -11797,6 +11797,7 @@ async function custWizCreate() {
 
 // ---- Nodes: this panel as the central of other servers (node*.go) ----
 let _nodes = null, nodesTimer = null;
+const _nodeJobOpen = {}; // SSH job logs the user opened or closed: kept across the 5 s refresh
 const nodeAgo = sec => {
   if (!sec) return '—';
   const d = Math.max(0, Math.round(Date.now() / 1000 - sec));
@@ -11828,7 +11829,8 @@ function nodeRow(n) {
 }
 function nodeJobRow(j) {
   const st = j.state === 'done' ? ['ok', tr('', 'Joined')] : j.state === 'failed' ? ['err', tr('', 'Failed')] : ['info', tr('', 'Working…')];
-  return `<details class="lm-row"${j.state === 'failed' ? ' open' : ''}><summary class="lm-head"><div class="lm-name"><b>${esc(j.name || j.host)}</b><small class="lm-num">SSH ${esc(j.host)}</small></div>
+  const open = j.id in _nodeJobOpen ? _nodeJobOpen[j.id] : j.state === 'failed';
+  return `<details class="lm-row" data-job="${j.id}"${open ? ' open' : ''} ontoggle="_nodeJobOpen[${j.id}] = this.open"><summary class="lm-head"><div class="lm-name"><b>${esc(j.name || j.host)}</b><small class="lm-num">SSH ${esc(j.host)}</small></div>
     <span class="badge ${st[0]}">${esc(st[1])}</span></summary><pre class="cs-code">${esc(j.log || '')}</pre></details>`;
 }
 function renderNodes(d) {
@@ -11887,7 +11889,7 @@ function openNodeInvite() {
       <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="copyTextSafe($('${id}').textContent, ${jsArg(tr('', 'Copied'))}, ${jsArg(label)})">${esc(tr('', 'Copy'))}</button></div>
       <pre class="cs-code" id="${id}">${esc(v)}</pre></div>`;
     custModal(tr('', 'Run this on the new server'), `<div class="qs-hint">${esc(tr('', 'Run one of these as root on the server. The code works once, for 30 minutes. The server shows up here when it joins.'))}</div>
-      <div class="cs-srvs">${box('ndCmd', tr('', 'Hashem is installed there'), r.command)}${box('ndCmdI', tr('', 'Hashem is not installed yet'), r.install_command)}</div>`);
+      <div class="cs-srvs">${box('ndCmdI', tr('', 'Any server (installs or updates Hashem, then joins)'), r.install_command)}${box('ndCmd', tr('', 'A server that already has this Hashem version or newer'), r.command)}</div>`);
     loadNodes();
     return false;
   });
