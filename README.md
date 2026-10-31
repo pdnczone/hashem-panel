@@ -6,8 +6,8 @@
 
 Users connect to the Iran server's public IP; their traffic reaches services on your foreign servers through GRE, FRP, Backhaul, Xray, SSH or a spoofed pipe, with health checks, failover and safe updates built in.
 
-[![Downloads](https://img.shields.io/github/downloads/pdnczone/hashem-panel/total?label=downloads&color=brightgreen)](https://github.com/pdnczone/hashem-panel/releases)
-[![CI](https://github.com/pdnczone/hashem-panel/actions/workflows/ci.yml/badge.svg)](https://github.com/pdnczone/hashem-panel/actions/workflows/ci.yml)
+[![Downloads](https://img.shields.io/github/downloads/roboapi2/hashem-panel/total?label=downloads&color=brightgreen)](https://github.com/roboapi2/hashem-panel/releases)
+[![CI](https://github.com/roboapi2/hashem-panel/actions/workflows/ci.yml/badge.svg)](https://github.com/roboapi2/hashem-panel/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/linux-amd64%20%7C%20arm64-blue)](#requirements)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
@@ -60,7 +60,7 @@ The GRE link itself can be wrapped four ways: **Direct** (protocol 47), **WSS** 
 Run on **both** servers:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/pdnczone/hashem-panel/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/roboapi2/hashem-panel/main/install.sh)
 ```
 
 1. **Iran server:** choose `1`, pick the tunnel and ports, and copy the bundle it prints (`hsh1_…`).
@@ -86,9 +86,9 @@ More foreign servers are added from the panel's **Setup** tab. To read the insta
 | FRP · Backhaul · Xray | the control port you choose (UDP too for kcp, quic, udp) |
 | Panel | TCP `7777`, or `7443` once HTTPS is on |
 
-## Hashem Pro
+## Community Edition
 
-GRE + FRP, the panel and updates are free. A **Pro license** unlocks Backhaul setup, Xray, Bagher, Spoof, limits, the cluster, the path test, diagnostics, performance tuning, the watchdog and the benchmark. Every Pro key opens every Pro feature, including ones added later, and tunnels and settings that already run keep running without one. [pdnczone.ir](https://pdnczone.ir)
+This authorized community fork includes all formerly paid features, including Sentinel, at no charge. No license key or activation is required. Install and update using this fork's releases. Credit to [the original project](https://github.com/pdnczone/hashem-panel) and retain AGPL-3.0.
 
 ## Documentation
 
@@ -105,4 +105,4 @@ Persian versions exist for the README and the IPv6, Xray, cluster and FRP guides
 
 Issues and pull requests are welcome; read [CONTRIBUTING.md](CONTRIBUTING.md) and branch from `dev`. Report vulnerabilities privately ([SECURITY.md](SECURITY.md)).
 
-Licensed under the [GNU AGPL-3.0](LICENSE): if you run a modified version as a network service, publish your changes under the same license. The Pro features need a license from the author.
+Licensed under the [GNU AGPL-3.0](LICENSE): if you run a modified version as a network service, publish your changes under the same license. All included features are free in this Community fork.
