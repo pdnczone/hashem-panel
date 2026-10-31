@@ -19,7 +19,9 @@ func nodeMigrateTest(t *testing.T) string {
 	if err := savePeerConfig(PeerConfig{Role: "master", PeerSecret: "main-token"}); err != nil {
 		t.Fatal(err)
 	}
-	_ = os.WriteFile(filepath.Join(configDir, "setup.json"), []byte(`{"role":"iran","remote_public":"192.0.2.10"}`), 0600)
+	oldFT := firstTunnelInfo
+	firstTunnelInfo = func() firstTunnel { return firstTunnel{Exists: true, Side: "iran", RemotePub: "192.0.2.10"} }
+	t.Cleanup(func() { firstTunnelInfo = oldFT })
 	peers := `{"peers":[{"id":3,"name":"de-3","remote_pub":"192.0.2.30","token":"peer3-token","gre_if":"gre-t3","frps_svc":"frps-3"}]}`
 	if err := os.WriteFile(filepath.Join(configDir, "peers.json"), []byte(peers), 0600); err != nil {
 		t.Fatal(err)
@@ -138,7 +140,7 @@ func TestNodeMigrateOfferAndJoin(t *testing.T) {
 // Without a saved Peer Link or a first tunnel there is no "main" server to move.
 func TestNodeMigratePeersOnlyReal(t *testing.T) {
 	nodeMigrateTest(t)
-	_ = os.Remove(filepath.Join(configDir, "setup.json"))
+	firstTunnelInfo = func() firstTunnel { return firstTunnel{} } // the first tunnel was removed
 	for _, p := range nodeMigratePeers() {
 		if p.Key == "main" {
 			t.Fatal("a first tunnel without its setup record")

@@ -84,7 +84,8 @@ func nodeMigratePeers() []nodeMigratePeer {
 	var out []nodeMigratePeer
 	// a saved Peer Link (not the made-up default) and a first tunnel set up
 	if c := loadPeerConfig(); nodeMigrateLinked() && c.Role == "master" && c.PeerSecret != "" {
-		if ip := readSetupMeta().RemotePub; ip != "" {
+		if ft := firstTunnelInfo(); ft.Exists && ft.Side == "iran" {
+			ip := ft.RemotePub
 			name := linkLabel("main")
 			if name == "" {
 				name = "Foreign server"
@@ -337,6 +338,9 @@ func nodeMigrateTry(ctx context.Context) (string, error) {
 	c := loadPeerConfig()
 	if err != nil || self.Role != "" || !nodeMigrateLinked() || c.Role != "worker" || c.PeerSecret == "" {
 		return "", nil
+	}
+	if ft := firstTunnelInfo(); !ft.Exists || ft.Side != "foreign" {
+		return "", nil // the Peer Link of a tunnel that is gone
 	}
 	b, err := nodeMigrateFetch()
 	if err != nil {

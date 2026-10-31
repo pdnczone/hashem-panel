@@ -12153,11 +12153,13 @@ function openNodeTunnel() {
       <div class="xr-field"><label class="qs-label" for="ntF">${esc(tr('', 'Control port'))}</label><input class="hashem-input lm-num" id="ntF" type="number" min="1" max="65535" placeholder="${esc(tr('', 'automatic'))}"></div>
     </div>
     <div class="xr-field"><label class="qs-label" for="ntP">${esc(tr('', 'Ports users connect to'))}</label><input class="hashem-input lm-num" id="ntP" dir="ltr" maxlength="300" placeholder="443, 2083"></div>
+    <label class="qs-hint hidden" id="ntUdpWrap"><input type="checkbox" id="ntU"> ${esc(tr('', 'Also forward UDP (Backhaul)'))}</label>
     <div class="qs-hint">${esc(tr('', 'The Iran server\'s end is made first, then the foreign server\'s with its bundle. If the second fails, the first is removed again. Tunnels already running are not touched.'))}</div>
     <div id="ntPlan"></div>`;
   let checked = false;
   const req = () => ({ server: parseInt($('ntS').value, 10), client: parseInt($('ntC').value, 10), engine: $('ntE').value,
-    transport: $('ntT').value.trim(), ports: $('ntP').value.trim(), frp_port: parseInt($('ntF').value, 10) || 0 });
+    transport: $('ntT').value.trim(), ports: $('ntP').value.trim(), frp_port: parseInt($('ntF').value, 10) || 0,
+    accept_udp: $('ntE').value !== 'frp' && $('ntU').checked });
   custModal(tr('', 'New tunnel between servers'), html, tr('', 'Check'), async () => {
     const q = req();
     if (!checked) {
@@ -12165,17 +12167,19 @@ function openNodeTunnel() {
       const li = (k, v) => `<li>${esc(k)}: <b class="lm-num">${esc(v)}</b></li>`;
       $('ntPlan').innerHTML = `<ul class="qs-hint">${li(tr('', 'Iran server'), ntName(q.server) + ' · ' + (d.server_role === 'iran' ? tr('', 'its first tunnel') : tr('', 'one more tunnel')))}
         ${li(tr('', 'Foreign server'), ntName(q.client) + ' · ' + (d.client_mode === 'join-hub' ? tr('', 'joins as one more Iran hub (Cluster, Pro)') : tr('', 'its first tunnel')))}
-        ${li(tr('', 'Control port'), String(d.frp_port))}${li('GRE', d.local_gre + ' ↔ ' + d.peer_gre)}</ul>`;
+        ${li(tr('', 'Control port'), String(d.frp_port))}${d.local_gre ? li('GRE', d.local_gre + ' ↔ ' + d.peer_gre) : ''}</ul>`;
       if ((d.problems || []).length) throw new Error(d.problems.join('\n'));
       checked = true;
       $('custModalYes').textContent = tr('', 'Make the tunnel');
-      ['ntS', 'ntC', 'ntE', 'ntT', 'ntF', 'ntP'].forEach(id => { $(id).oninput = $(id).onchange = () => { checked = false; $('custModalYes').textContent = tr('', 'Check'); $('ntPlan').innerHTML = ''; }; });
+      ['ntS', 'ntC', 'ntE', 'ntT', 'ntF', 'ntP', 'ntU'].forEach(id => { $(id).oninput = $(id).onchange = () => { checked = false; $('custModalYes').textContent = tr('', 'Check'); $('ntPlan').innerHTML = ''; }; });
       return false;
     }
     await api('/api/nodes', Object.assign({ action: 'tunnel-create' }, q));
     toastOk(tr('', 'Making the tunnel'), ntName(q.server) + ' → ' + ntName(q.client));
     loadNodes();
-  });
+  });  const udp = () => { $('ntUdpWrap').classList.toggle('hidden', $('ntE').value === 'frp'); };
+  $('ntE').addEventListener('change', udp);
+  udp();
 }
 async function ntRemove(server, client, peer, hub) {
   if (!await entConfirm(tr('', 'Remove this tunnel?'), tr('', 'The foreign server\'s end is removed first, then the Iran server\'s. Users of this tunnel are cut.'), tr('', 'Remove'))) return;

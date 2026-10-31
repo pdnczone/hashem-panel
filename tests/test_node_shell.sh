@@ -88,6 +88,6 @@ echo '{"role":"node"}' > "$PANEL_CONFIG_DIR/node.json"
 check "not on a node" "" "$(node_migrate_hint)"
 rm -f "$PANEL_CONFIG_DIR/node.json"
 check "a master without a tunnel: no hint" "" "$(node_migrate_hint)"
-echo '{"role":"iran","remote_public":"192.0.2.9"}' > "$PANEL_CONFIG_DIR/setup.json"
+echo '{"side":"iran","remote_public":"192.0.2.9"}' > "$PANEL_CONFIG_DIR/first_tunnel.json"
 check "a first tunnel's master: the hint" 1 "$(node_migrate_hint | grep -c 'move to nodes')"
 exit $fail

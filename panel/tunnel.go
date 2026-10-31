@@ -255,10 +255,17 @@ func runAction(action string, peerID int) (string, error) {
 		// removal stops every frps*, backhaul* and gre-t* and drops peers.json.
 		if peers := loadPeers(); len(peers) > 0 {
 			if p := basePeer(peers); p != nil {
-				return removePeerViaInstaller(p.ID)
+				out, err := removePeerViaInstaller(p.ID)
+				if err == nil {
+					firstTunnelForget()
+				}
+				return out, err
 			}
 			out, err := removeViaInstaller("--base")
 			invalidatePeerIfsCache()
+			if err == nil {
+				firstTunnelForget()
+			}
 			return out, err
 		}
 		// mirror of hashem.sh remove_tunnel_force(): GRE + FRP gone, panel untouched.
@@ -268,6 +275,7 @@ func runAction(action string, peerID int) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		firstTunnelForget()
 		return out, nil
 	}
 	return "", fmt.Errorf("unknown action")
