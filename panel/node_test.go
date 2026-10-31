@@ -108,6 +108,10 @@ func TestNodeHelperProcess(t *testing.T) {
 		m.HandleFunc("GET /x/api/history", requireAuth(func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, strings.Repeat("h", 3<<20)) // goes in parts
 		}))
+		m.HandleFunc("GET /x/api/doctor", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(300 * time.Millisecond) // slow: more of these than the node's slots
+			writeJSON(w, "done")
+		}))
 		m.HandleFunc("GET /x/api/access", requireAuth(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, "secret") }))
 		return m
 	}
@@ -686,7 +690,8 @@ func TestNodeRelayEndToEnd(t *testing.T) {
 		t.Fatalf("relayed GET: %d %s %v", w.Code, w.Body, w.Header())
 	}
 	if w.Header().Get("Content-Security-Policy") != "sandbox; default-src 'none'" || w.Header().Get("Content-Type") != "application/json; charset=utf-8" ||
-		w.Header().Get("Access-Control-Allow-Origin") != "null" || w.Header().Get("Content-Disposition") != "" {
+		w.Header().Get("Access-Control-Allow-Origin") != "null" || w.Header().Get("Content-Disposition") != "" ||
+		w.Header().Get("Access-Control-Expose-Headers") != "X-Hashem-Node, Content-Disposition" {
 		t.Fatalf("relayed answer headers: %v", w.Header())
 	}
 	if w := relay("PATCH", "1", "status", `{}`); w.Code != 200 {
@@ -694,6 +699,17 @@ func TestNodeRelayEndToEnd(t *testing.T) {
 	}
 	if w := relay("GET", "1", "history", ""); w.Code != 200 || w.Body.Len() < 3<<20 {
 		t.Fatalf("a big answer in parts: %d, %d bytes", w.Code, w.Body.Len())
+	}
+	// more slow calls at once than the node runs: they wait on the central
+	tok := nodeTestView(t, 1)
+	codes := make(chan int, 3*nodeReqParallel)
+	for i := 0; i < 3*nodeReqParallel; i++ {
+		go func() { codes <- nodeTestViewCall(tok, "GET", "doctor", "").Code }()
+	}
+	for i := 0; i < 3*nodeReqParallel; i++ {
+		if c := <-codes; c != 200 {
+			t.Fatalf("a call over the node's slots: %d", c)
+		}
 	}
 	if w := relay("POST", "1", "license", `{"key":"k1"}`); w.Code != 200 {
 		t.Fatalf("relayed POST: %d %s", w.Code, w.Body)
@@ -841,6 +857,22 @@ func TestNodeViewToken(t *testing.T) {
 	if w := nodeTestViewCall(tok2, "GET", "status", ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("a token of an ended session: %d", w.Code)
 	}
+	// the login's idle timeout seen first by the view ends the login itself
+	oldIdle, oldNow := cfg.IdleTimeoutMin, timeNow
+	t.Cleanup(func() { cfg.IdleTimeoutMin, timeNow = oldIdle, oldNow })
+	cfg.IdleTimeoutMin = 1
+	sess3 := newSessionToken()
+	addSession(sess3)
+	tok3 := nodeViewNew(sess3, 1)
+	now := time.Now()
+	timeNow = func() time.Time { return now }
+	if _, ok := nodeViewCheck(tok3, false); !ok {
+		t.Fatal("a fresh view")
+	}
+	timeNow = func() time.Time { return now.Add(2 * time.Minute) }
+	if _, ok := nodeViewCheck(tok3, false); ok || validSession(sess3) {
+		t.Fatalf("idle: the view or the login lived on (%v)", validSession(sess3))
+	}
 	if len(tok) != 64 || strings.Trim(tok, "0123456789abcdef") != "" {
 		t.Fatalf("token form: %q", tok)
 	}
@@ -916,7 +948,29 @@ func TestNodeViewIndexHeaders(t *testing.T) {
 	serveIndex(w, httptest.NewRequest("GET", "/x/?nv=1", nil))
 	csp := w.Header().Get("Content-Security-Policy")
 	if !strings.Contains(csp, "sandbox allow-scripts") || strings.Contains(csp, "allow-same-origin") ||
-		!strings.Contains(csp, "frame-ancestors 'self'") || w.Header().Get("X-Frame-Options") != "SAMEORIGIN" {
+		!strings.Contains(csp, "frame-ancestors 'self'") || w.Header().Get("X-Frame-Options") != "SAMEORIGIN" ||
+		strings.Contains(csp, "ws:") {
 		t.Fatalf("the node view: %v", w.Header())
+	}
+}
+
+// A node view's token never reaches the logs or the route stats.
+func TestNodeViewRedact(t *testing.T) {
+	tok := strings.Repeat("ab", 32)
+	for in, want := range map[string]string{
+		"/b/api/nv/" + tok + "/status": "/b/api/nv/*/status",
+		"/b/api/nv/" + tok:             "/b/api/nv/*",
+		"/api/nv/" + tok + "/logs/x":   "/api/nv/*/logs/x",
+		"/b/api/status":                "/b/api/status",
+	} {
+		if got := nodeViewRedact(in); got != want {
+			t.Errorf("%s: %s, want %s", in, got, want)
+		}
+	}
+	old := cfg.BasePath
+	cfg.BasePath = "b"
+	defer func() { cfg.BasePath = old }()
+	if got := routeLabel("/b/api/nv/" + tok + "/status"); strings.Contains(got, tok) {
+		t.Fatalf("route label: %s", got)
 	}
 }

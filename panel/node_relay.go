@@ -246,7 +246,15 @@ func nodeViewCheck(tok string, active bool) (nodeFrameView, bool) {
 	if !ok || time.Now().After(v.exp) {
 		return nodeFrameView{}, false
 	}
-	if !validSession(v.sess) || sessionIdleExpired(v.sess, active) {
+	if !validSession(v.sess) {
+		nodeViews.Lock()
+		delete(nodeViews.m, k)
+		nodeViews.Unlock()
+		return nodeFrameView{}, false
+	}
+	if sessionIdleExpired(v.sess, active) { // the login itself ends, as in authed()
+		dropSession(v.sess)
+		LogSecurityAudit("session_idle_expired", "", "", "idle timeout (seen by a node view)")
 		nodeViews.Lock()
 		delete(nodeViews.m, k)
 		nodeViews.Unlock()
@@ -255,17 +263,35 @@ func nodeViewCheck(tok string, active bool) (nodeFrameView, bool) {
 	return v, true
 }
 
+// nodeViewRedact hides a node view's token in a path (logs, route stats).
+func nodeViewRedact(p string) string {
+	i := strings.Index(p, "/api/nv/")
+	if i < 0 {
+		return p
+	}
+	rest := p[i+len("/api/nv/"):]
+	if j := strings.IndexByte(rest, '/'); j >= 0 {
+		rest = rest[j:]
+	} else {
+		rest = ""
+	}
+	return p[:i] + "/api/nv/*" + rest
+}
+
 // nodeViewCSP is the frame's policy: the panel's, in a sandbox, framed only
 // by the central's own page.
 func nodeViewCSP() string {
-	return strings.Replace(panelCSP, "frame-ancestors 'none'", "frame-ancestors 'self'", 1) +
+	csp := strings.Replace(panelCSP, "frame-ancestors 'none'", "frame-ancestors 'self'", 1)
+	csp = strings.Replace(csp, "connect-src 'self' ws: wss:", "connect-src 'self'", 1) // no terminal in a node's view
+	return csp +
 		"; sandbox allow-scripts allow-forms allow-downloads allow-modals allow-popups"
 }
 
 // handleNodeView is the central's /api/nv/{tok}/{path...}.
 func handleNodeView(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
-	h.Set("Access-Control-Allow-Origin", "null") // the sandboxed frame
+	h.Set("Access-Control-Allow-Origin", "null")                                 // the sandboxed frame
+	h.Set("Access-Control-Expose-Headers", "X-Hashem-Node, Content-Disposition") // set on the node's answers only: the frame tells them from the central's own
 	h.Set("Vary", "Origin")
 	h.Set("Referrer-Policy", "no-referrer")
 	if r.Method == http.MethodOptions {
@@ -275,12 +301,21 @@ func handleNodeView(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	v, ok := nodeViewCheck(r.PathValue("tok"), r.Header.Get("X-User-Active") == "1")
+	// never counts as activity: only the central's own page keeps its login
+	// from going idle
+	v, ok := nodeViewCheck(r.PathValue("tok"), false)
 	if !ok {
 		writeAPIError(w, r, "E-AUTH-06", "the central's session ended: reload the page")
 		return
 	}
-	nodeRelayTo(w, r, v.node, "/api/"+r.PathValue("path"))
+	path := "/api/" + r.PathValue("path")
+	if r.Method != http.MethodGet {
+		mu.Lock()
+		user := cfg.Username
+		mu.Unlock()
+		LogSecurityAudit("node_relay", user, clientIP(r), fmt.Sprintf("node=%d %s %s", v.node, r.Method, path))
+	}
+	nodeRelayTo(w, r, v.node, path)
 }
 
 // nodeRelayTo relays r to node id and writes the answer.

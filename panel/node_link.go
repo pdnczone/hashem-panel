@@ -190,6 +190,7 @@ type nodeSession struct {
 	pending map[uint64]chan nodeFrame
 	parts   map[uint64]*bytes.Buffer // pm: answers arriving in parts
 	lastRx  atomic.Int64             // unix nano of the last frame from the node
+	slots   chan struct{}            // "http" calls in flight: they wait here, so the node never has to say busy
 	done    chan struct{}
 	once    sync.Once
 }
@@ -212,6 +213,16 @@ func (s *nodeSession) call(ctx context.Context, method string, body any) (json.R
 			return nil, err
 		}
 		raw = b
+	}
+	if method == "http" && s.slots != nil {
+		select {
+		case s.slots <- struct{}{}:
+			defer func() { <-s.slots }()
+		case <-s.done:
+			return nil, fmt.Errorf("node %d went offline", s.id)
+		case <-ctx.Done():
+			return nil, fmt.Errorf("node %d is busy with other requests: try again", s.id)
+		}
 	}
 	id := s.next.Add(1)
 	ch := make(chan nodeFrame, 1)
@@ -461,7 +472,8 @@ func nodeServeHello(nc *nodeConn, f nodeFrame, key, addr string) {
 		return
 	}
 	s := &nodeSession{id: rec.ID, conn: nc, addr: addr, version: f.Version, since: time.Now(),
-		pending: map[uint64]chan nodeFrame{}, parts: map[uint64]*bytes.Buffer{}, done: make(chan struct{})}
+		pending: map[uint64]chan nodeFrame{}, parts: map[uint64]*bytes.Buffer{}, done: make(chan struct{}),
+		slots: make(chan struct{}, nodeReqParallel)}
 	s.lastRx.Store(time.Now().UnixNano())
 	if old := nodeSessions[rec.ID]; old != nil {
 		old.close()
