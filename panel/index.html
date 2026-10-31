@@ -1283,6 +1283,7 @@
   .u-self-start { justify-self:start !important; align-self:start !important; }
 </style>
 
+<style>#licenseCard,#supCard,#proModal,#sentinelLicSection,#supSettingsLink,#bhLicWarn,#bagherLicWarn{display:none!important}</style>
 </head>
 <body data-t="dark">
 <svg width="0" height="0" class="u-abs" aria-hidden="true">
@@ -3147,7 +3148,7 @@
         </div>
       </section>
       <section id="tab-settings" role="tabpanel" hidden>
-        <div class="tunnel-card" id="licenseCard">
+        <div class="tunnel-card" id="licenseCard" hidden>
           <div class="tc-header u-flex u-jc-sb u-ai-c">
             <p class="tc-title">License &amp; Premium Features</p>
             <span id="licBadge" class="badge dim">FREE EDITION</span>
@@ -3190,7 +3191,7 @@
               <span id="sentinelRegionBadge" class="badge dim">REGION</span>
             </div>
           </div>
-          <div class="ent-help u-mb-12">Multi-protocol health monitor, dynamic subscription feeds, and 24h SLA tracker. Restricted to verified Iran servers with a licensed key.</div>
+          <div class="ent-help u-mb-12">Multi-protocol health monitor, dynamic subscription feeds, and 24h SLA tracker. Available in Community edition.</div>
           <div id="sentinelBodySection">
             <div class="u-c-mu u-fs-12">Loading Sentinel state…</div>
           </div>
@@ -3288,7 +3289,7 @@
         <div class="tunnel-card">
           <div class="tc-header"><p class="tc-title" data-i18n="sup_card_title">Hashem Pro License</p></div>
           <div class="qs-hint" data-i18n="sup_card_hint">One license unlocks every Pro feature: Bagher, Backhaul, Performance, Watchdog, Benchmark, Diagnostics and the path test.</div>
-          <div class="qs-actions"><a class="hashem-btn hashem-btn-secondary" id="supSettingsLink" href="https://pdnczone.com" target="_blank" rel="noopener noreferrer" data-i18n="sup_buy">Buy License</a></div>
+          <div class="qs-actions"><a class="hashem-btn hashem-btn-secondary" id="supSettingsLink" hidden href="https://pdnczone.com" target="_blank" rel="noopener noreferrer" data-i18n="sup_buy">Buy License</a></div>
         </div>
         <div class="tunnel-card">
           <div class="tc-header"><p class="tc-title">Interactive terminal</p><span class="status-indicator" id="termFlagDot"><span class="dot"></span><span id="termFlagTxt">—</span></span></div>
@@ -3691,7 +3692,7 @@
         <div class="u-flex u-jc-sb u-ai-c u-tint-ok u-bd-ok u-r-10 u-p-12x16 u-mb-12">
           <span class="u-fs-13 u-fw-700 u-c-ok u-flex u-ai-c u-gap-8">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
-            Sentinel license is active
+            Sentinel is included
           </span>
           <span class="brand-premium-badge u-m-0"><svg class="bp-gem" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10l4 6-9 12L3 9z"/><path class="bp-facet" d="M3 9h18M9 3l3 6 3-6M12 9v12"/></svg><span class="bp-label">Premium</span></span>
         </div>
