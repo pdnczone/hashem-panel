@@ -133,7 +133,7 @@ func nodeMigratePeers() []nodeMigratePeer {
 		}
 		// a server added by hand (no move tag) is joined too: by its address
 		for _, r := range nodesF.Nodes {
-			if out[i].Joined == 0 && out[i].IP != "" && r.Info.PublicIP == out[i].IP {
+			if out[i].Joined == 0 && out[i].IP != "" && !r.Held && r.Info.PublicIP == out[i].IP { // a held node's word is not taken
 				out[i].Joined = r.ID
 			}
 		}
@@ -451,8 +451,7 @@ func nodeMigrateWatching(now time.Time) bool {
 	b, err := os.ReadFile(nodeMigrateWatchFile())
 	if err != nil {
 		if os.IsNotExist(err) {
-			_ = nodeMigrateWatchReset()
-			return true
+			return nodeMigrateWatchReset() == nil // unwritten, it would look forever
 		}
 		return false
 	}
