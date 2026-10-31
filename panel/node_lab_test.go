@@ -3,7 +3,6 @@ package main
 import (
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,11 +106,7 @@ func TestNodesLab(t *testing.T) {
 	})
 
 	// the central relays a page's call to the node over the real network
-	r := httptest.NewRequest("GET", "/c/api/node/1/status", nil)
-	r.SetPathValue("id", "1")
-	r.SetPathValue("path", "status")
-	rw := httptest.NewRecorder()
-	handleNodeRelay(rw, r)
+	rw := nodeTestViewCall(nodeTestView(t, 1), "GET", "status", "")
 	if rw.Code != 200 || !strings.Contains(rw.Body.String(), `"relayed":true`) {
 		t.Fatalf("relay over the lab network: %d %s", rw.Code, rw.Body)
 	}

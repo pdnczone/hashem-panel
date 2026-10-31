@@ -31,6 +31,19 @@
     if (localStorage.getItem('hashem_sb') === '1') document.documentElement.dataset.sb = '1';
     if (localStorage.getItem('hashem_dens') === 'compact') document.documentElement.dataset.dens = 'compact';
   } catch (e) { /* storage blocked: defaults */ }
+  /* A node's view (?nv=): a sandboxed frame without storage; the central's page passes these. */
+  try {
+    var q = new URLSearchParams(location.search);
+    if (q.get('nv')) {
+      var qt = q.get('t') === 'light' ? 'light' : 'dark', qa = q.get('acc') || '', ql = q.get('lang') === 'fa' ? 'fa' : 'en';
+      document.documentElement.dataset.t = qt;
+      document.addEventListener('DOMContentLoaded', function () { document.body.dataset.t = qt; });
+      if (/^[a-z]+$/.test(qa)) document.documentElement.dataset.acc = qa;
+      document.documentElement.lang = ql;
+      document.documentElement.dir = ql === 'fa' ? 'rtl' : 'ltr';
+      if (ql === 'fa') document.documentElement.classList.add('i18n-wait');
+    }
+  } catch (e) { /* defaults */ }
   /* Language/direction before first paint (same key setLanguage() persists) so RTL never flashes LTR. */
   try {
     var l = localStorage.getItem('hashem_lang') || 'en';
@@ -1407,7 +1420,6 @@
     </div>
   </aside>
     <main class="page">
-      <div class="node-bar" id="nodeBar" role="status" hidden><span><span data-i18n="node_bar">You are managing node</span> <b id="nodeBarName" data-no-i18n></b>. <span data-i18n="node_bar_sub">Changes apply to that server.</span></span><button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" id="nodeBarBack" data-i18n="node_bar_back">Back to this server</button></div>
       <section id="tab-dashboard" role="tabpanel">
         <div class="tunnel-card onb" id="onbCard" hidden>
           <button type="button" class="onb-x" id="onbX" aria-label="Dismiss" data-i18n-aria="onb_dismiss">&#215;</button>
@@ -3186,7 +3198,7 @@
         </div>
       </section>
       <section id="tab-settings" role="tabpanel" hidden>
-        <div class="warnbox u-mb-12" id="settingsNodeNote" hidden data-i18n="settings_node_note">The login, HTTPS, 2FA and terminal settings on this page are this panel's (the central). A node's own are on its own panel; its license and Telegram alerts are relayed.</div>
+        <div class="warnbox u-mb-12" id="settingsNodeNote" hidden data-i18n="settings_node_note">This node's login, HTTPS, 2FA and terminal settings are on its own panel, not here. Its license and Telegram alerts are shown here.</div>
         <div class="tunnel-card" id="licenseCard">
           <div class="tc-header u-flex u-jc-sb u-ai-c">
             <p class="tc-title">License &amp; Premium Features</p>
@@ -3987,6 +3999,15 @@
       <button type="button" class="hashem-btn hashem-btn-primary" id="clHubAddBtn" onclick="clHubAdd()">Link Hub</button>
     </div>
   </div>
+</div>
+<div class="node-view" id="nodeView" hidden>
+  <div class="node-bar" role="status">
+    <select class="hashem-input node-pick hidden" id="nodeViewPick" aria-label="Server shown" data-i18n-aria="node_pick"></select>
+    <span class="node-bar-txt"><span data-i18n="node_bar">You are managing node</span> <b id="nodeViewName" data-no-i18n></b>. <span data-i18n="node_bar_sub">Changes apply to that server; a password asked here is that server's.</span></span>
+    <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" id="nodeViewBack" data-i18n="node_bar_back">Back to this server</button>
+  </div>
+  <div class="warnbox node-view-off" id="nodeViewOff" hidden data-i18n="node_view_off">This node is offline. Its tunnels keep running; open its own panel on that server, or wait for it to connect.</div>
+  <div class="node-view-box" id="nodeViewBox"></div>
 </div>
 <script src="app.js"></script>
 </body>

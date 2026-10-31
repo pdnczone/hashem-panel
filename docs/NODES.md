@@ -50,6 +50,12 @@ Not relayed (they stay on the panel you are logged in to): the terminal, the
 login, password, 2FA, HTTPS and access settings, and the node list. For a
 node's own, open its panel.
 
+The node's pages open in a frame of their own (a browser sandbox with no
+access to the central's page, cookies or API). It reaches only that node,
+with a token tied to your login on the central, so even a node that was
+broken into cannot act as the central. What a node sends is never shown as a
+web page of the central: files it sends are downloads.
+
 ## Licenses on nodes
 
 A Pro key active on the central is copied to each node that has no key of
@@ -63,6 +69,10 @@ its own, and activated there by the node's own license check:
 - a node that has its own key keeps it; a renewal on the central replaces
   only the copy the central gave; removing the key on the central removes
   only that copy.
+
+Adding a server as a node gives it the central's key when that key is not
+locked to a machine (the node needs it to check it). Add only your own
+servers.
 
 ## Remove or leave
 

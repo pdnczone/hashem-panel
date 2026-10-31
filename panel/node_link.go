@@ -42,6 +42,7 @@ const (
 	nodePreAuthIP   = 4        // ... from one address
 	nodeSeenFlush   = 5 * time.Minute
 	nodeReqParallel = 8
+	nodePartMax     = 256 << 10 // an answer bigger than this goes in parts, so other frames get through between them
 )
 
 // Timers (variables: the lab runs them fast).
@@ -65,6 +66,7 @@ type nodeFrame struct {
 	Reason  string          `json:"reason,omitempty"`
 	Method  string          `json:"method,omitempty"`
 	Body    json.RawMessage `json:"body,omitempty"`
+	Data    []byte          `json:"data,omitempty"` // part | res: a piece of an answer sent in parts
 	Err     string          `json:"err,omitempty"`
 }
 
@@ -186,6 +188,8 @@ type nodeSession struct {
 	next    atomic.Uint64
 	pm      sync.Mutex
 	pending map[uint64]chan nodeFrame
+	parts   map[uint64]*bytes.Buffer // pm: answers arriving in parts
+	lastRx  atomic.Int64             // unix nano of the last frame from the node
 	done    chan struct{}
 	once    sync.Once
 }
@@ -217,6 +221,7 @@ func (s *nodeSession) call(ctx context.Context, method string, body any) (json.R
 	defer func() {
 		s.pm.Lock()
 		delete(s.pending, id)
+		delete(s.parts, id)
 		s.pm.Unlock()
 	}()
 	if err := s.conn.send(nodeFrame{T: "req", ID: id, Method: method, Body: raw}); err != nil {
@@ -234,6 +239,35 @@ func (s *nodeSession) call(ctx context.Context, method string, body any) (json.R
 	case <-ctx.Done():
 		return nil, fmt.Errorf("node %d did not answer in time", s.id)
 	}
+}
+
+// alive: a frame came from the node within nodeCallTO.
+func (s *nodeSession) alive() bool {
+	return time.Since(time.Unix(0, s.lastRx.Load())) < nodeCallTO
+}
+
+// addPartLocked adds a part to its answer; at the final "res" it returns the
+// whole answer. An answer over nodeFrameMax in all is refused.
+func (s *nodeSession) addPartLocked(fr nodeFrame) nodeFrame {
+	b := s.parts[fr.ID]
+	if b == nil {
+		b = &bytes.Buffer{}
+		s.parts[fr.ID] = b
+	}
+	if b.Len()+len(fr.Data) > nodeFrameMax {
+		delete(s.parts, fr.ID)
+		return nodeFrame{T: "res", ID: fr.ID, Err: "the node's answer is too big"}
+	}
+	b.Write(fr.Data)
+	if fr.T != "res" {
+		return fr
+	}
+	delete(s.parts, fr.ID)
+	if fr.Err != "" {
+		return fr
+	}
+	fr.Body, fr.Data = json.RawMessage(b.Bytes()), nil
+	return fr
 }
 
 // nodeSessionFor is the live session of node id, or nil.
@@ -427,7 +461,8 @@ func nodeServeHello(nc *nodeConn, f nodeFrame, key, addr string) {
 		return
 	}
 	s := &nodeSession{id: rec.ID, conn: nc, addr: addr, version: f.Version, since: time.Now(),
-		pending: map[uint64]chan nodeFrame{}, done: make(chan struct{})}
+		pending: map[uint64]chan nodeFrame{}, parts: map[uint64]*bytes.Buffer{}, done: make(chan struct{})}
+	s.lastRx.Store(time.Now().UnixNano())
 	if old := nodeSessions[rec.ID]; old != nil {
 		old.close()
 	}
@@ -445,17 +480,21 @@ func nodeServeHello(nc *nodeConn, f nodeFrame, key, addr string) {
 		if err != nil {
 			break
 		}
+		s.lastRx.Store(time.Now().UnixNano())
 		if fr.T == "bye" {
 			nodeForget(s, fr.Reason)
 			break
 		}
-		if fr.T != "res" {
+		if fr.T != "res" && fr.T != "part" {
 			continue
 		}
 		s.pm.Lock()
 		ch := s.pending[fr.ID]
+		if ch != nil && (fr.T == "part" || s.parts[fr.ID] != nil) {
+			fr = s.addPartLocked(fr)
+		}
 		s.pm.Unlock()
-		if ch != nil {
+		if ch != nil && fr.T == "res" {
 			select {
 			case ch <- fr:
 			default:
@@ -489,6 +528,16 @@ func nodeInfoLoop(s *nodeSession) {
 		ctx, cancel := context.WithTimeout(context.Background(), nodeCallTO)
 		raw, err := s.call(ctx, "info", nil)
 		cancel()
+		if err != nil && s.alive() {
+			// the node is still sending (a big answer ahead of this one on a
+			// slow link): not a dead channel
+			select {
+			case <-s.done:
+				return
+			case <-t.C:
+				continue
+			}
+		}
 		if err != nil {
 			// a channel that went silent (a firewall drops it, the node hangs)
 			// may never error by itself: drop it, the node dials again
@@ -799,18 +848,44 @@ func nodeRunOnce(s nodeSelf) string {
 			log.Printf("nodes: the central removed this node; it is standalone again (tunnels untouched)")
 			return "bye"
 		case "req":
-			sem <- struct{}{}
+			if fr.Method == "info" { // small and quick: never waits behind relayed calls
+				body, err := nodeHandleReq(fr)
+				nodeSendRes(nc, fr.ID, body, err)
+				continue
+			}
+			select {
+			case sem <- struct{}{}:
+			default: // full: answer now, so this loop keeps reading
+				nodeSendRes(nc, fr.ID, nil, fmt.Errorf("this node is busy with %d requests from the central: try again in a moment", nodeReqParallel))
+				continue
+			}
 			go func(fr nodeFrame) {
 				defer func() { <-sem }()
 				body, err := nodeHandleReq(fr)
-				out := nodeFrame{T: "res", ID: fr.ID, Body: body}
-				if err != nil {
-					out.Body, out.Err = nil, err.Error()
-				}
-				_ = nc.send(out)
+				nodeSendRes(nc, fr.ID, body, err)
 			}(fr)
 		}
 	}
+}
+
+// nodeSendRes answers request id; a big answer goes in parts of nodePartMax
+// ("part" frames, then a "res" with the last piece in Data).
+func nodeSendRes(nc *nodeConn, id uint64, body json.RawMessage, err error) {
+	if err != nil {
+		_ = nc.send(nodeFrame{T: "res", ID: id, Err: err.Error()})
+		return
+	}
+	if len(body) <= nodePartMax {
+		_ = nc.send(nodeFrame{T: "res", ID: id, Body: body})
+		return
+	}
+	for len(body) > nodePartMax {
+		if nc.send(nodeFrame{T: "part", ID: id, Data: body[:nodePartMax]}) != nil {
+			return
+		}
+		body = body[nodePartMax:]
+	}
+	_ = nc.send(nodeFrame{T: "res", ID: id, Data: body})
 }
 
 // nodeHandleReq answers one request from the central.

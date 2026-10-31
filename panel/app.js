@@ -1,12 +1,24 @@
 const BASE = document.documentElement.dataset.base || '';
-// NODE: the node this page shows (on a central; null = this server). Every
-// API call then goes to /api/node/<id>/... and the central relays it; the
-// central's own login, node list and session stay local.
+// NODE: on a central, the node the page shows (null = this server). It is
+// shown in a sandboxed frame (#nodeView): the same page with ?nv=<id>, on an
+// origin of its own, so nothing a node answers can act as the central.
 let NODE = null;
 try { NODE = parseInt(sessionStorage.getItem('hashemNode') || '', 10) || null; } catch (_) { NODE = null; }
-// the central's own: its login, access, HTTPS, 2FA, terminal and node list
-const NODE_LOCAL = /^\/api\/(nodes|login|logout|session-settings|access|password|2fa|tls|metrics-token|term)(\/|\?|$)/;
-const at = p => (NODE && p.startsWith('/api/') && !NODE_LOCAL.test(p)) ? BASE + '/api/node/' + NODE + p.slice(4) : BASE + p;
+// NV: this page is that frame. Its API calls go to the central's relay for
+// the node, /api/nv/<token>/..., with a token the central's page hands it.
+const NV = (() => { try { return parseInt(new URLSearchParams(location.search).get('nv') || '', 10) || null; } catch (_) { return null; } })();
+const NV_ORIGIN = (() => { try { return new URL(location.href).origin; } catch (_) { return ''; } })();
+let NV_TOKEN = '';
+const NV_READY = NV ? new Promise(done => {
+  window.addEventListener('message', e => {
+    if (e.source !== window.parent || e.origin !== NV_ORIGIN) return;
+    const d = e.data || {};
+    if (d.hnv === 'token' && typeof d.token === 'string' && /^[0-9a-f]{64}$/.test(d.token)) { NV_TOKEN = d.token; done(); }
+  });
+  try { window.parent.postMessage({ hnv: 'ready' }, NV_ORIGIN); } catch (_) { /* not framed */ }
+}) : null;
+const at = p => (NV && p.startsWith('/api/')) ? BASE + '/api/nv/' + NV_TOKEN + p.slice(4) : BASE + p;
+if (NV) document.documentElement.classList.add('nv');
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const escapeHtml = esc;
@@ -174,6 +186,7 @@ function setCSRFToken(tok) {
 let userActiveAt = Date.now();
 ['pointerdown','keydown','wheel','touchstart'].forEach(ev => window.addEventListener(ev, () => { userActiveAt = Date.now(); }, {passive: true, capture: true}));
 async function api(path, body, method) {
+  if (NV && !NV_TOKEN) await NV_READY;
   const m = method || (body ? 'POST' : 'GET');
   const headers = {};
   if (Date.now() - userActiveAt < 30000) headers['X-User-Active'] = '1';
@@ -187,6 +200,10 @@ async function api(path, body, method) {
     headers: Object.keys(headers).length ? headers : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (r.status === 401 && NV) { // the central's login ended: its page reloads
+    try { window.parent.postMessage({ hnv: 'ended' }, NV_ORIGIN); } catch (_) { /* not framed */ }
+    throw new Error(tr('', 'The session ended: reload the page'));
+  }
   if (r.status === 401 && !path.endsWith('/api/login')) {
     showLogin();
     throw new Error('session expired');
@@ -204,7 +221,7 @@ async function api(path, body, method) {
     throw new Error(txt || r.statusText);
   }
   const data = await r.json();
-  if (data && data.csrf_token) setCSRFToken(data.csrf_token);
+  if (data && data.csrf_token && !NV) setCSRFToken(data.csrf_token);
   return data;
 }
 function showLogin() { $('login').classList.remove('hidden'); $('app').classList.add('hidden'); }
@@ -342,7 +359,6 @@ function proSync() {
 function goTab(name) {
   if (name === 'terminal' && !$('termNav').classList.contains('hidden') && $('tab-terminal').hidden && !termState.ready) { /* allowed: overlay shows connect */ }
   if (name === 'terminal' && $('termNav').classList.contains('hidden')) return; // flag off: tab doesn't exist
-  if (name === 'terminal' && NODE) { toastErr(tr('', 'The terminal is not relayed'), tr('', 'Open the node\'s own panel for its terminal, or pick This server.')); return; }
   if (name === 'add-peer') { goTab('setup'); const c = $('setupAddPeerStep'); if (c && c.scrollIntoView) c.scrollIntoView({behavior: 'smooth', block: 'start'}); return; }
   // Bagher lives in Setup (create) and Tunnel (run) like every other tunnel.
   if (name === 'sshfwd' || name === 'bagher') { openBagherSetup(); return; }
@@ -517,10 +533,11 @@ const I18N = {
     nav_customers: "Customers",
     nav_nodes: "Nodes",
     node_bar: "You are managing node",
-    node_bar_sub: "Changes apply to that server.",
+    node_bar_sub: "Changes apply to that server; a password asked here is that server's.",
+    node_view_off: "This node is offline. Its tunnels keep running; open its own panel on that server, or wait for it to connect.",
     node_bar_back: "Back to this server",
     node_pick: "Server shown",
-    settings_node_note: "The login, HTTPS, 2FA and terminal settings on this page are this panel's (the central). A node's own are on its own panel; its license and Telegram alerts are relayed.",
+    settings_node_note: "This node's login, HTTPS, 2FA and terminal settings are on its own panel, not here. Its license and Telegram alerts are shown here.",
     xray_title: "Xray Tunnel",
     xray_sub: "Forward ports from the Iran server to a foreign server over Xray: Reality, XHTTP, gRPC or mKCP, direct or reverse. It runs its own Xray-core next to any Xray panel (3x-ui, Marzban) and never touches its files, services or ports.",
     xray_idle: "No tunnel yet",
@@ -1158,7 +1175,9 @@ function toggleLang() {
 
 if ($('langToggleBtn')) $('langToggleBtn').onclick = toggleLang;
 if ($('langToggleBtnM')) $('langToggleBtnM').onclick = toggleLang;
-try { setLanguage(localStorage.getItem('hashem_lang') || 'en', true); } catch(e) { /* storage blocked: stay on default language */ }
+// a node's view has no storage: the central's page passes its language
+if (NV) setLanguage(new URLSearchParams(location.search).get('lang') === 'fa' ? 'fa' : 'en', true);
+else try { setLanguage(localStorage.getItem('hashem_lang') || 'en', true); } catch(e) { /* storage blocked: stay on default language */ }
 
 // Each value in its own <bdi> so "0.0 B/s" keeps its order inside a Persian line.
 // Live traffic card: current rates are the numbers, the lifetime total is a footnote.
@@ -7673,6 +7692,11 @@ if ($('docCopyBtn')) $('docCopyBtn').onclick = () => { if (doctorData) copyTextS
 
 // boot: if already logged in, status works; else show login
 (async () => {
+  if (NV) { // a node's view: the central's own login, HTTPS, 2FA and terminal are not this page's
+    try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); alertsRefresh(); histRefresh(); advisorRefresh(); }
+    catch(e) { showApp(); toastErr(tr('', 'Failed'), e.message); }
+    return;
+  }
   try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); metricsRefresh(); histRefresh(); advisorRefresh(); }
   catch(e) { showLogin(); }
 })();
@@ -9526,7 +9550,7 @@ _licenseData = null;
 async function loadLicense() {
   try {
     let d = await api('/api/license');
-    if (!d || !d.is_valid) {
+    if ((!d || !d.is_valid) && !NV) { // a node's view never sends this browser's saved key
       let saved = null;
       try { saved = localStorage.getItem('hashem_bagher_license'); } catch (e) {}
       if (saved && saved.trim()) {
@@ -11836,7 +11860,7 @@ function nodeRow(n) {
     </div>
     <div class="qs-hint lm-num">${esc(tr('', 'Key'))} ${esc(n.key_fp)}${i.machine_hash ? ' · ' + esc(tr('', 'Machine ID')) + ' ' + esc(i.machine_hash) : ''}</div>
     <div class="lm-acts">
-      ${n.online ? `<button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openNodeHere(${n.id})">${esc(tr('', 'Open'))}</button>` : ''}
+      ${n.online ? `<button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openNodeHere(${Number(n.id)})">${esc(tr('', 'Open'))}</button>` : ''}
       <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openNodeRename(${n.id})">${esc(tr('', 'Rename'))}</button>
       <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30 u-c-er" onclick="nodeRemove(${n.id})">${esc(tr('', 'Remove'))}</button>
     </div></div>`;
@@ -11973,52 +11997,102 @@ async function nodeCancelInvites() {
 }
 
 // ---- the node picker (header): which server the pages show ----
+// A node is shown in #nodeView, a sandboxed frame over this page, with a
+// token from /api/nodes that reaches only that node's relay.
 let _nodePickList = [];
 function nodePickRender() {
-  const sel = $('nodePick');
-  if (!sel) return;
-  const show = _nodePickList.length > 0;
-  sel.classList.toggle('hidden', !show);
-  if (!show) return;
-  const opts = [`<option value="">${esc(tr('', 'This server'))}</option>`].concat(_nodePickList.map(n =>
-    `<option value="${n.id}"${n.online ? '' : ' disabled'}>${esc(n.name)}${n.online ? '' : ' — ' + esc(tr('', 'Offline'))}</option>`));
-  sel.innerHTML = opts.join('');
-  sel.value = NODE ? String(NODE) : '';
-  const bar = $('nodeBar');
-  if (bar) {
-    const n = _nodePickList.find(x => x.id === NODE);
-    bar.hidden = !n;
-    if (n) $('nodeBarName').textContent = n.name + ((n.info && n.info.public_ip) ? ' · ' + n.info.public_ip : '');
+  for (const id of ['nodePick', 'nodeViewPick']) {
+    const sel = $(id);
+    if (!sel) continue;
+    const show = _nodePickList.length > 0 && !NV;
+    sel.classList.toggle('hidden', !show);
+    if (!show) continue;
+    const opts = [`<option value="">${esc(tr('', 'This server'))}</option>`].concat(_nodePickList.map(n =>
+      `<option value="${Number(n.id)}"${n.online ? '' : ' disabled'}>${esc(n.name)}${n.online ? '' : ' — ' + esc(tr('', 'Offline'))}</option>`));
+    sel.innerHTML = opts.join('');
+    sel.value = NODE ? String(NODE) : '';
   }
-  const term = $('termNav');
-  if (term) term.classList.toggle('node-off', !!NODE);
-  const note = $('settingsNodeNote');
-  if (note) note.hidden = !NODE;
+  const n = _nodePickList.find(x => x.id === NODE);
+  const name = $('nodeViewName');
+  if (name && n) name.textContent = n.name + ((n.info && n.info.public_ip) ? ' · ' + n.info.public_ip : '');
+  const off = $('nodeViewOff');
+  if (off) off.hidden = !n || !!n.online;
 }
 async function nodePickLoad() {
+  if (NV) return;
   let d;
-  try { d = await (await fetch(BASE + '/api/nodes', { cache: 'no-store' })).json(); } catch (_) { return; }
+  try {
+    const r = await fetch(BASE + '/api/nodes', { cache: 'no-store' });
+    if (!r.ok) return; // keep what is shown: a failed read is not "no nodes"
+    d = await r.json();
+  } catch (_) { return; }
   _nodePickList = (d && d.role === 'central' && d.nodes) || [];
   if (NODE && !_nodePickList.some(n => n.id === NODE)) nodePickSet(null); // removed
+  else if (NODE && !$('nodeFrame')) nodeViewOpen();
   nodePickRender();
 }
 function nodePickSet(id) {
+  if (NV) return;
   NODE = id || null;
   try { if (NODE) sessionStorage.setItem('hashemNode', String(NODE)); else sessionStorage.removeItem('hashemNode'); } catch (_) { /* private mode */ }
+  nodeViewOpen();
   nodePickRender();
-  // the license and every page come from the chosen server now
-  if (typeof _licenseData !== 'undefined') _licenseData = null;
-  try { loadLicense(); } catch (_) { /* not ready */ }
-  const cur = [...document.querySelectorAll('main.page > section[role=tabpanel]')].find(x => !x.hidden);
-  const tab = cur ? cur.id.replace(/^tab-/, '') : 'dashboard';
-  goTab(NODE && tab === 'terminal' ? 'dashboard' : tab);
-  try { refreshDash(); } catch (_) { /* not ready */ }
 }
-function openNodeHere(id) { nodePickSet(id); goTab('dashboard'); }
+let _nodeViewTok = null; // {id, token}
+async function nodeViewOpen() {
+  const ov = $('nodeView'), box = $('nodeViewBox');
+  if (!ov || !box) return;
+  const old = $('nodeFrame');
+  if (old) old.remove();
+  if (!NODE) { ov.hidden = true; document.documentElement.classList.remove('nv-open'); return; }
+  ov.hidden = false;
+  document.documentElement.classList.add('nv-open');
+  const id = NODE;
+  if (!_nodeViewTok || _nodeViewTok.id !== id) {
+    try {
+      const d = await api('/api/nodes', { action: 'view', id });
+      _nodeViewTok = { id, token: d.token };
+    } catch (e) { toastErr(tr('', 'Failed'), e.message); nodePickSet(null); return; }
+  }
+  if (NODE !== id || $('nodeFrame')) return; // changed meanwhile
+  const f = document.createElement('iframe');
+  f.id = 'nodeFrame';
+  f.className = 'node-frame';
+  f.setAttribute('sandbox', 'allow-scripts allow-forms allow-downloads allow-modals allow-popups');
+  f.setAttribute('referrerpolicy', 'no-referrer');
+  f.title = tr('', 'Node');
+  const q = new URLSearchParams({ nv: String(id), lang: currentLang || 'en', t: document.documentElement.dataset.t || 'dark' });
+  if (document.documentElement.dataset.acc) q.set('acc', document.documentElement.dataset.acc);
+  f.src = BASE + '/?' + q.toString();
+  box.appendChild(f);
+}
+window.addEventListener('message', e => {
+  if (NV) return;
+  const f = $('nodeFrame');
+  if (!f || e.source !== f.contentWindow || !_nodeViewTok || _nodeViewTok.id !== NODE) return;
+  const d = e.data || {};
+  // the frame has an opaque origin: '*' is the only target, and the token
+  // goes only to the frame this page made
+  if (d.hnv === 'ready') f.contentWindow.postMessage({ hnv: 'token', token: _nodeViewTok.token }, '*');
+  if (d.hnv === 'ended') location.reload();
+});
+function openNodeHere(id) { nodePickSet(id); }
 (function initNodePick() {
-  const sel = $('nodePick');
-  if (sel) sel.onchange = () => nodePickSet(parseInt(sel.value, 10) || null);
-  const back = $('nodeBarBack');
+  if (NV) {
+    // what this page cannot do for a node: the central's login, access,
+    // HTTPS, 2FA, terminal and node list, and this browser's own settings
+    ['nodesNav', 'termNav', 'logoutBtn', 'logoutBtnM', 'langToggleBtn', 'langToggleBtnM', 'themeBtn', 'themeBtnM',
+      'metricsCard', 'accessCard', 'idleCard', 'twofaCard', 'appearanceCard', 'nodePick'].forEach(id => { const el = $(id); if (el) el.classList.add('nv-off'); });
+    ['curPass', 'termFlagDot', 'tlsDot'].forEach(id => { const el = $(id); const c = el && el.closest('.tunnel-card'); if (c) c.classList.add('nv-off'); });
+    const note = $('settingsNodeNote');
+    if (note) note.hidden = false;
+    return;
+  }
+  for (const id of ['nodePick', 'nodeViewPick']) {
+    const sel = $(id);
+    if (sel) sel.onchange = () => nodePickSet(parseInt(sel.value, 10) || null);
+  }
+  const back = $('nodeViewBack');
   if (back) back.onclick = () => nodePickSet(null);
   nodePickLoad();
   setInterval(() => { if (!document.hidden) nodePickLoad(); }, 30000);
