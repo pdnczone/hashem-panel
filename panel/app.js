@@ -22,7 +22,7 @@ if (NV) document.documentElement.classList.add('nv');
 // the user working in a node's view keeps the central's login from going idle
 if (NV) {
   let sent = 0;
-  ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(ev => window.addEventListener(ev, () => {
+  ['pointerdown', 'keydown'].forEach(ev => window.addEventListener(ev, () => {
     if (Date.now() - sent < 20000) return;
     sent = Date.now();
     try { window.parent.postMessage({ hnv: 'active' }, NV_ORIGIN); } catch (_) { /* not framed */ }
@@ -3676,6 +3676,7 @@ function doLogin() {
       await api('/api/login', {username: $('u').value, password: $('p').value, code: $('totpCode').value.trim()});
       $('p').value = ''; $('totpCode').value = ''; $('codeField').classList.add('hidden'); $('loginErr').textContent = '';
       showApp(); refresh(); loadSetupDefaults(); loadVersion(); accessRefresh(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); metricsRefresh(); histRefresh(); advisorRefresh();
+      nodePickLoad(); // a node chosen before the login reopens
     } catch(e) {
       if (e.code === 'E-AUTH-09') { $('codeField').classList.remove('hidden'); $('totpCode').focus(); }
       $('loginErr').textContent = e.message;
@@ -12059,7 +12060,7 @@ async function nodePickLoad() {
   let d;
   try {
     const r = await fetch(BASE + '/api/nodes', { cache: 'no-store', headers: Date.now() - userActiveAt < 30000 ? { 'X-User-Active': '1' } : {} });
-    if (r.status === 401) { if (NODE) location.reload(); return; } // logged out: the login page
+    if (r.status === 401) { if (NODE) { _nodeViewTok = null; nodeViewHide(); showLogin(); } return; } // logged out: the login page (the node reopens after it)
     if (!r.ok) return; // keep what is shown: a failed read is not "no nodes"
     d = await r.json();
   } catch (_) { return; }
@@ -12081,7 +12082,7 @@ async function nodeViewOpen() {
   if (!ov || !box) return;
   const old = $('nodeFrame');
   if (old) old.remove();
-  if (!NODE) { ov.hidden = true; document.documentElement.classList.remove('nv-open'); return; }
+  if (!NODE) { nodeViewHide(); return; }
   ov.hidden = false;
   document.documentElement.classList.add('nv-open');
   const id = NODE;
@@ -12111,25 +12112,37 @@ window.addEventListener('message', e => {
   // the frame has an opaque origin: '*' is the only target, and the token
   // goes only to the frame this page made
   if (d.hnv === 'ready') f.contentWindow.postMessage({ hnv: 'token', token: _nodeViewTok.token }, '*');
-  if (d.hnv === 'active' && document.hasFocus()) { userActiveAt = Date.now(); nodePickLoad(); }
-  if (d.hnv === 'ended') nodeViewEnded();
+  // only a real click or key press counts: it also activates this page (user
+  // activation reaches the frame's ancestors), which no script can fake
+  const ua = navigator.userActivation;
+  if (d.hnv === 'active' && document.hasFocus() && (!ua || ua.isActive)) { userActiveAt = Date.now(); nodePickLoad(); }
+  if (d.hnv === 'ended' && !f._ended) { f._ended = true; nodeViewEnded(); } // once per frame: its calls may all get it
 });
-// nodeViewEnded: the frame's token was refused. This page's own login
-// decides: gone, the login page; still there, a fresh token, once; again
-// soon after, the view is closed (a node cannot keep this tab reloading).
-let _nodeViewEndedAt = 0;
+// nodeViewHide takes the view off the page; NODE stays chosen.
+function nodeViewHide() {
+  const f = $('nodeFrame'), ov = $('nodeView');
+  if (f) f.remove();
+  if (ov) ov.hidden = true;
+  document.documentElement.classList.remove('nv-open');
+}
+// nodeViewEnded: the frame's token was refused (the central restarted, or
+// its login ended). This page's own login decides: gone, the login page;
+// still there, a reload (fresh CSRF token and view token, the same node);
+// again within a minute, the view is closed, so a node cannot keep the tab
+// reloading.
 async function nodeViewEnded() {
   let r = null;
-  try { r = await fetch(BASE + '/api/nodes', { cache: 'no-store' }); } catch (_) { /* offline */ }
-  if (r && r.status === 401) { nodePickSet(null); location.reload(); return; }
-  _nodeViewTok = null;
-  if (Date.now() - _nodeViewEndedAt < 60000) {
+  try { r = await fetch(BASE + '/api/nodes', { cache: 'no-store' }); } catch (_) { /* restarting */ }
+  if (r && r.status === 401) { _nodeViewTok = null; nodeViewHide(); showLogin(); return; } // the node reopens after the login
+  let last = 0;
+  try { last = parseInt(sessionStorage.getItem('hashemNodeEnded') || '0', 10) || 0; } catch (_) { /* private mode */ }
+  if (Date.now() - last < 60000) {
     toastErr(tr('', 'Failed'), tr('', 'The node view was closed: open the node again.'));
     nodePickSet(null);
     return;
   }
-  _nodeViewEndedAt = Date.now();
-  nodeViewOpen();
+  try { sessionStorage.setItem('hashemNodeEnded', String(Date.now())); } catch (_) { /* private mode: no cap across the reload */ }
+  setTimeout(() => location.reload(), r ? 0 : 3000); // not answering: give a restart a moment
 }
 function openNodeHere(id) { nodePickSet(id); }
 (function initNodePick() {
