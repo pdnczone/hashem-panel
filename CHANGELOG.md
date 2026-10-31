@@ -3,6 +3,15 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## v3.0.1 — 2026-10-31
+
+**Uninstall now removes everything, so a reinstall goes through.** Run `hashem update`.
+
+- **Full uninstall** (`hashem uninstall`) finds every systemd unit Hashem or its panel wrote, by name or by the binary and config it runs, and stops, disables and deletes it together with its drop-in folder and its `.wants` links. Units it used to leave behind (the Rescue tunnel and firewall units, `hashem-frp-ssh-tunnel`, Bagher carriers, carrier-swap and custom-named GRE units) kept ports, nftables rules and crash loops alive, and the next install stuck on them.
+- Each stop is limited to 15 seconds, and a unit that will not stop is killed, so the uninstall no longer hangs on a stuck unit.
+- The Rescue (`hashem_rescue`) and DNAT (`hashem_dnat`) nftables tables are deleted.
+- Other software's units (Sentinel, x-ui, Xray, sing-box, WireGuard) are not touched.
+
 ## v3.0.0 — 2026-10-31
 
 **Manage all your servers from one panel**, **sell tunnels to customers**, and a dashboard whose traffic numbers add up. Run `hashem update` on every server. Running tunnels are not touched by the update; node mode stays off until you turn it on.
