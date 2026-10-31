@@ -10358,7 +10358,7 @@ Usage:
   hashem settings [show | 2fa off | terminal on|off | terminal-allow [IP ...] | idle MIN]  # panel settings
   hashem license [status | activate KEY | machine-id | deactivate]
   hashem cluster [status | pool add PORT [--mode M] | pool rm|mode ... | member add|rm|drain|resume PORT LINK | join-code | add-hub CODE | events | rules]
-  hashem node-join <hn1.code> [--name N] | node [status | leave]   # this server as a node of a central panel
+  hashem node-join <hn1.code | -> [--name N] | node [status | leave]   # this server as a node of a central panel
   hashem join-hub --bundle hsh1_...|bh1_...|gh1_... | leave-hub --id N | hubs   # foreign side: serve several Iran hubs
   hashem optimize | restore | tune-status
   hashem carrier [status|mode auto|direct|fou:P|wss:P|set direct|fou:P|wss:P|next] # multi-carrier failover
@@ -11432,9 +11432,14 @@ cli_node_join() {
         echo -e "${RED}[!] The installed panel has no node support (is the update channel on a release that has it?).${NC}"
         return 1
     fi
-    # on stdin to the panel too: printf is a builtin, so the code is in no argv
-    if [[ -n "$name" ]]; then printf '%s\n' "$code" | "$PANEL_BIN" node join - --name "$name"
-    else printf '%s\n' "$code" | "$PANEL_BIN" node join -; fi
+    local -a nm=()
+    [[ -n "$name" ]] && nm=(--name "$name")
+    if panel_supports "join CODE|-"; then
+        # on stdin to the panel too: printf is a builtin, so the code is in no argv
+        printf '%s\n' "$code" | "$PANEL_BIN" node join - "${nm[@]}"
+    else
+        "$PANEL_BIN" node join "$code" "${nm[@]}"  # a first node build: no stdin yet
+    fi
 }
 
 cli_cluster() {
