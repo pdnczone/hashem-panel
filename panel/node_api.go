@@ -4,11 +4,13 @@ package main
 // (gre-panel node ...). node.go and node_link.go are the rest.
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -311,7 +313,13 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''
 // that has Hashem, or the installer (which installs it and joins) on one
 // that has not.
 func nodeJoinCommand(c nodeCode, name string, install bool) string {
-	args := "node-join " + shellQuote(c.String())
+	return nodeJoinCommandArg(shellQuote(c.String()), name, install)
+}
+
+// nodeJoinCommandArg is nodeJoinCommand with the code argument as given
+// ("-": read it from stdin).
+func nodeJoinCommandArg(code, name string, install bool) string {
+	args := "node-join " + code
 	if name != "" {
 		args += " --name " + shellQuote(name)
 	}
@@ -415,7 +423,8 @@ func nodeSSHStart(self nodeSelf, req nodeRequest) (nodeSSHResult, error) {
 	if !nodeUserRe.MatchString(req.User) {
 		return nodeSSHResult{}, nodeErr{"E-NODE-01", "SSH user: a Linux user name"}
 	}
-	if req.Password == "" && req.SSHKey == "" {
+	// the first call only reads the host key: it needs no password or key
+	if req.HostKey != "" && req.Password == "" && req.SSHKey == "" {
 		return nodeSSHResult{}, nodeErr{"E-NODE-01", "give the SSH password or a private key"}
 	}
 	addr := net.JoinHostPort(req.Host, strconv.Itoa(req.Port))
@@ -471,15 +480,17 @@ func nodeSSHStart(self nodeSelf, req nodeRequest) (nodeSSHResult, error) {
 		nodeSSH.jobs = append([]*nodeSSHJob(nil), nodeSSH.jobs[n:]...)
 	}
 	nodeSSH.Unlock()
-	cmd := nodeSSHCommand(code, name, req.User != "root")
-	go nodeSSHRun(job, addr, cc, cmd)
+	cmd := nodeSSHCommand(name, req.User != "root")
+	go nodeSSHRun(job, addr, cc, cmd, code.String())
 	return nodeSSHResult{Job: job.ID}, nil
 }
 
 // nodeSSHCommand: hashem node-join when Hashem is there, else the installer.
-func nodeSSHCommand(c nodeCode, name string, sudo bool) string {
-	script := "set -e; if command -v hashem >/dev/null 2>&1; then " + nodeJoinCommand(c, name, false) +
-		"; else " + nodeJoinCommand(c, name, true) + "; fi"
+// The code goes on stdin ("-"), not in the command line, where other users
+// of the server (ps, the sudo log) could read it.
+func nodeSSHCommand(name string, sudo bool) string {
+	script := "set -e; if command -v hashem >/dev/null 2>&1; then " + nodeJoinCommandArg("-", name, false) +
+		"; else " + nodeJoinCommandArg("-", name, true) + "; fi"
 	cmd := "bash -c " + shellQuote(script)
 	if sudo {
 		cmd = "sudo -n " + cmd
@@ -503,7 +514,7 @@ func (l nodeSSHLog) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func nodeSSHRun(job *nodeSSHJob, addr string, cc *ssh.ClientConfig, cmd string) {
+func nodeSSHRun(job *nodeSSHJob, addr string, cc *ssh.ClientConfig, cmd, code string) {
 	fail := func(msg string) {
 		nodeSSH.Lock()
 		job.State, job.Ended = "failed", time.Now().Unix()
@@ -524,7 +535,7 @@ func nodeSSHRun(job *nodeSSHJob, addr string, cc *ssh.ClientConfig, cmd string) 
 		return
 	}
 	defer sess.Close()
-	sess.Stdout, sess.Stderr = logw, logw
+	sess.Stdout, sess.Stderr, sess.Stdin = logw, logw, strings.NewReader(code+"\n")
 	_, _ = logw.Write([]byte("[*] logged in; installing or updating Hashem and joining this central\n"))
 	done := make(chan error, 1)
 	go func() { done <- sess.Run(cmd) }()
@@ -567,8 +578,12 @@ func cliNode(args []string) int {
 				code = args[i]
 			}
 		}
+		if code == "-" { // on stdin: not visible in the process list
+			line, _ := bufio.NewReader(io.LimitReader(os.Stdin, 4096)).ReadString('\n')
+			code = strings.TrimSpace(line)
+		}
 		if code == "" {
-			fmt.Fprintln(os.Stderr, "Usage: gre-panel node join <hn1.code> [--name NAME]")
+			fmt.Fprintln(os.Stderr, "Usage: gre-panel node join <hn1.code | -> [--name NAME]")
 			return 2
 		}
 		loadOrInitQuiet()

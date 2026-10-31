@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // nodeTestCentral makes this process a fresh central in its own config dir
@@ -345,9 +347,10 @@ func TestNodeCodeAndURL(t *testing.T) {
 	if !strings.HasPrefix(cmd, "bash <(curl -fsSL "+nodeInstallURL+") node-join '") || !strings.Contains(cmd, `--name 'it'\''s'`) {
 		t.Fatalf("install command: %s", cmd)
 	}
-	ssh := nodeSSHCommand(c, "n", true)
-	if !strings.HasPrefix(ssh, "sudo -n bash -c '") || !strings.Contains(ssh, "command -v hashem") {
-		t.Fatalf("ssh command: %s", ssh)
+	ssh := nodeSSHCommand("n", true)
+	if !strings.HasPrefix(ssh, "sudo -n bash -c '") || !strings.Contains(ssh, "command -v hashem") ||
+		strings.Contains(ssh, "hn1.") || !strings.Contains(ssh, "node-join -") {
+		t.Fatalf("ssh command (the code goes on stdin, never in it): %s", ssh)
 	}
 }
 
@@ -417,7 +420,7 @@ func TestNodeSSHValidation(t *testing.T) {
 		{Host: "a b", Password: "x"},
 		{Host: "1.2.3.4", Port: 70000, Password: "x"},
 		{Host: "1.2.3.4", User: "Root;rm", Password: "x"},
-		{Host: "1.2.3.4"},
+		{Host: "1.2.3.4", HostKey: "SHA256:x"},
 		{Host: "1.2.3.4", SSHKey: "not a key", HostKey: "SHA256:x"},
 	} {
 		if _, err := nodeSSHStart(nodeSelf{}, req); err == nil || nodeErrCode(err) != "E-NODE-01" {
@@ -430,4 +433,52 @@ func TestNodeSSHValidation(t *testing.T) {
 func nodeLabFast() {
 	nodeHandshakeTO, nodeInfoEvery, nodeCallTO, nodeIdleTO = 3*time.Second, time.Second, 2*time.Second, 4*time.Second
 	nodeRefusedRetry, nodeBackoffMax = 2*time.Second, 2*time.Second
+}
+
+// The first frame is capped before anything is known about the peer, and
+// the buffer grows with the data, not with the size the header claims.
+func TestNodeFrameCaps(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	go func() {
+		_, _ = b.Write([]byte{0x01, 0, 0, 0}) // claims 16 MiB
+		_, _ = b.Write([]byte("{"))
+	}()
+	nc := &nodeConn{c: a}
+	if _, err := nc.recv(2*time.Second, nodeFirstMax); err == nil || !strings.Contains(err.Error(), "bad frame size") {
+		t.Fatalf("an oversized first frame: %v", err)
+	}
+}
+
+func TestNodePreAuthLimits(t *testing.T) {
+	for i := 0; i < nodePreAuthIP; i++ {
+		if !nodePreAuthTake("198.51.100.9") {
+			t.Fatalf("take %d", i)
+		}
+	}
+	if nodePreAuthTake("198.51.100.9") {
+		t.Fatal("more half-open links from one address than the cap")
+	}
+	for i := 0; i < nodePreAuthIP; i++ {
+		nodePreAuthDone("198.51.100.9")
+	}
+	if !nodePreAuthTake("198.51.100.9") {
+		t.Fatal("the slots came back")
+	}
+	nodePreAuthDone("198.51.100.9")
+	nodePreAuth.Lock()
+	n := nodePreAuth.n
+	nodePreAuth.Unlock()
+	if n != 0 {
+		t.Fatalf("leak: %d", n)
+	}
+}
+
+func TestNodeInfoClean(t *testing.T) {
+	long := strings.Repeat("ن", 500)
+	i := nodeInfoClean(nodeInfo{Hostname: long, Version: long, License: nodeLicense{Features: make([]string, 100)}})
+	if len(i.Hostname) > 128 || len(i.Version) > 64 || len(i.License.Features) != 32 || !utf8.ValidString(i.Hostname) {
+		t.Fatalf("not capped: %d %d %d", len(i.Hostname), len(i.Version), len(i.License.Features))
+	}
 }
