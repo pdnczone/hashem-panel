@@ -5503,6 +5503,9 @@ function renderSpoof() {
       <p class="qs-hint${/^icmp/.test(d.recv_transport || '') ? '' : ' hidden'}" id="spIcmpHint">${esc(tr('', 'Receiving over ICMP turns off ping replies on this whole server while the tunnel runs (the spoof core needs the echo packets). Checks that ping this server will see it as down.'))}</p>
       <label class="qs-label">${esc(tr('', 'Spoof source IPs (one per line, from the tester)'))}</label>
       <textarea class="hashem-input u-ltr u-mono sp-ips" id="spIPs" rows="3" placeholder="203.0.113.7">${esc(ips)}</textarea>
+      ${isLocal ? `<label class="qs-label" for="spFwd">${esc(tr('', 'Forwarded ports'))}</label>
+      <input class="hashem-input u-ltr u-mono" id="spFwd" value="${esc((d.forward_ports || []).join(', '))}" placeholder="443, 8080-8090" autocomplete="off">
+      <p class="qs-hint">${esc(tr('', 'Users connect to these ports on this server; their TCP and UDP traffic goes through the tunnel to the same port on the foreign server. The service there must listen on that port. Without ports the tunnel is up but carries nothing.'))} <span class="u-mono" data-no-i18n>→ ${esc(d.wg_peer_ip || '10.20.0.2')}</span></p>` : ''}
       <div class="sp-acts">
         <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" id="spSaveBtn">${esc(tr('', 'Save'))}</button>
         ${d.enabled
@@ -5556,6 +5559,8 @@ function spoofFormReq(action) {
     listen_port: num('spListen'), recv_port: num('spRecv'), spoof_port: num('spSpoofPort'),
     send_transport: ($('spSend') || {}).value, recv_transport: ($('spRecvT') || {}).value,
     spoof_ips: ips,
+    // Only the Iran side has the field; leaving it out keeps the saved list.
+    ...($('spFwd') ? { forward_ports: $('spFwd').value.trim() } : {}),
   };
 }
 
@@ -11016,11 +11021,13 @@ let _sentinelData = null;
 
 // The browser already reached this server by window.location.hostname, which is
 // more reliable than the IP the backend detects (often a private/NAT address).
+// With the panel's certificate, Sentinel serves HTTPS and only the name on the
+// certificate passes the browser's check, so that name is used.
 function sentinelDisplayUrl(d) {
   if (!d || !d.port) return '';
-  const host = window.location.hostname || '127.0.0.1';
+  const host = (d.https && d.host) || window.location.hostname || '127.0.0.1';
   const h = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
-  return `http://${h}:${d.port}${d.path || '/'}`;
+  return `${d.https ? 'https' : 'http'}://${h}:${d.port}${d.path || '/'}`;
 }
 
 async function loadSentinelState() {

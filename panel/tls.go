@@ -537,6 +537,8 @@ func startHTTPSListener() {
 	if cliMode { // gre-panel tls ...: the service restart serves the new files
 		return
 	}
+	// Sentinel serves the same certificate (or drops it once it is removed).
+	go syncSentinelTLS()
 	httpsSrvMu.Lock()
 	defer httpsSrvMu.Unlock()
 

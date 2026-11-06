@@ -66,6 +66,8 @@ window.FA_TEXT = {
 "Send transport": "ترابری ارسال",
 "Recv transport": "ترابری دریافت",
 "Spoof source IPs (one per line, from the tester)": "IPهای مبدأ اسپوف (هر کدام یک خط، از تستر)",
+"Forwarded ports": "پورت‌های فوروارد",
+"Users connect to these ports on this server; their TCP and UDP traffic goes through the tunnel to the same port on the foreign server. The service there must listen on that port. Without ports the tunnel is up but carries nothing.": "کاربران به این پورت‌ها روی همین سرور وصل می‌شوند و ترافیک TCP و UDP آن‌ها از تانل به همان پورت روی سرور خارج می‌رسد. سرویس آنجا باید روی همان پورت گوش بدهد. بدون پورت، تانل برقرار است ولی چیزی از آن رد نمی‌شود.",
 "Saved": "ذخیره شد",
 "Stop tunnel": "توقف تونل",
 "Apply & restart": "اعمال و راه‌اندازی دوباره",

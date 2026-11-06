@@ -6203,6 +6203,7 @@ uninstall_all_force() {
         purge_hashem_units
         nft delete table inet hashem_rescue >/dev/null 2>&1 || true
         nft delete table inet hashem_dnat >/dev/null 2>&1 || true
+        nft delete table inet hashem_spoof >/dev/null 2>&1 || true
 
         # 2. Terminate any leftover processes
         pkill -9 -f "${INSTALL_DIR}/frps" >/dev/null 2>&1 || true

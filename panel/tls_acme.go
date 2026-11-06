@@ -276,4 +276,7 @@ func tlsRemoveAll() {
 	_ = os.Remove(tlsKeyFile())
 	_ = os.Remove(tlsMetaFile())
 	clearTLSBackups()
+	if !cliMode {
+		go syncSentinelTLS()
+	}
 }

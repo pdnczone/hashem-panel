@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/rand"
+	"crypto/tls"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -30,6 +31,9 @@ type SentinelConfig struct {
 	IsIranDecided bool   `json:"is_iran_decided"`
 	HasLicense    bool   `json:"has_license"`
 	Version       string `json:"version"`
+	// HTTPS: Sentinel serves the panel's certificate; Host is the name on it.
+	HTTPS bool   `json:"https"`
+	Host  string `json:"host,omitempty"`
 }
 
 // sentinelMu guards the locality config file. Installs take sentinelInstallMu
@@ -39,12 +43,105 @@ var (
 	sentinelInstallMu sync.Mutex
 )
 
+// Paths are vars so tests can point them at a temp dir.
+var (
+	sentinelDir      = "/opt/sentinel"
+	sentinelUnitPath = "/etc/systemd/system/sentinel.service"
+	// sentinelTLSDropIn makes Sentinel serve HTTPS with the panel's certificate.
+	sentinelTLSDropIn = "/etc/systemd/system/sentinel.service.d/hashem-tls.conf"
+	sentinelTLSMu     sync.Mutex
+	// sentinelSystemctlHook runs systemctl for syncSentinelTLS (tests replace it).
+	sentinelSystemctlHook = func(args ...string) {
+		_, _ = runCmdTimeout(30*time.Second, "systemctl", args...)
+	}
+)
+
 const (
-	sentinelDir         = "/opt/sentinel"
-	sentinelUnitPath    = "/etc/systemd/system/sentinel.service"
 	sentinelInstallTime = 15 * time.Minute
 	sentinelStartWait   = 25 * time.Second
 )
+
+func sentinelTLSCertPath() string { return filepath.Join(sentinelDir, "certs", "hashem.crt") }
+func sentinelTLSKeyPath() string  { return filepath.Join(sentinelDir, "certs", "hashem.key") }
+
+// sentinelTLSDropInBody points Sentinel at the panel's certificate. Sentinel
+// only knew its own self-signed one, so a domain certificate issued in the
+// panel never reached it and browsers kept warning on the Sentinel page.
+func sentinelTLSDropInBody() string {
+	return "# Written by the Hashem panel: Sentinel serves HTTPS with the panel's certificate.\n" +
+		"[Service]\n" +
+		"Environment=SENTINEL_USE_HTTPS=1\n" +
+		"Environment=SENTINEL_SSL_CERT=" + sentinelTLSCertPath() + "\n" +
+		"Environment=SENTINEL_SSL_KEY=" + sentinelTLSKeyPath() + "\n"
+}
+
+// sentinelTLSActive reports whether Sentinel was set up to use the panel's
+// certificate.
+func sentinelTLSActive() bool {
+	_, err := os.Stat(sentinelTLSDropIn)
+	return err == nil
+}
+
+// syncSentinelTLS gives Sentinel the panel's current certificate, or takes it
+// away when the panel has none, and restarts Sentinel when anything changed.
+// It runs after every issue, renew, upload or removal, at panel start and
+// after a Sentinel install. It returns true when it changed something.
+func syncSentinelTLS() bool {
+	sentinelTLSMu.Lock()
+	defer sentinelTLSMu.Unlock()
+	if !sentinelInstalled() {
+		return false
+	}
+	var crt, key []byte
+	if tlsHasCert() {
+		c, err1 := os.ReadFile(tlsCertFile())
+		k, err2 := os.ReadFile(tlsKeyFile())
+		if err1 == nil && err2 == nil {
+			if _, err := tls.X509KeyPair(c, k); err == nil {
+				crt, key = c, k
+			}
+		}
+	}
+	curDropIn, _ := os.ReadFile(sentinelTLSDropIn)
+	if crt == nil {
+		if len(curDropIn) == 0 {
+			return false
+		}
+		_ = os.Remove(sentinelTLSDropIn)
+		_ = os.Remove(sentinelTLSCertPath())
+		_ = os.Remove(sentinelTLSKeyPath())
+	} else {
+		curCrt, _ := os.ReadFile(sentinelTLSCertPath())
+		curKey, _ := os.ReadFile(sentinelTLSKeyPath())
+		if string(curDropIn) == sentinelTLSDropInBody() && bytes.Equal(curCrt, crt) && bytes.Equal(curKey, key) {
+			return false
+		}
+		if err := os.MkdirAll(filepath.Dir(sentinelTLSCertPath()), 0700); err != nil {
+			recordError("E-SENTINEL-03", "sentinel TLS", err.Error())
+			return false
+		}
+		if err := os.WriteFile(sentinelTLSKeyPath(), key, 0600); err != nil {
+			recordError("E-SENTINEL-03", "sentinel TLS", err.Error())
+			return false
+		}
+		if err := os.WriteFile(sentinelTLSCertPath(), crt, 0600); err != nil {
+			recordError("E-SENTINEL-03", "sentinel TLS", err.Error())
+			return false
+		}
+		if err := os.MkdirAll(filepath.Dir(sentinelTLSDropIn), 0755); err != nil {
+			recordError("E-SENTINEL-03", "sentinel TLS", err.Error())
+			return false
+		}
+		if err := os.WriteFile(sentinelTLSDropIn, []byte(sentinelTLSDropInBody()), 0644); err != nil {
+			recordError("E-SENTINEL-03", "sentinel TLS", err.Error())
+			return false
+		}
+	}
+	sentinelSystemctlHook("daemon-reload")
+	// try-restart: a stopped Sentinel stays stopped and picks it up on start.
+	sentinelSystemctlHook("try-restart", "sentinel.service")
+	return true
+}
 
 // CheckSentinelEligibility validates that the license has "sentinel" feature.
 // Region blocking is removed so Sentinel works smoothly anywhere.
@@ -286,7 +383,18 @@ func GetSentinelStatus() SentinelConfig {
 		}
 		cleanPath := "/" + strings.Trim(cfg.Path, "/") + "/"
 		cfg.Path = cleanPath
-		cfg.URL = "http://" + hostPort(pubHost, cfg.Port) + cleanPath
+		scheme := "http://"
+		if sentinelTLSActive() {
+			cfg.HTTPS = true
+			scheme = "https://"
+			// The certificate names the domain (or IP) it was issued for; any
+			// other host name fails the browser's check.
+			if m := tlsMetaLoad(); m != nil && m.Domain != "" {
+				cfg.Host = m.Domain
+				pubHost = m.Domain
+			}
+		}
+		cfg.URL = scheme + hostPort(pubHost, cfg.Port) + cleanPath
 	}
 
 	return cfg
@@ -371,6 +479,9 @@ func handleSentinelPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Serve the panel's certificate from the first start, when it has one.
+		syncSentinelTLS()
+
 		if !waitSentinelPort(true, sentinelStartWait) {
 			writeAPIError(w, r, "E-SENTINEL-03", "Sentinel was installed but its web panel did not start listening.\n"+sentinelJournalTail())
 			return
@@ -409,6 +520,7 @@ func handleSentinelPost(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, r, "E-SENTINEL-03", fmt.Sprintf("cannot remove %s: %v", sentinelUnitPath, err))
 			return
 		}
+		_ = os.Remove(sentinelTLSDropIn)
 		_, _ = runCmdTimeout(30*time.Second, "systemctl", "daemon-reload")
 		writeJSON(w, map[string]any{
 			"status":  "ok",

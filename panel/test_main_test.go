@@ -25,6 +25,10 @@ func TestMain(m *testing.M) {
 	frpDir = filepath.Join(dir, "frp")
 	backhaulDir = filepath.Join(dir, "backhaul")
 	revpathSysctlConf = filepath.Join(dir, "sysctl.d", "99-hashem-revpath.conf")
+	sentinelDir = filepath.Join(dir, "sentinel")
+	sentinelUnitPath = filepath.Join(dir, "systemd", "sentinel.service")
+	sentinelTLSDropIn = filepath.Join(dir, "systemd", "sentinel.service.d", "hashem-tls.conf")
+	sentinelSystemctlHook = func(args ...string) {}
 	runSystemctl = func(args ...string) error { return nil }
 	// Host commands that go through the runner fail by default; tests that
 	// need output install their own stub. Nothing here ever reaches the host.

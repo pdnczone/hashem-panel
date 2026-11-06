@@ -88,6 +88,11 @@ type spoofState struct {
 	WGListen   int    `json:"wg_listen"` // foreign WireGuard listen port
 	CorePort   int    `json:"core_port"` // local core UDP listen
 
+	// ForwardPorts (Iran side) are the ports users connect to on this server;
+	// their TCP and UDP traffic goes over WireGuard to the same port on the
+	// foreign server. Without them the tunnel came up but carried nothing.
+	ForwardPorts []int `json:"forward_ports,omitempty"`
+
 	LastError string `json:"last_error,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
 }
@@ -225,6 +230,86 @@ func (s *spoofState) ensureSpoofKeys() error {
 func spoofCoreConfigPath() string { return filepath.Join(spoofDir, "config.json") }
 func spoofIPFilePath() string     { return filepath.Join(spoofDir, "spoof-ips.txt") }
 func spoofWGConfPath() string     { return filepath.Join(wgConfDir, spoofIface+".conf") }
+func spoofForwardNftPath() string { return filepath.Join(spoofDir, "forward.nft") }
+
+// spoofNftTable holds the forwarding rules; wg-quick loads it on up and drops
+// it on down, so it lives exactly as long as the WireGuard link.
+const spoofNftTable = "hashem_spoof"
+
+// forwarding reports whether this server forwards user ports over the tunnel.
+func (s spoofState) forwarding() bool { return s.Role == "local" && len(s.ForwardPorts) > 0 }
+
+// forwardNft is the nftables file for the Iran side. Traffic to a forwarded
+// port on this host goes to the same port on the foreign WireGuard address;
+// masquerade makes the replies come back over the tunnel. The MSS clamp keeps
+// TCP segments inside the 1280-byte WireGuard MTU: without it, connections
+// open but large transfers stall. The first two lines make the load
+// idempotent (create the table if missing, then drop it).
+func (s spoofState) forwardNft() string {
+	ps := make([]string, 0, len(s.ForwardPorts))
+	for _, p := range s.ForwardPorts {
+		ps = append(ps, strconv.Itoa(p))
+	}
+	pl := strings.Join(ps, ", ")
+	return fmt.Sprintf(`table inet %[1]s
+delete table inet %[1]s
+table inet %[1]s {
+  chain prerouting {
+    type nat hook prerouting priority dstnat - 4; policy accept;
+    iifname != "%[2]s" meta nfproto ipv4 fib daddr type local meta l4proto { tcp, udp } th dport { %[3]s } dnat ip to %[4]s
+  }
+  chain postrouting {
+    type nat hook postrouting priority srcnat + 4; policy accept;
+    oifname "%[2]s" ip daddr %[4]s masquerade
+  }
+  chain forward {
+    type filter hook forward priority mangle; policy accept;
+    oifname "%[2]s" tcp flags syn tcp option maxseg size set rt mtu
+    iifname "%[2]s" tcp flags syn tcp option maxseg size set rt mtu
+  }
+}
+`, spoofNftTable, spoofIface, pl, s.WGPeerIP)
+}
+
+// spoofReservedPorts are ports a forward must not take over: SSH, the panel
+// (HTTP and HTTPS) and the spoof core's own ports on this server.
+func (s spoofState) reservedPorts() map[int]string {
+	r := map[int]string{22: "SSH"}
+	if cfg.Port > 0 {
+		r[cfg.Port] = "the panel"
+	}
+	if tlsHasCert() {
+		if p := effectiveTLSPort(); p > 0 {
+			r[p] = "the panel's HTTPS"
+		}
+	}
+	if s.RecvPort > 0 {
+		r[s.RecvPort] = "the spoof recv port"
+	}
+	return r
+}
+
+// setForwardPorts parses "443, 8080-8090" into the forwarded port list.
+// An empty string clears it.
+func (s *spoofState) setForwardPorts(spec string) error {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		s.ForwardPorts = nil
+		return nil
+	}
+	ports, err := parsePortList(spec)
+	if err != nil {
+		return fmt.Errorf("forwarded ports: %v", err)
+	}
+	res := s.reservedPorts()
+	for _, p := range ports {
+		if why, ok := res[p]; ok {
+			return fmt.Errorf("forwarded port %d is used by %s on this server", p, why)
+		}
+	}
+	s.ForwardPorts = ports
+	return nil
+}
 
 // coreConfig builds the JSON the spoof binary reads (`spoof run -c`).
 func (s spoofState) coreConfig() map[string]any {
@@ -288,6 +373,10 @@ func (s spoofState) wgConfig() string {
 	if s.Role == "remote" {
 		fmt.Fprintf(&b, "ListenPort = %d\n", s.WGListen)
 	}
+	if s.forwarding() {
+		fmt.Fprintf(&b, "PostUp = sysctl -q -w net.ipv4.ip_forward=1; nft -f %s\n", spoofForwardNftPath())
+		fmt.Fprintf(&b, "PostDown = nft delete table inet %s 2>/dev/null || true\n", spoofNftTable)
+	}
 	b.WriteString("\n[Peer]\n")
 	fmt.Fprintf(&b, "PublicKey = %s\n", s.WGPeerPub)
 	fmt.Fprintf(&b, "AllowedIPs = %s/32\n", s.WGPeerIP)
@@ -299,6 +388,16 @@ func (s spoofState) wgConfig() string {
 }
 
 func (s spoofState) writeWGConfig() error {
+	if s.forwarding() {
+		if err := os.MkdirAll(spoofDir, 0700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(spoofForwardNftPath(), []byte(s.forwardNft()), 0600); err != nil {
+			return err
+		}
+	} else {
+		_ = os.Remove(spoofForwardNftPath())
+	}
 	if err := os.MkdirAll(wgConfDir, 0700); err != nil {
 		return err
 	}
@@ -374,13 +473,23 @@ func applySpoof(s spoofState) (string, error) {
 		return "", fmt.Errorf("start WireGuard (%s): %w", wgUnit, err)
 	}
 	_ = runSystemctl("enable", wgUnit)
-	return "Spoof tunnel is up on " + s.Role + " (" + s.SendTransport + "/" + s.RecvTransport + ").", nil
+	msg := "Spoof tunnel is up on " + s.Role + " (" + s.SendTransport + "/" + s.RecvTransport + ")."
+	switch {
+	case s.forwarding():
+		msg += fmt.Sprintf(" Forwarding %d port(s) to %s on the foreign server.", len(s.ForwardPorts), s.WGPeerIP)
+	case s.Role == "local":
+		msg += " No ports are forwarded yet: add them under \"Forwarded ports\" so users reach the foreign server through this tunnel."
+	}
+	return msg, nil
 }
 
 func stopSpoof() error {
 	wgUnit := spoofWGUnitTmpl + spoofIface
 	_ = runSystemctl("disable", "--now", wgUnit)
 	_ = runSystemctl("disable", "--now", spoofCoreSvc)
+	// wg-quick's PostDown drops the forwarding table; this covers a link that
+	// was already down.
+	_, _ = runCmd("nft", "delete", "table", "inet", spoofNftTable)
 	return nil
 }
 
@@ -393,6 +502,25 @@ func openSpoofFirewall(s spoofState) {
 	if s.Role == "local" && s.RecvPort > 0 {
 		allowUFWPorts([]int{s.RecvPort})
 	}
+	spoofUFWTunnel(s)
+}
+
+// spoofUFWTunnel lets the forwarded traffic through ufw: its default policy
+// drops routed packets (Iran side) and anything that arrives on a new
+// interface (foreign side), so the link was up and every forward was dropped.
+var spoofUFWTunnel = func(s spoofState) {
+	out, err := exec.Command("ufw", "status").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "Status: active") {
+		return
+	}
+	if s.Role == "local" {
+		if s.forwarding() {
+			_, _ = exec.Command("ufw", "route", "allow", "out", "on", spoofIface).CombinedOutput()
+			_, _ = exec.Command("ufw", "route", "allow", "in", "on", spoofIface).CombinedOutput()
+		}
+		return
+	}
+	_, _ = exec.Command("ufw", "allow", "in", "on", spoofIface).CombinedOutput()
 }
 
 // spoofHealth is a best-effort runtime view (Linux only; empty elsewhere).
@@ -602,6 +730,7 @@ func spoofView(s spoofState) map[string]any {
 		"wg_local_ip":    s.WGLocalIP,
 		"wg_peer_ip":     s.WGPeerIP,
 		"has_keys":       s.WGPrivKey != "" && s.WGPubKey != "",
+		"forward_ports":  s.ForwardPorts,
 		"last_error":     s.LastError,
 	}
 }
@@ -630,6 +759,8 @@ type spoofPostRequest struct {
 	SendTransport string   `json:"send_transport,omitempty"`
 	RecvTransport string   `json:"recv_transport,omitempty"`
 	Bundle        string   `json:"bundle,omitempty"`
+	// ForwardPorts is "443, 8080-8090"; nil leaves the list as it is.
+	ForwardPorts *string `json:"forward_ports,omitempty"`
 }
 
 func handleSpoofPost(w http.ResponseWriter, r *http.Request) {
@@ -646,6 +777,10 @@ func handleSpoofPost(w http.ResponseWriter, r *http.Request) {
 	switch strings.ToLower(strings.TrimSpace(req.Action)) {
 	case "save":
 		applySpoofForm(&s, req)
+		if err := applySpoofForwardForm(&s, req); err != nil {
+			writeAPIError(w, r, "E-ENGINE-02", err.Error())
+			return
+		}
 		if err := saveSpoofState(s); err != nil {
 			writeAPIError(w, r, "E-ACTION-01", err.Error())
 			return
@@ -696,6 +831,10 @@ func handleSpoofPost(w http.ResponseWriter, r *http.Request) {
 
 	case "up", "apply":
 		applySpoofForm(&s, req)
+		if err := applySpoofForwardForm(&s, req); err != nil {
+			writeAPIError(w, r, "E-ENGINE-02", err.Error())
+			return
+		}
 		// The Iran server owns both keypairs, so it makes any that are missing
 		// instead of refusing to start; the foreign server only gets the peer
 		// key from the bundle, so it cannot.
@@ -769,6 +908,15 @@ func applySpoofForm(s *spoofState, req spoofPostRequest) {
 		s.RecvTransport = req.RecvTransport
 	}
 	s.applyRoleDefaults()
+}
+
+// applySpoofForwardForm takes the forwarded ports from a request, when it has
+// them. Only the Iran server forwards; the foreign server just answers.
+func applySpoofForwardForm(s *spoofState, req spoofPostRequest) error {
+	if req.ForwardPorts == nil {
+		return nil
+	}
+	return s.setForwardPorts(*req.ForwardPorts)
 }
 
 // cleanSpoofIPs keeps only valid, unique IPv4 addresses.

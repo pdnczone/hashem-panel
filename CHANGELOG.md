@@ -3,6 +3,16 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## v3.0.2 — 2026-11-06
+
+**The Spoof tunnel carries traffic, and Sentinel uses the panel's certificate.** Run `hashem update` on both servers.
+
+- **Spoof Tunnel: forwarded ports.** The tunnel came up (both services active, WireGuard handshake fresh) but nothing went through it: no user port was ever forwarded to the foreign server. The Iran server's Spoof tab has a new **Forwarded ports** field (`443, 8080-8090`). TCP and UDP to those ports on the Iran server go through the tunnel to the same port on the foreign server (`10.20.0.2`); the service there must listen on that port. The rules (nftables table `hashem_spoof`, with an MSS clamp so large transfers do not stall inside the 1280-byte WireGuard MTU) are loaded when WireGuard comes up and removed when it goes down, so they survive a reboot. SSH, the panel's ports and the spoof receive port cannot be forwarded.
+- With ufw active, routed traffic over `wg-spoof` is allowed on the Iran server and incoming traffic on `wg-spoof` on the foreign server; ufw's default policy dropped both.
+- **Sentinel serves the panel's certificate.** A certificate issued or uploaded in the panel (Let's Encrypt, custom or IP) never reached Sentinel, which kept serving plain HTTP or its own self-signed certificate. Sentinel now gets a copy and serves HTTPS with it, restarts when it is renewed or replaced, and goes back to its own setting when the certificate is removed. The Sentinel link opens `https://` on the name in the certificate.
+- Sentinel: a certificate it cannot load falls back to its self-signed one instead of a crash loop, and the TLS handshake no longer runs in the accept loop, so one slow client cannot stall the Sentinel page.
+- `hashem uninstall` also deletes the `hashem_spoof` nftables table.
+
 ## v3.0.1 — 2026-10-31
 
 **Uninstall now removes everything, so a reinstall goes through.** Run `hashem update`.
