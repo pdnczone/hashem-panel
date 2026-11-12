@@ -3288,9 +3288,30 @@
           <div class="tc-header"><p class="tc-title">Carrier advisor</p></div>
           <div class="ent-help" id="advMsg">Collecting data…</div>
           <div class="ent-help" id="advStats"></div>
-          <div class="ent-help">Advice only — the panel never switches the carrier by itself. Suggestions for a new port / SNI:</div>
+          <div class="ent-help">Advice only. Autopilot (the next card) switches by itself when a tunnel stays down. Suggestions for a new port / SNI:</div>
           <div class="ent-help" id="advSuggest"></div>
           <div><button class="hashem-btn hashem-btn-secondary" id="advRefresh">Refresh</button></div>
+        </div>
+        <div class="tunnel-card" id="autopilotCard">
+          <div class="tc-header"><p class="tc-title">Autopilot <span class="eng-pro hidden" id="apPro" data-no-i18n>PRO</span></p></div>
+          <div class="ent-help">When a tunnel stays down, Autopilot tests the path between the two servers, moves the tunnel to a carrier that gets through, on both servers, and tells you. When the new carrier does not connect, both servers go back to the old one.</div>
+          <div class="ent-help" id="apNote"></div>
+          <label class="ent-help"><input type="checkbox" id="apEnabled"> Turn Autopilot on</label>
+          <div class="fg"><label for="apDown">Minutes a tunnel must be down first (2–720)</label><input class="hashem-input" id="apDown" type="number" min="2" max="720" value="5"></div>
+          <div class="fg"><label for="apCool">Minutes between two runs for one tunnel (10–1440)</label><input class="hashem-input" id="apCool" type="number" min="10" max="1440" value="30"></div>
+          <div class="fg"><label for="apPerDay">Runs for one tunnel in 24 hours (1–24)</label><input class="hashem-input" id="apPerDay" type="number" min="1" max="24" value="6"></div>
+          <label class="ent-help"><input type="checkbox" id="apPathTest"> Test the path first and take the fastest carrier that gets through</label>
+          <label class="ent-help"><input type="checkbox" id="apNotify"> Send a message to the webhook and Telegram <span id="apNotifyNote"></span></label>
+          <div class="fg"><label for="apQuietFrom">Quiet hours: no switching from this hour (0–23, server time)</label><input class="hashem-input" id="apQuietFrom" type="number" min="0" max="23" value="0"></div>
+          <div class="fg"><label for="apQuietTo">to this hour (the same hour twice: no quiet hours)</label><input class="hashem-input" id="apQuietTo" type="number" min="0" max="23" value="0"></div>
+          <div class="fg"><label for="apCarriers">Allowed carriers, comma separated (empty: every carrier the tunnel can run)</label><input class="hashem-input" id="apCarriers" autocomplete="off" spellcheck="false" placeholder="backhaul:wssmux, backhaul:tcpmux, frp:kcp"></div>
+          <div class="ent-help" id="apCarrierList"></div>
+          <div id="apTunnels"></div>
+          <div>
+            <button class="hashem-btn hashem-btn-primary" id="apSave">Save</button>
+            <button class="hashem-btn hashem-btn-secondary" id="apRefresh">Refresh</button>
+          </div>
+          <div class="ent-help" id="apEvents"></div>
         </div>
         <div class="tunnel-card" id="historyCard">
           <div class="tc-header"><p class="tc-title">Link history (last hours)</p></div>

@@ -606,6 +606,7 @@ func snapshotTick() bool {
 	historyOnSnapshot(snap)
 	usageOnSnapshot(snap)
 	carrierAdvisorOnSnapshot(snap)
+	autopilotOnSnapshot(snap)
 	return true
 }
 

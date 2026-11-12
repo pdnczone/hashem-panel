@@ -8926,6 +8926,22 @@ except Exception:
     done
 }
 
+# hashem autopilot [status | on [-down N] [-cooldown N] [-per-day N] [-no-path-test] | off]
+# Autopilot lives in the panel (autopilot.go): this only sets it. Turning it
+# on is Hashem Pro, as in the panel; status and off never ask.
+cli_autopilot() {
+    local SUB="${1:-status}"
+    shift || true
+    local bin="${PANEL_BIN:-/usr/local/bin/gre-panel}"
+    [[ -x "$bin" ]] || { echo -e "${RED}[!] The panel is not installed: Autopilot is part of it.${NC}"; return 1; }
+    case "$SUB" in
+        on|enable) pro_ok autopilot Autopilot || return 1; "$bin" autopilot on "$@" ;;
+        off|disable) "$bin" autopilot off ;;
+        status) "$bin" autopilot status ;;
+        *) echo "Usage: hashem autopilot [status | on [-down 5] [-cooldown 30] [-per-day 6] [-no-path-test] | off]"; return 2 ;;
+    esac
+}
+
 cli_watchdog() {
     local SUB="$1"
     shift || true
@@ -10580,6 +10596,7 @@ Usage:
   hashem perf status|apply|reset|enc on|off|comp on|off|tcpmux on|off|autopool on|off
   hashem perf proxy-protocol off|v1|v2 | bandwidth MB | health-check on|off | backhaul-pool N
   hashem watchdog on|off|status|test|tick      # tunnel watchdog monitoring & alerts
+  hashem autopilot [status|on|off]             # Pro: move a tunnel that stays down to a carrier that gets through
   hashem backup now [--keep N] | restore <f> | schedule ... | status | key
   hashem tgsend "msg"                          # send Telegram alert manually
   hashem doctor [server|stop-server|fix]       # latency, jitter, MTU & speed; fix = the panel's Quick Repair
@@ -11908,6 +11925,7 @@ if [[ $# -gt 0 ]]; then
         restart-lite|tunnel-restart-lite) restart_all_lite; echo -e "${GREEN}[OK] Tunnel services restarted successfully.${NC}" ;;
         perf) shift; cli_perf "$@" ;;
         watchdog) shift; cli_watchdog "$@" ;;
+        autopilot) shift; cli_autopilot "$@" ;;
         backup) shift; cli_backup "$@" ;;
         tgsend) shift; watchdog_send "$1" ;;
         update|update-all) shift; update_all "$@" ;;

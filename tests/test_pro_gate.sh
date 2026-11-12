@@ -15,6 +15,7 @@ eval "$(ext pro_ok)"
 # fake panel binary: "license check F" succeeds only for the features in $T/unlocked
 cat > "$T/gre-panel" <<EOF
 #!/bin/bash
+[[ "\$1" == autopilot ]] && { echo "AP \$*"; exit 0; }
 [[ "\$1 \$2" == "license check" ]] && grep -qx "\$3" "$T/unlocked" 2>/dev/null
 EOF
 chmod +x "$T/gre-panel"
@@ -71,6 +72,15 @@ check "Pro license: hashem perf apply runs" APPLIED "$(cli_perf apply)"
 check "Pro license: hashem watchdog on runs" ON "$(cli_watchdog on)"
 check "Pro license: hashem doctor runs" DOCTOR "$(cli_doctor)"
 check "Pro license: hashem backup now runs" BACKED "$(cli_backup now)"
+# Autopilot: turning it on is Pro; status and off never ask
+eval "$(ext cli_autopilot)"
+: > "$T/unlocked"
+check "no license: hashem autopilot on refused" "" "$(cli_autopilot on 2>/dev/null | grep '^AP')"
+check "no license: hashem autopilot status runs" "AP autopilot status" "$(cli_autopilot)"
+check "no license: hashem autopilot off runs" "AP autopilot off" "$(cli_autopilot off)"
+echo autopilot > "$T/unlocked"
+check "Pro license: hashem autopilot on runs with its options" "AP autopilot on -down 8" "$(cli_autopilot on -down 8)"
+check "hashem autopilot is a command" 1 "$(grep -c '^        autopilot) shift; cli_autopilot' hashem.sh)"
 # the update re-applies perf.json without asking
 check "update_all never asks for a license" 0 "$(ext update_all | grep -c 'pro_ok\|cli_perf')"
 

@@ -290,9 +290,10 @@ const (
 	proXray        = "xray"
 	proLimits      = "limits"
 	proCustomers   = "customers"
+	proAutopilot   = "autopilot"
 )
 
-var proFeatures = []string{proPathTest, proBackhaul, proDiagnostics, proPerformance, proWatchdog, proBenchmark, proSpoof, proXray, proLimits, proCustomers}
+var proFeatures = []string{proPathTest, proBackhaul, proDiagnostics, proPerformance, proWatchdog, proBenchmark, proSpoof, proXray, proLimits, proCustomers, proAutopilot}
 
 func hasPro(feature string) bool {
 	if HasFeature(feature) || HasFeature("bagher") || HasFeature("frp_ssh") {
