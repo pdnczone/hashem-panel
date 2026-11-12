@@ -34,7 +34,7 @@ func fakeWorker(t *testing.T, ip6 string) (*[]PeerApplyCarrierRequest, *sync.Mut
 		}
 	}))
 	t.Cleanup(srv.Close)
-	withPeerLink(t, PeerConfig{Role: "master", PeerSecret: "s3cret", PeerURL: srv.URL, IsConnected: true, AutoPilotExplicit: true})
+	withPeerLink(t, PeerConfig{Role: "master", PeerSecret: "s3cret", PeerURL: srv.URL, IsConnected: true})
 	return &got, &mu
 }
 

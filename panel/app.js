@@ -382,9 +382,10 @@ function proSync() {
   tag('navCustomersPro', 'customers');
   tag('custPro', 'customers');
   tag('apPro', 'autopilot');
+  tag('navAutopilotPro', 'autopilot');
   if ($('navClusterPro')) $('navClusterPro').classList.toggle('hidden', clLicensed());
   if ($('navSentinelPro')) $('navSentinelPro').classList.toggle('hidden', isSentinelLicensed());
-  ['navPerfPro', 'navWatchdogPro', 'navBenchmarkPro', 'navSpoofPro', 'navXrayPro', 'navCustomersPro', 'navClusterPro', 'navDoctorPro', 'navSentinelPro'].forEach(id => {
+  ['navPerfPro', 'navWatchdogPro', 'navBenchmarkPro', 'navSpoofPro', 'navXrayPro', 'navCustomersPro', 'navAutopilotPro', 'navClusterPro', 'navDoctorPro', 'navSentinelPro'].forEach(id => {
     const el = $(id); if (!el) return;
     const t = id === 'navSentinelPro' ? tr('pro_addon', 'Add-on license') : 'Hashem Pro';
     el.title = t; el.setAttribute('aria-label', t);
@@ -421,7 +422,7 @@ function goTab(name) {
     openBagherLicModal('cluster');
     return;
   }
-  ['dashboard','tunnel','cluster','nodes','setup','xray','customers','logs','perf','watchdog','doctor','benchmark','spoof','update','settings','terminal'].forEach(t => { const el = $('tab-'+t); if (el) el.hidden = t !== name; });
+  ['dashboard','tunnel','cluster','nodes','setup','xray','customers','autopilot','logs','perf','watchdog','doctor','benchmark','spoof','update','settings','terminal'].forEach(t => { const el = $('tab-'+t); if (el) el.hidden = t !== name; });
   const markTab = b => {
     const on = b.dataset.tab === name;
     b.classList.toggle('on', on);
@@ -443,6 +444,7 @@ function goTab(name) {
   if (name === 'spoof') loadSpoof();
   if (name === 'xray') loadXray();
   if (name === 'customers') loadCustomers();
+  if (name === 'autopilot') autopilotRefresh(true);
   if (name === 'nodes') { _ntLinks = null; loadNodes().then(() => { loadNodeTunnels(); nodeFleetLoad(); }); }
   if (name === 'update') loadVersion();
   if (name === 'logs') { refreshLogPeers(); loadLogs(); loadErrors(); armLogFollow(); }
@@ -571,6 +573,7 @@ const I18N = {
     spoof_idle: "Not configured",
     nav_xray: "Xray",
     nav_customers: "Customers",
+    nav_autopilot: "Autopilot",
     nav_nodes: "Nodes",
     node_bar: "You are managing node",
     node_bar_sub: "Changes apply to that server; a password asked here is that server's.",
@@ -778,16 +781,11 @@ const I18N = {
     wd_events_title: "Watchdog Event Log",
 
     // Benchmark Tab
-    bench_title: "Carrier Benchmark & Auto-Pilot",
+    bench_title: "Carrier Benchmark",
     bench_peer_link_title: "Inter-Panel Link (Peer)",
     bench_peer_link_sub: "Master/Worker dual-path synchronization with remote panel.",
     bench_peer_test_btn: "Test Connection",
     bench_peer_cfg_btn: "Configure Link",
-    bench_failover_title: "Automatic Failover",
-    bench_failover_sub: "Strictly OFF by default. When OFF, the tunnel never switches automatically.",
-    bench_failover_toggle: "Enable Automatic Failover (Auto-Switching)",
-    bench_failover_threshold: "Packet Loss Trigger Threshold (%)",
-    bench_failover_save: "Save Failover Policy",
     bench_leaderboard_title: "Carrier Performance Leaderboard",
     bench_run_btn: "Run Carrier Benchmark",
     pro_t_wd: "Watchdog — Hashem Pro",
@@ -986,13 +984,9 @@ const I18N = {
     close: "Close",
     x002: "Iran",
     x003: "Foreign",
-    x004: "Automatic",
-    x005: "Manual",
     x006: "No recent errors",
     x007: "Engine",
-    x008: "Carrier & Failover",
     x009: "Active Carrier",
-    x010: "Failover Policy",
     x011: "Diagnostics",
     x012: "tunnel up",
     x013: "Open full card in Tunnel tab",
@@ -2790,7 +2784,7 @@ async function refreshDash() {
       det = serverCard + `<div class="det-empty">${esc(tr('', 'Tunnel, engine and carrier details appear here after Setup.'))}</div>`;
     } else {
       const engCell = f.up ? dbadge(tr('status_running', 'Running'), 'ok') : dbadge(tr('', 'Stopped'), 'err');
-      const failCell = d.auto_failover ? dbadge(tr('x004', 'Automatic'), 'ok') : dbadge(tr('x005', 'Manual'), '');
+      const failCell = d.auto_failover ? dbadge(tr('', 'On'), 'ok') : dbadge(tr('', 'Off'), '');
       const diagCell = d.last_error
         ? `<span class="badge err" title="${esc(d.last_error.detail || '')}"><span class="dot"></span>${esc(d.last_error.code || 'ERR')} (${esc(String(d.last_error.time || '').slice(11, 19))})</span>`
         : dbadge(tr('x006', 'No recent errors'), on ? 'ok' : '');
@@ -2799,7 +2793,7 @@ async function refreshDash() {
         + ((f.svc || f.up || f.port) ? detCard(ICO_FRP, tr('card_frp_title', 'Tunnel Engine'), detRow(tr('x007', 'Engine'), dval(engine || f.svc || '—')) + detRow(tr('lbl_frp_status', 'Status'), engCell) + detRow(portLabel, bindPort ? dmono(bindPort) : dval('—'))
           + (proxyPorts.length ? detRow(tr('lbl_tunnel_ports', 'Tunnel Ports'), `<span class="det-v det-ports">${proxyPorts.map(p => `<span class="det-v mono">${esc(String(p))}</span>`).join('')}</span>`) : '')
           + (u.frp_since ? detRow(tr('lbl_uptime_since', 'Since'), dval(u.frp_since)) : '')) : '')
-        + detCard(ICO_BOLT, tr('x008', 'Carrier & Failover'), detRow(tr('x009', 'Active Carrier'), dmono(String(d.active_carrier || 'direct'))) + detRow(tr('x010', 'Failover Policy'), failCell) + detRow(tr('x011', 'Diagnostics'), diagCell));
+        + detCard(ICO_BOLT, tr('', 'Carrier'), detRow(tr('x009', 'Active Carrier'), dmono(String(d.active_carrier || 'direct'))) + detRow(tr('', 'Autopilot'), failCell) + detRow(tr('x011', 'Diagnostics'), diagCell));
     }
     setHTML('dashDetails', det);
     // one-click copy for IP/port pills
@@ -3679,7 +3673,7 @@ function doLogin() {
     try {
       await api('/api/login', {username: $('u').value, password: $('p').value, code: $('totpCode').value.trim()});
       $('p').value = ''; $('totpCode').value = ''; $('codeField').classList.add('hidden'); $('loginErr').textContent = '';
-      showApp(); refresh(); loadSetupDefaults(); loadVersion(); accessRefresh(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); metricsRefresh(); histRefresh(); advisorRefresh(); autopilotRefresh();
+      showApp(); refresh(); loadSetupDefaults(); loadVersion(); accessRefresh(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); metricsRefresh(); histRefresh(); advisorRefresh();
       nodePickLoad(); // a node chosen before the login reopens
       migrateBannerLoad();
     } catch(e) {
@@ -4310,61 +4304,184 @@ async function advisorRefresh() {
   } catch(e) {}
 }
 $('advRefresh').onclick = advisorRefresh;
-// ---- Autopilot (autopilot.go): a down tunnel is moved to a carrier that gets through ----
-let _apData = null;
-function apStateText(t) {
-  if (t.running) return tr('', 'Autopilot is working') + (t.progress ? ': ' + tr('', t.progress) : '');
-  if (t.state === 'down') return tr('', 'down') + (t.down_sec ? ' ' + Math.floor(t.down_sec / 60) + ' ' + tr('', 'min') : '') + (t.waiting ? ' · ' + tr('', t.waiting) : '');
-  return tr('', t.state || 'unknown');
+// ---- Autopilot tab (autopilot.go): a down tunnel is moved to a carrier that gets through ----
+let _apData = null, _apDirty = false, _apQ = {from: 0, to: 0}, _apPick = -1, _apCars = null, _apTimer = null, _apBusy = false;
+const AP_GROUPS = [
+  ['backhaul', 'Backhaul', 'Without GRE'],
+  ['frp', 'GRE + FRP', 'Inside the GRE link'],
+  ['gre-backhaul', 'GRE + Backhaul', 'Inside the GRE link'],
+];
+function apMin(n) { return n + ' ' + tr('', 'min'); }
+function apSetDirty(d) { _apDirty = d; $('apDirty').classList.toggle('hidden', !d); }
+function apQuietHas(h) {
+  const q = _apQ; if (q.from === q.to) return false;
+  return q.from < q.to ? (h >= q.from && h < q.to) : (h >= q.from || h < q.to);
 }
-function apRender() {
-  const r = _apData; if (!r) return;
-  const c = r.config || {};
-  $('apEnabled').checked = !!c.enabled; $('apDown').value = c.down_minutes || 5; $('apCool').value = c.cooldown_minutes || 30;
-  $('apPerDay').value = c.max_per_day || 6; $('apPathTest').checked = !!c.path_test; $('apNotify').checked = !!c.notify;
-  $('apQuietFrom').value = c.quiet_from || 0; $('apQuietTo').value = c.quiet_to || 0;
-  $('apCarriers').value = (c.carriers || []).join(', ');
-  $('apNotifyNote').textContent = r.notify_ready ? '' : tr('', '(set a webhook in External alerts or a Telegram bot in the Watchdog tab first)');
-  $('apCarrierList').textContent = tr('', 'Carriers') + ': ' + (r.carriers || []).join(', ');
-  let note = '';
-  if (!r.iran) note = tr('', 'Autopilot runs on the Iran server: it switches the foreign server too. Turn it on there.');
-  else if (!r.licensed) note = tr('', 'Autopilot is a Hashem Pro feature. Without a license it does nothing.');
-  else if (c.enabled && c.path_test && !r.path_test_licensed) note = tr('', 'This license does not include the path test: the carriers are tried in order instead.');
-  else if (c.enabled) note = tr('', 'On. The foreign panel must answer on its public address: with the tunnel down there is no other way to tell it.');
-  $('apNote').textContent = note;
-  const skip = new Set(c.skip || []);
-  $('apTunnels').innerHTML = (r.tunnels || []).map(t => {
-    const can = t.can_swap;
-    return `<label class="ent-help"><input type="checkbox" class="ap-tun" value="${t.id}" ${can && !skip.has(t.id) ? 'checked' : ''} ${can ? '' : 'disabled'}> ` +
-      `<b>${esc(t.name)}</b>${t.carrier ? ' · ' + esc(t.carrier) : ''} · ${esc(apStateText(t))}` +
-      `${can ? '' : ' · ' + esc(tr('', 'no carrier to swap'))}${can && !t.seen_up ? ' · ' + esc(tr('', 'not seen up yet')) : ''}` +
-      `${t.runs_day ? ' · ' + t.runs_day + ' ' + esc(tr('', 'runs today')) : ''}</label>`;
-  }).join('') || '<div class="ent-help">' + esc(tr('', 'No tunnels yet.')) + '</div>';
+function apPad(h) { return String(h).padStart(2, '0') + ':00'; }
+function apRenderHours() {
+  $('apHours').innerHTML = Array.from({length: 24}, (_, h) =>
+    `<button type="button" class="ap-hr${apQuietHas(h) ? ' h-q' : ''}${_apPick === h ? ' h-pick' : ''}" data-h="${h}" aria-pressed="${apQuietHas(h)}" title="${apPad(h)}">${h}</button>`).join('');
+  $('apQuietOut').textContent = _apPick >= 0 ? apPad(_apPick) + ' → …'
+    : (_apQ.from === _apQ.to ? tr('', 'None') : apPad(_apQ.from) + ' → ' + apPad(_apQ.to));
+}
+function apRenderCars() {
+  const all = (_apData && _apData.carriers) || [];
+  $('apCars').innerHTML = AP_GROUPS.map(([eng, name, sub]) => {
+    const list = all.filter(c => c.split(':')[0] === eng);
+    if (!list.length) return '';
+    return `<div class="ap-car-row"><span>${esc(tr('', name))}<small>${esc(tr('', sub))}</small></span><div class="ap-car-chips">` +
+      list.map(c => `<button type="button" class="ap-cchip${_apCars.has(c) ? ' on' : ''}" data-c="${esc(c)}" aria-pressed="${_apCars.has(c)}">${esc(c.split(':')[1])}</button>`).join('') + '</div></div>';
+  }).join('');
+}
+function apRenderRules() {
+  const c = _apData.config || {};
+  const set = (id, v) => { const el = $(id); if (v > +el.max) el.max = v; el.value = v; };
+  set('apDown', c.down_minutes || 5); set('apCool', c.cooldown_minutes || 30); set('apPerDay', c.max_per_day || 6);
+  $('apPathTest').checked = !!c.path_test; $('apNotify').checked = !!c.notify;
+  _apQ = {from: c.quiet_from || 0, to: c.quiet_to || 0}; _apPick = -1;
+  const all = _apData.carriers || [];
+  _apCars = new Set((c.carriers || []).length ? c.carriers : all);
+  apRenderOuts(); apRenderHours(); apRenderCars(); apSetDirty(false);
+}
+function apRenderOuts() {
+  $('apDownOut').textContent = apMin($('apDown').value);
+  $('apCoolOut').textContent = apMin($('apCool').value);
+  $('apPerDayOut').textContent = $('apPerDay').value;
+  $('apFlowDown').textContent = apMin($('apDown').value);
+}
+// apWait puts the server's reason for waiting into the page's language.
+function apWait(w) {
+  let m;
+  if (!w || /^down for /.test(w)) return ''; // the bar shows it
+  if ((m = /^next run in (\d+) minutes$/.exec(w))) return tr('', 'Next run in') + ' ' + m[1] + ' ' + tr('', 'min');
+  if ((m = /^quiet hours \((.+)\)$/.exec(w))) return tr('', 'Quiet hours') + ' ' + m[1];
+  if (/runs in the last 24 hours: the limit$/.test(w)) return tr('', 'The limit of runs in 24 hours is reached');
+  return tr('', w);
+}
+function apTunHTML(t, cfg) {
+  const need = (cfg.down_minutes || 5) * 60;
+  let dot = 'mu', cls = '', sub = tr('', t.state || 'unknown'), bar = '';
+  if (t.running) { dot = 'ac'; cls = 't-run'; sub = tr('', 'Autopilot is working') + (t.progress ? ': ' + tr('', t.progress) : ''); }
+  else if (t.state === 'down') {
+    dot = 'er'; cls = 't-down';
+    sub = tr('', 'Down') + (t.down_sec ? ' ' + Math.floor(t.down_sec / 60) + ' ' + tr('', 'min') : '') + (apWait(t.waiting) ? ' · ' + apWait(t.waiting) : '');
+    if (t.down_sec && t.down_sec < need && cfg.enabled) bar = `<div class="ap-bar"><i style="width:${Math.min(100, Math.round(t.down_sec / need * 100))}%"></i></div>`;
+  } else if (t.state === 'healthy') { dot = 'ok'; sub = tr('', 'Healthy'); }
+  else if (t.state === 'degraded') { dot = 'wr'; sub = tr('', 'Degraded'); }
+  if (!t.can_swap) sub += ' · ' + tr('', 'no carrier to swap');
+  else if (!t.seen_up && cfg.enabled) sub += ' · ' + tr('', 'not seen up yet');
+  if (t.runs_day) sub += ' · ' + tr('', 'Runs in 24 hours') + ': ' + t.runs_day;
+  const on = t.can_swap && !t.skipped;
+  return `<div class="ap-tun ${cls}${on ? '' : ' t-left'}"><span class="ap-dot ${dot}"></span>` +
+    `<div><div class="ap-tun-h"><b>${esc(t.name)}</b>${t.carrier ? `<span class="ap-chip">${esc(t.carrier)}</span>` : ''}</div>` +
+    `<div class="ap-tun-sub">${esc(sub)}</div>${bar}</div>` +
+    `<label class="ap-switch sm" title="${esc(tr('', 'Autopilot watches this tunnel'))}"><input type="checkbox" class="ap-tun-on" value="${t.id}" ${on ? 'checked' : ''} ${t.can_swap ? '' : 'disabled'} aria-label="${esc(t.name)}"><i></i></label></div>`;
+}
+function apRenderStatus() {
+  const r = _apData, c = r.config || {};
+  const tuns = r.tunnels || [];
+  const live = !!(c.enabled && r.licensed && r.iran);
+  $('apEnabled').checked = !!c.enabled;
+  const pill = $('apPill');
+  let cls = 'dim', txt = 'Off';
+  if (c.enabled && !r.licensed) { cls = 'warn'; txt = 'Needs a license'; }
+  else if (c.enabled && !r.iran) { cls = 'warn'; txt = 'Iran server only'; }
+  else if (live) { cls = 'ok'; txt = 'On'; }
+  const run = tuns.find(t => t.running);
+  if (run) { cls = 'warn'; txt = 'Working'; }
+  pill.className = 'badge ' + cls; $('apPillTxt').textContent = tr('', txt);
+  // the flow: armed when on, lit step by step during a run
+  const flow = $('apFlow');
+  flow.classList.toggle('armed', live);
+  const downNow = tuns.filter(t => t.state === 'down' && t.can_swap && !t.skipped).length;
+  flow.querySelectorAll('.ap-step').forEach(li => {
+    const i = +li.dataset.step;
+    li.classList.remove('s-run', 's-done', 's-alert', 's-off');
+    if (run) { if (i < run.step) li.classList.add('s-done'); else if (i === run.step) li.classList.add('s-run'); }
+    else if (i === 0 && live && downNow) li.classList.add('s-alert');
+    if (i === 2 && !c.path_test) li.classList.add('s-off');
+    if (i === 4 && !c.notify) li.classList.add('s-off');
+  });
+  let note = '', warn = false;
+  if (!r.iran) note = 'Autopilot runs on the Iran server: it switches the foreign server too. Turn it on there.';
+  else if (!r.licensed) { note = 'Autopilot is a Hashem Pro feature. Without a license it does nothing.'; warn = true; }
+  else if (c.enabled && c.path_test && !r.path_test_licensed) note = 'This license does not include the path test: the carriers are tried in order instead.';
+  else if (c.enabled) note = 'The foreign panel must answer on its public address: with the tunnel down there is no other way to tell it.';
+  const n = $('apNote'); n.textContent = tr('', note); n.classList.toggle('hidden', !note); n.classList.toggle('warn', warn);
+  const watched = tuns.filter(t => t.can_swap && !t.skipped).length;
+  const kpi = (l, v, k) => `<div class="cl-kpi ${k || ''}"><span>${esc(tr('', l))}</span><b>${esc(String(v))}</b></div>`;
+  $('apKpis').innerHTML = kpi('Tunnels watched', watched + ' / ' + tuns.length) + kpi('Down now', downNow, downNow ? 'warn' : '') +
+    kpi('Switched in 24 hours', r.switched_day || 0, r.switched_day ? 'ok' : '') + kpi('Runs without a way through', r.failed_day || 0, r.failed_day ? 'warn' : '');
+  $('apNotifyNote').textContent = r.notify_ready ? tr('', 'To the webhook of External alerts and the Telegram bot of the Watchdog.')
+    : tr('', 'Nothing to send to yet: set a webhook in External alerts or a Telegram bot in the Watchdog tab.');
+  $('apTunnels').innerHTML = tuns.map(t => apTunHTML(t, c)).join('') || `<div class="ap-empty">${esc(tr('', 'No tunnels yet.'))}</div>`;
   const ev = r.events || [];
-  $('apEvents').innerHTML = '<b>' + esc(tr('', 'History')) + '</b><br>' + (ev.length ? ev.map(e =>
-    esc((e.at || '').replace('T', ' ').slice(0, 16)) + ' · <b>' + esc(e.name || ('#' + e.tunnel)) + '</b> · ' + esc(tr('', e.kind)) + ': ' + esc(e.text || '')).join('<br>')
-    : esc(tr('', 'Nothing yet: Autopilot has not had to act.')));
+  $('apEvents').innerHTML = ev.length ? ev.map(e => `<li class="ap-ev ev-${esc(e.kind)}"><span class="ap-ev-dot"></span><div>` +
+    `<div class="ap-ev-h"><b>${esc(e.name || ('#' + e.tunnel))}</b><span class="badge ${{switched: 'ok', failed: 'err', recovered: 'u-pill-sky'}[e.kind] || 'dim'}">${esc(tr('', e.kind))}</span>` +
+    (e.to ? `<span class="ap-chip">${esc(e.from)}</span><span class="ap-arrow">→</span><span class="ap-chip">${esc(e.to)}</span>` : (e.from ? `<span class="ap-chip">${esc(e.from)}</span>` : '')) +
+    `<time>${esc((e.at || '').replace('T', ' ').slice(0, 16))}</time></div><div class="ap-ev-t">${esc(e.text || '')}</div></div></li>`).join('')
+    : `<li class="ap-empty">${esc(tr('', 'Nothing yet: Autopilot has not had to act.'))}</li>`;
 }
-async function autopilotRefresh() {
-  if (!$('autopilotCard')) return;
-  try { _apData = await api('/api/autopilot'); apRender(); } catch (e) {}
+function apRender(rules) {
+  if (!_apData) return;
+  apRenderStatus();
+  if (rules || !_apDirty) apRenderRules();
 }
-$('apRefresh').onclick = autopilotRefresh;
-$('apSave').onclick = async () => {
+async function autopilotRefresh(rules) {
+  if (!$('tab-autopilot')) return;
+  try { _apData = await api('/api/autopilot'); apRender(!!rules); } catch (e) {}
+  if (!_apTimer) _apTimer = setInterval(() => {
+    if ($('tab-autopilot').hidden || document.hidden || _apBusy) return;
+    api('/api/autopilot').then(r => { _apData = r; apRender(false); }).catch(() => {});
+  }, 5000);
+}
+function apRulesBody() {
+  const all = (_apData && _apData.carriers) || [];
+  const cars = all.filter(c => _apCars.has(c));
+  return {down_minutes: +$('apDown').value, cooldown_minutes: +$('apCool').value, max_per_day: +$('apPerDay').value,
+    path_test: $('apPathTest').checked, notify: $('apNotify').checked, quiet_from: _apQ.from, quiet_to: _apQ.to,
+    carriers: cars.length === all.length ? [] : cars};
+}
+async function apPost(body, okMsg) {
+  _apBusy = true;
+  try { _apData = await api('/api/autopilot', body); return true; }
+  catch (e) { toastErr('Autopilot', e.message); return false; }
+  finally { _apBusy = false; if (okMsg) { /* shown by the caller on success */ } }
+}
+$('apRefresh').onclick = () => autopilotRefresh(false);
+$('apEnabled').onchange = async () => {
   const on = $('apEnabled').checked;
   if (on && !isProLicensed('autopilot')) { $('apEnabled').checked = false; openBagherLicModal('autopilot'); return; }
-  const skip = [...document.querySelectorAll('#apTunnels .ap-tun')].filter(x => !x.disabled && !x.checked).map(x => parseInt(x.value, 10));
-  const num = (id, d) => { const n = parseInt($(id).value, 10); return isNaN(n) ? d : n; };
-  try {
-    _apData = await api('/api/autopilot', {enabled: on, down_minutes: num('apDown', 5), cooldown_minutes: num('apCool', 30),
-      max_per_day: num('apPerDay', 6), path_test: $('apPathTest').checked, notify: $('apNotify').checked,
-      quiet_from: num('apQuietFrom', 0), quiet_to: num('apQuietTo', 0),
-      carriers: $('apCarriers').value.split(',').map(s => s.trim()).filter(Boolean), skip});
-    apRender(); toastOk(on ? 'Autopilot is on' : 'Autopilot settings saved');
-  } catch (e) { toastErr('Autopilot', e.message); }
+  if (await apPost({enabled: on})) toastOk(tr('', on ? 'Autopilot is on' : 'Autopilot is off'));
+  apRender(false);
 };
-$('apEnabled').onchange = () => {
-  if ($('apEnabled').checked && !isProLicensed('autopilot')) { $('apEnabled').checked = false; openBagherLicModal('autopilot'); }
+$('apSave').onclick = async () => {
+  if (_apPick >= 0) { _apPick = -1; apRenderHours(); }
+  if (!_apCars.size) { toastErr('Autopilot', tr('', 'Leave at least one carrier on.')); return; }
+  if (await apPost(apRulesBody())) { toastOk(tr('', 'Autopilot rules saved')); apRender(true); }
+};
+['apDown', 'apCool', 'apPerDay'].forEach(id => { $(id).oninput = () => { apRenderOuts(); apSetDirty(true); }; });
+['apPathTest', 'apNotify'].forEach(id => { $(id).onchange = () => apSetDirty(true); });
+$('apHours').onclick = ev => {
+  const b = ev.target.closest('.ap-hr'); if (!b) return;
+  const h = +b.dataset.h;
+  if (_apPick < 0) _apPick = h;
+  else { _apQ = _apPick === h ? {from: 0, to: 0} : {from: _apPick, to: (h + 1) % 24}; _apPick = -1; apSetDirty(true); }
+  apRenderHours();
+};
+$('apQuietClear').onclick = () => { _apQ = {from: 0, to: 0}; _apPick = -1; apRenderHours(); apSetDirty(true); };
+$('apCars').onclick = ev => {
+  const b = ev.target.closest('.ap-cchip'); if (!b) return;
+  const c = b.dataset.c; if (_apCars.has(c)) _apCars.delete(c); else _apCars.add(c);
+  apRenderCars(); apSetDirty(true);
+};
+$('apCarAll').onclick = () => { _apCars = new Set((_apData && _apData.carriers) || []); apRenderCars(); apSetDirty(true); };
+$('apTunnels').onchange = async ev => {
+  const cb = ev.target.closest('.ap-tun-on'); if (!cb || !_apData) return;
+  const skip = new Set((_apData.config || {}).skip || []);
+  const id = +cb.value; if (cb.checked) skip.delete(id); else skip.add(id);
+  await apPost({skip: [...skip]});
+  apRender(false);
 };
 async function metricsRefresh() {
   try { const r = await api('/api/metrics-token'); $('metricsState').firstChild && ($('metricsState').textContent = r.enabled ? 'Enabled. Scrape GET …/metrics with the bearer token (rotate to get a new one; the old one stops working).' : 'Disabled. Generate a token to enable GET …/metrics for your scraper (Authorization: Bearer <token>). The token is shown once.'); } catch(e) {}
@@ -7797,14 +7914,14 @@ if ($('docCopyBtn')) $('docCopyBtn').onclick = () => { if (doctorData) copyTextS
 (async () => {
   if (NV) { // a node's view: the central's own login, HTTPS, 2FA and terminal are not this page's
     try {
-      await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); alertsRefresh(); histRefresh(); advisorRefresh(); autopilotRefresh();
+      await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); alertsRefresh(); histRefresh(); advisorRefresh();
       const tb = new URLSearchParams(location.search).get('tab'); // opened from the central on a page (its customers list)
       if (tb === 'customers') goTab(tb); // the one page the central opens a node on
     }
     catch(e) { showApp(); toastErr(tr('', 'Failed'), e.message); }
     return;
   }
-  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); metricsRefresh(); histRefresh(); advisorRefresh(); autopilotRefresh(); migrateBannerLoad(); }
+  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); metricsRefresh(); histRefresh(); advisorRefresh(); migrateBannerLoad(); }
   catch(e) { showLogin(); }
 })();
 // light pollers: skip when the tab is in the background (background tabs
@@ -8789,15 +8906,6 @@ function renderBenchmark(bench, peer) {
     if ($('peerInternalVal')) $('peerInternalVal').textContent = peer.internal_ip || '—';
     if ($('peerLatencyVal')) $('peerLatencyVal').textContent = (peer.latency_ms > 0 ? peer.latency_ms.toFixed(1) + ' ms' : '—');
     if ($('peerLastSyncVal')) $('peerLastSyncVal').textContent = peer.last_sync || 'Never';
-
-    // Automatic Failover Policy
-    if ($('autoPilotToggle')) $('autoPilotToggle').checked = !!peer.autopilot;
-    if ($('autoPilotThresholdInput')) $('autoPilotThresholdInput').value = peer.threshold || 20;
-    if ($('autoPilotBadge')) {
-      const b = $('autoPilotBadge');
-      b.className = 'badge ' + (peer.autopilot ? 'warn' : 'dim');
-      b.textContent = peer.autopilot ? '[ ON ] Auto Switch' : '[ OFF ] Manual';
-    }
   }
 
   if (bench && bench.metrics && bench.metrics.length > 0) {
@@ -8858,11 +8966,6 @@ function renderBenchmark(bench, peer) {
       const tgt = bench.target_host ? `to ${bench.target_host}` : '';
       $('benchMetaSub').textContent = `Last benchmark: ${bench.timestamp || '—'} · Tested ${bench.metrics.length} carriers ${tgt}`;
     }
-  }
-
-  if (bench && bench.auto_pilot) {
-    if ($('autoPilotLastVal')) $('autoPilotLastVal').textContent = bench.auto_pilot.last_triggered || 'None';
-    if ($('autoPilotCountVal')) $('autoPilotCountVal').textContent = bench.auto_pilot.trigger_count || 0;
   }
 
   // Render Table
@@ -9082,23 +9185,6 @@ async function testPeerLinkClick() {
   }
 }
 
-async function saveAutoPilotClick() {
-  const btn = $('autoPilotSaveBtn');
-  const enabled = $('autoPilotToggle') ? $('autoPilotToggle').checked : false;
-  const thresh = $('autoPilotThresholdInput') ? parseFloat($('autoPilotThresholdInput').value) || 20 : 20;
-
-  setBtnLoading(btn, true, 'Saving…');
-  try {
-    await api('/api/benchmark/autopilot', { enabled: enabled, threshold: thresh });
-    toastOk('Failover Policy Saved', enabled ? `Auto failover enabled (Threshold: ${thresh}%)` : 'Auto failover disabled (Manual mode)');
-    await loadBenchmark();
-  } catch (err) {
-    toastErr('Failed to save failover policy', err.message || err);
-  } finally {
-    setBtnLoading(btn, false);
-  }
-}
-
 function openPeerConfig() {
   const card = $('peerConfigCard');
   if (!card) return;
@@ -9141,7 +9227,6 @@ async function savePeerConfigClick() {
   on('peerConfigBtn', 'click', openPeerConfig);
   on('peerConfigCloseBtn', 'click', closePeerConfig);
   on('cfgPeerSaveBtn', 'click', savePeerConfigClick);
-  on('autoPilotSaveBtn', 'click', saveAutoPilotClick);
 
   // Role buttons
   const iranBtn = $('benchRoleIranBtn');
@@ -9327,7 +9412,6 @@ window.runBenchmarkClick = runBenchmarkClick;
 window.applyCarrierClick = applyCarrierClick;
 window.smartApplyOrSetupCarrier = smartApplyOrSetupCarrier;
 window.testPeerLinkClick = testPeerLinkClick;
-window.saveAutoPilotClick = saveAutoPilotClick;
 window.openPeerConfig = openPeerConfig;
 window.closePeerConfig = closePeerConfig;
 window.savePeerConfigClick = savePeerConfigClick;

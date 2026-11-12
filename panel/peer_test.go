@@ -25,22 +25,18 @@ func TestPeerConfigDefaultsAndLoadSave(t *testing.T) {
 	if c.Role == "" || c.PeerSecret == "" {
 		t.Errorf("expected default role and secret, got role=%q secret=%q", c.Role, c.PeerSecret)
 	}
-	if c.AutoPilotEnabled {
-		t.Errorf("expected autopilot disabled by default")
-	}
 
 	// 2. Modify and Save
 	c.PeerURL = "http://1.2.3.4:8080"
 	c.InternalIP = "10.10.10.1"
 	c.Role = "master"
-	c.AutoPilotThreshold = 25.0
 	if err := savePeerConfig(c); err != nil {
 		t.Fatalf("savePeerConfig failed: %v", err)
 	}
 
 	// 3. Reload
 	loaded := loadPeerConfig()
-	if loaded.PeerURL != "http://1.2.3.4:8080" || loaded.InternalIP != "10.10.10.1" || loaded.AutoPilotThreshold != 25.0 {
+	if loaded.PeerURL != "http://1.2.3.4:8080" || loaded.InternalIP != "10.10.10.1" {
 		t.Errorf("loaded config mismatch: %+v", loaded)
 	}
 }
@@ -149,12 +145,9 @@ func TestPeerEndpoints(t *testing.T) {
 	}
 
 	// 4. Config Update (Web Admin)
-	enable := true
 	upBody, _ := json.Marshal(PeerConfigUpdateRequest{
-		PeerURL:            "http://8.8.8.8:8080",
-		PeerSecret:         "new-secret-xyz",
-		AutoPilotEnabled:   &enable,
-		AutoPilotThreshold: 15.0,
+		PeerURL:    "http://8.8.8.8:8080",
+		PeerSecret: "new-secret-xyz",
 	})
 	reqUp := httptest.NewRequest("POST", "/api/peer/config", bytes.NewReader(upBody))
 	rrUp := httptest.NewRecorder()
@@ -164,7 +157,7 @@ func TestPeerEndpoints(t *testing.T) {
 	}
 
 	c = loadPeerConfig()
-	if c.PeerURL != "http://8.8.8.8:8080" || c.PeerSecret != "new-secret-xyz" || c.AutoPilotThreshold != 15.0 {
+	if c.PeerURL != "http://8.8.8.8:8080" || c.PeerSecret != "new-secret-xyz" {
 		t.Errorf("peer config not updated properly: %+v", c)
 	}
 }

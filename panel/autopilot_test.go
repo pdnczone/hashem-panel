@@ -203,6 +203,7 @@ type apHarness struct {
 	testErr  error
 	checks   []ptCheck
 	linked   bool
+	busy     bool
 	tests    int
 	clock    time.Time
 	resolved swapTunnel
@@ -231,6 +232,9 @@ func newAPHarness(t *testing.T) *apHarness {
 		h.swaps = append(h.swaps, to.ID())
 		if s := h.swapRes[to.ID()]; s != "" {
 			return s, "did not connect"
+		}
+		if h.busy {
+			return "busy", "another tunnel's carrier swap is still running"
 		}
 		h.resolved.Current = to
 		return "ok", ""
@@ -549,5 +553,72 @@ func TestAutopilotPathTestStopsItsHubWhenTheForeignPanelIsOlder(t *testing.T) {
 	apLicense(t, false)
 	if _, err := apPathTestReal(swapTunnel{ID: 2}); err == nil {
 		t.Error("without the path test's license no test is started")
+	}
+}
+
+func TestAutopilotStopsWhenASwapWasNotUndoneCleanly(t *testing.T) {
+	apLicense(t, true)
+	h := newAPHarness(t)
+	c := loadAutopilotConfig()
+	c.PathTest = false
+	_ = saveAutopilotConfig(c)
+	h.swapRes["backhaul:tcpmux"] = "failed"
+	h.tick(stateHealthy)
+	h.tick(stateDown)
+	h.clock = h.clock.Add(6 * time.Minute)
+	h.tick(stateDown)
+	if len(h.swaps) != 1 {
+		t.Fatalf("after a swap that was not undone cleanly nothing else is changed, got %v", h.swaps)
+	}
+	if e := h.lastEvent(t); e.Kind != "failed" || !strings.Contains(e.Text, "stopped at") {
+		t.Errorf("event: %+v", e)
+	}
+	// another swap is running: nothing is blamed on the carrier
+	h.swapRes = map[string]string{}
+	h.busy = true
+	h.clock = h.clock.Add(40 * time.Minute)
+	h.tick(stateDown)
+	ap.mu.Lock()
+	failed := len(ap.st.Tunnels[2].Failed)
+	ap.mu.Unlock()
+	if e := h.lastEvent(t); e.Kind != "skipped" || failed != 0 || len(h.notes) != 1 {
+		t.Errorf("a busy swap is a skipped run, no failed carrier, no message: %+v failed=%d notes=%d", e, failed, len(h.notes))
+	}
+}
+
+func TestAutopilotCountsTheFirstTunnelOnce(t *testing.T) {
+	main := &peerLive{peerRecord: peerRecord{ID: 0, Name: "Tunnel"}}
+	// the legacy peer 1 is the first tunnel
+	s := &HubSnapshot{Local: tunnelStatus{Role: "iran", FrpSvc: "frps"}, Main: main,
+		Peers: []peerLive{{peerRecord: peerRecord{ID: 1, Legacy: true}}, {peerRecord: peerRecord{ID: 2}}}}
+	if got := apLinks(s); len(got) != 2 || got[0].ID != 1 {
+		t.Errorf("the first tunnel with a record is followed by its record only: %+v", got)
+	}
+	// a hub whose only units are peer 3's shows it as the main card too
+	s = &HubSnapshot{Local: tunnelStatus{Role: "iran", FrpSvc: "frps-3"}, Main: main, Peers: []peerLive{{peerRecord: peerRecord{ID: 3}}}}
+	if got := apLinks(s); len(got) != 1 || got[0].ID != 3 {
+		t.Errorf("a peer shown as the main card is one tunnel: %+v", got)
+	}
+	// a first tunnel from Setup, without a record
+	s = &HubSnapshot{Local: tunnelStatus{Role: "iran", FrpSvc: "frps"}, Main: main, Peers: []peerLive{{peerRecord: peerRecord{ID: 2}}}}
+	if got := apLinks(s); len(got) != 2 || got[0].ID != 0 {
+		t.Errorf("a first tunnel without a record is its own entry: %+v", got)
+	}
+}
+
+func TestAutopilotForgetsATunnelWhoseIDWasReused(t *testing.T) {
+	apLicense(t, true)
+	h := newAPHarness(t)
+	h.tick(stateHealthy) // tunnel 2 to no address, port 0: seen up
+	// id 2 now is another tunnel (another foreign server), never up
+	snap := func(state string) {
+		autopilotOnSnapshot(&HubSnapshot{At: h.clock, Local: tunnelStatus{Role: "iran"},
+			Peers: []peerLive{{peerRecord: peerRecord{ID: 2, Name: "new", Engine: "frp", RemotePub: "203.0.113.9", FrpPort: 7005}, FrpUp: true, HealthState: state}}})
+	}
+	snap(stateDown)
+	h.clock = h.clock.Add(6 * time.Minute)
+	snap(stateDown)
+	if len(h.swaps) != 0 {
+		t.Fatalf("a new tunnel on a reused id was never up: it is not switched, got %v", h.swaps)
 	}
 }

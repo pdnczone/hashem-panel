@@ -5,13 +5,16 @@ Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
 ## v3.1.0 — 2026-11-12
 
-**Autopilot: a tunnel that stays down moves itself to a carrier that gets through.** A Hashem Pro feature; every Pro key includes it. Run `hashem update` on both servers, then turn it on in **Settings → Autopilot** on the Iran server (or `hashem autopilot on`). It is off until you do. [Guide](docs/AUTOPILOT.md)
+**Autopilot: a tunnel that stays down moves itself to a carrier that gets through.** A Hashem Pro feature; every Pro key includes it. Run `hashem update` on both servers, then turn it on in the new **Autopilot** tab on the Iran server (or `hashem autopilot on`). It is off until you do. [Guide](docs/AUTOPILOT.md)
 
 - When a tunnel has been down for 5 minutes, the Iran server runs the path test with the foreign server, picks the fastest carrier that got through and swaps the tunnel to it on both servers. A carrier that does not connect within 45 seconds is undone on both servers and the next one is tried, three at most in one run.
 - You get a message on the webhook and Telegram for every switch and every run that found nothing, and the card keeps a history.
 - Limits you set: minutes down, minutes between two runs for one tunnel (30), runs per tunnel a day (6), quiet hours, the carriers it may choose and the tunnels it leaves alone.
 - It never touches a tunnel it has not seen up yet, a tunnel whose service is stopped on the Iran server, or an Xray, Bagher or Spoof tunnel. When the foreign panel does not answer on its public address it changes nothing and says so.
 - The foreign server needs this release for the path test; with an older foreign panel the carriers are tried in order.
+- The tab shows the run as it happens (down, reach the foreign panel, test the path, swap, message), each tunnel with its carrier and how long it has been down, and the history as a timeline.
+- A run stops when a swap could not be undone cleanly on both servers, so nothing else is changed before you look. A first tunnel that also has a record in the tunnel list is followed once, not twice.
+- **Removed: "Automatic Failover" in the Benchmark tab.** It never switched anything: it ran the carrier benchmark every minute and wrote a log line. Its switch, its threshold and `POST /api/benchmark/autopilot` are gone; Autopilot replaces it.
 - The Carrier advisor card still only advises.
 
 ## v3.0.3 — 2026-11-12

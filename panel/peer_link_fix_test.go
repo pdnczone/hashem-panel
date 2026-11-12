@@ -36,7 +36,7 @@ func TestSendToPeerRejectsRedirectToHTML(t *testing.T) {
 		http.Redirect(w, r, "/login/", http.StatusFound)
 	}))
 	defer srv.Close()
-	withPeerLink(t, PeerConfig{Role: "master", PeerSecret: "s3cret", PeerURL: srv.URL, AutoPilotExplicit: true})
+	withPeerLink(t, PeerConfig{Role: "master", PeerSecret: "s3cret", PeerURL: srv.URL})
 
 	if _, err := sendToPeer("/api/peer/ping", "POST", map[string]string{}); err == nil {
 		t.Fatal("redirect to an HTML page was treated as success")
@@ -62,7 +62,7 @@ func TestSendToPeerAddressesPeerNotLocalBasePath(t *testing.T) {
 		http.NotFound(w, r)
 	}))
 	defer srv.Close()
-	withPeerLink(t, PeerConfig{Role: "master", PeerSecret: "s3cret", PeerURL: srv.URL, PeerBasePath: "peerbase", AutoPilotExplicit: true})
+	withPeerLink(t, PeerConfig{Role: "master", PeerSecret: "s3cret", PeerURL: srv.URL, PeerBasePath: "peerbase"})
 
 	if _, err := sendToPeer("/api/peer/ping", "POST", map[string]string{}); err != nil {
 		t.Fatalf("sendToPeer: %v", err)
@@ -80,7 +80,7 @@ func TestSendToPeerAddressesPeerNotLocalBasePath(t *testing.T) {
 // H1: the handshake records the caller's base path and port, and answers
 // with ours.
 func TestPeerHandshakeExchangesBasePathAndPort(t *testing.T) {
-	withPeerLink(t, PeerConfig{Role: "master", PeerSecret: "s3cret", AutoPilotExplicit: true})
+	withPeerLink(t, PeerConfig{Role: "master", PeerSecret: "s3cret"})
 	body := `{"role":"worker","public_ip":"203.0.113.7","panel_port":8123,"internal_ip":"10.10.10.2","base_path":"/workerbase/"}`
 	rr := httptest.NewRecorder()
 	handlePeerHandshake(rr, httptest.NewRequest("POST", "/x", strings.NewReader(body)))
@@ -100,7 +100,7 @@ func TestPeerHandshakeExchangesBasePathAndPort(t *testing.T) {
 // H1: the fixed prefix needs the peer secret and otherwise looks like
 // nothing is there (404, never 401/405/redirect).
 func TestPeerFixedPrefixRoutes(t *testing.T) {
-	withPeerLink(t, PeerConfig{Role: "worker", PeerSecret: "s3cret", AutoPilotExplicit: true})
+	withPeerLink(t, PeerConfig{Role: "worker", PeerSecret: "s3cret"})
 	mux := http.NewServeMux()
 	mountPeerRoutes(mux, "/localbase")
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/localbase/", http.StatusFound) })
@@ -133,24 +133,24 @@ func TestPeerFixedPrefixRoutes(t *testing.T) {
 
 // M13: a status update must not overwrite settings saved in the meantime.
 func TestPeerStatusUpdateKeepsConcurrentEdits(t *testing.T) {
-	withPeerLink(t, PeerConfig{Role: "master", PeerSecret: "old", AutoPilotExplicit: true})
+	withPeerLink(t, PeerConfig{Role: "master", PeerSecret: "old"})
 	edited := loadPeerConfig()
 	edited.PeerSecret = "new"
-	edited.AutoPilotEnabled = true
+	edited.InternalIP = "10.9.9.9"
 	if err := savePeerConfig(edited); err != nil {
 		t.Fatal(err)
 	}
 	markPeerSeen()
 	_ = updatePeerConfig(func(c *PeerConfig) { c.LatencyMs = 12 })
 	c := loadPeerConfig()
-	if c.PeerSecret != "new" || !c.AutoPilotEnabled || !c.IsConnected || c.LatencyMs != 12 {
+	if c.PeerSecret != "new" || c.InternalIP != "10.9.9.9" || !c.IsConnected || c.LatencyMs != 12 {
 		t.Fatalf("status update clobbered the admin's edit: %+v", c)
 	}
 }
 
 // H1: a pasted panel URL keeps its base path separately.
 func TestPeerConfigPostSplitsBasePathFromURL(t *testing.T) {
-	withPeerLink(t, PeerConfig{Role: "master", PeerSecret: "s3cret", AutoPilotExplicit: true})
+	withPeerLink(t, PeerConfig{Role: "master", PeerSecret: "s3cret"})
 	rr := httptest.NewRecorder()
 	handlePeerConfigPost(rr, httptest.NewRequest("POST", "/x", strings.NewReader(`{"peer_url":"http://198.51.100.4:9090/abcdEFgh1234/"}`)))
 	if rr.Code != http.StatusOK {

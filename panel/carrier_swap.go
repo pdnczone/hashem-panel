@@ -1043,6 +1043,7 @@ type swapJob struct {
 	Error    string     `json:"error,omitempty"`
 	Note     string     `json:"note,omitempty"`
 	Bundle   string     `json:"bundle,omitempty"`
+	Back     bool       `json:"back,omitempty"` // both servers were put back on the old carrier
 	Steps    []swapStep `json:"steps"`
 	Started  string     `json:"started"`
 	Finished string     `json:"finished,omitempty"`
@@ -1288,6 +1289,9 @@ func runSwap(j *swapJob, t swapTunnel, to carrierChoice, manual bool) {
 		return
 	}
 	saveSwapState(t.ID, from.ID())
+	swapJobsMu.Lock()
+	j.Back = ferr == nil
+	swapJobsMu.Unlock()
 	if ok, _ := waitLinked(t, from, swapRevertWait, false); ok {
 		j.step("revert", "ok", "")
 		j.finish("reverted", why)

@@ -5,8 +5,6 @@ import (
 	"crypto/rand"
 	"io"
 	"net"
-	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -161,44 +159,6 @@ func runConcurrentStress(t *testing.T, totalClients int) {
 	}
 	if succ != int64(totalClients) {
 		t.Fatalf("Expected %d successful connections, got %d", totalClients, succ)
-	}
-}
-
-// TestStrictFailoverDefaults verifies that AutoPilot / Automatic Failover
-// is STRICTLY disabled by default on clean installations AND existing installations.
-func TestStrictFailoverDefaults(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "hashem_failover_test_*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	oldConfigDir := configDir
-	configDir = tmpDir
-	defer func() { configDir = oldConfigDir }()
-
-	// 1. Fresh config: Must be false
-	fresh := defaultPeerConfig()
-	if fresh.AutoPilotEnabled {
-		t.Fatalf("Fresh config must have AutoPilotEnabled=false, got true")
-	}
-
-	// 2. Load without existing file: Must be false
-	loaded := loadPeerConfig()
-	if loaded.AutoPilotEnabled {
-		t.Fatalf("Uninitialized config must have AutoPilotEnabled=false, got true")
-	}
-
-	// 3. Existing legacy config that previously had AutoPilotEnabled=true without explicit flag
-	legacyJSON := `{"peer_url":"http://1.2.3.4:8080","role":"master","autopilot_enabled":true}`
-	_ = os.WriteFile(filepath.Join(tmpDir, "peer_config.json"), []byte(legacyJSON), 0600)
-
-	migrated := loadPeerConfig()
-	if migrated.AutoPilotEnabled {
-		t.Fatalf("Legacy migration MUST turn AutoPilotEnabled=false by default, got true")
-	}
-	if !migrated.AutoPilotExplicit {
-		t.Fatalf("Legacy migration must mark AutoPilotExplicit=true")
 	}
 }
 

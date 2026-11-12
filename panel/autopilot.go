@@ -147,6 +147,7 @@ type apEvent struct {
 }
 
 type apTunnelState struct {
+	Key     string           `json:"key,omitempty"`      // apKey: which tunnel this id is
 	LastUp  int64            `json:"last_up,omitempty"`  // seen healthy or degraded
 	LastRun int64            `json:"last_run,omitempty"` // the cooldown counts from here
 	Runs    []int64          `json:"runs,omitempty"`     // runs of the last 24 hours
@@ -416,8 +417,33 @@ func apRank(cands []carrierChoice, checks []ptCheck, greDirect bool) ([]carrierC
 		out = append(out, s.ch)
 	}
 	out = append(out, unknown...)
-	return out, fmt.Sprintf("path test: %d of %d carriers got through", len(proven), len(proven)+dropped+len(unknown))
+	return out, fmt.Sprintf("path test: %d of %d carriers got through", len(proven), len(proven)+dropped)
 }
+
+// apLinks lists every tunnel of snapshot s once. The first tunnel is also a
+// peers.json record on some servers (the legacy peer 1, or a hub whose only
+// units are a peer's): Autopilot then follows the record, so one tunnel never
+// gets two runs.
+func apLinks(s *HubSnapshot) []peerLive {
+	links := append([]peerLive(nil), s.Peers...)
+	if s.Main == nil {
+		return links
+	}
+	recs := make([]peerRecord, 0, len(s.Peers))
+	for _, p := range s.Peers {
+		recs = append(recs, p.peerRecord)
+	}
+	if basePeer(recs) != nil || perPeerUnitRe.MatchString(s.Local.FrpSvc) {
+		return links
+	}
+	return append([]peerLive{*s.Main}, links...)
+}
+
+// apKey names what a tunnel id stands for. When it changes (the tunnel was
+// removed and its id given to a new one, or it points at another server) what
+// Autopilot knew about the id is forgotten, so the new tunnel has to be seen
+// up before it is ever switched.
+func apKey(l peerLive) string { return fmt.Sprintf("%s|%d", l.RemotePub, l.FrpPort) }
 
 // ---- the tick ----
 
@@ -437,9 +463,17 @@ func autopilotOnSnapshot(s *HubSnapshot) {
 	dirty := false
 	seen := map[int]bool{}
 	live := map[int]peerLive{}
-	for _, l := range s.All() {
+	for _, l := range apLinks(s) {
 		seen[l.ID] = true
 		live[l.ID] = l
+		if ts := st.tun(l.ID); ts.Key != apKey(l) {
+			if ts.Key != "" {
+				*ts = apTunnelState{}
+				delete(ap.downSince, l.ID)
+			}
+			ts.Key = apKey(l)
+			dirty = true
+		}
 		switch l.HealthState {
 		case stateDown:
 			if _, ok := ap.downSince[l.ID]; !ok {
@@ -497,6 +531,14 @@ func autopilotRun(cfg autopilotConfig, id int, name string, downFor time.Duratio
 	now := apNow()
 	ev := apEvent{At: now.Format(time.RFC3339), Tunnel: id, Name: name}
 	counted := false
+	defer func() {
+		if r := recover(); r != nil {
+			recordError("E-ACTION-02", "autopilot", fmt.Sprintf("run for tunnel %d stopped: %v", id, r))
+			ap.mu.Lock()
+			ap.running, ap.phase = false, ""
+			ap.mu.Unlock()
+		}
+	}()
 	finish := func(kind, text string) {
 		ev.Kind, ev.Text = kind, text
 		ap.mu.Lock()
@@ -509,7 +551,7 @@ func autopilotRun(cfg autopilotConfig, id int, name string, downFor time.Duratio
 		ap.saveLocked()
 		ap.mu.Unlock()
 		LogSecurityAudit("autopilot_"+kind, "autopilot", "127.0.0.1", fmt.Sprintf("tunnel=%d from=%s to=%s %s", id, ev.From, ev.To, text))
-		if added && cfg.Notify && kind != "skipped" {
+		if added && cfg.Notify && (kind == "switched" || kind == "failed") {
 			apNotifyFn(ev)
 		}
 	}
@@ -587,7 +629,18 @@ func autopilotRun(cfg autopilotConfig, id int, name string, downFor time.Duratio
 			finish("switched", text)
 			return
 		}
+		if state == "busy" {
+			finish("skipped", why)
+			return
+		}
 		tried = append(tried, carrierLabel(to)+": "+why)
+		if state != "reverted" {
+			// Not undone cleanly (the foreign server could not be told, this
+			// server could not switch, or going back failed): a person has to
+			// look before anything else is changed.
+			finish("failed", fmt.Sprintf("down for %d minutes on %s; stopped at %s", int(downFor/time.Minute), carrierLabel(from), strings.Join(tried, "; ")))
+			return
+		}
 		ap.mu.Lock()
 		ts := ap.stateLocked().tun(id)
 		if ts.Failed == nil {
@@ -606,16 +659,23 @@ func autopilotRun(cfg autopilotConfig, id int, name string, downFor time.Duratio
 	finish("failed", text)
 }
 
-// apSwapReal runs one carrier swap and waits for its end: "ok", or the swap's
-// own state ("reverted", "failed") with what went wrong.
+// apSwapReal runs one carrier swap and waits for its end: "ok", the swap's own
+// state ("reverted", "failed") with what went wrong, or "busy" when it could
+// not start because another swap is running.
 func apSwapReal(t swapTunnel, to carrierChoice) (string, string) {
 	if _, err := startSwap(t, to, false); err != nil {
-		return "failed", err.Error()
+		return "busy", err.Error()
 	}
 	deadline := time.Now().Add(apSwapWait)
 	for time.Now().Before(deadline) {
 		time.Sleep(swapPollEvery)
 		if j := swapJobView(t.ID); j != nil && j.State != "running" {
+			// A tunnel that was down before the swap stays down after both
+			// servers went back: the swap calls that "failed", and for
+			// Autopilot it is a clean way back to try the next carrier from.
+			if j.State == "failed" && j.Back {
+				return "reverted", j.Error
+			}
 			return j.State, j.Error
 		}
 	}
@@ -736,6 +796,9 @@ func apNotifyReal(e apEvent) {
 			} else {
 				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 				_ = resp.Body.Close()
+				if resp.StatusCode >= 300 {
+					recordError("E-WD-01", "autopilot", fmt.Sprintf("webhook returned HTTP %d", resp.StatusCode))
+				}
 			}
 		}
 	}
@@ -764,6 +827,7 @@ type apTunnelView struct {
 	Engine   string `json:"engine,omitempty"`
 	Running  bool   `json:"running"`
 	Progress string `json:"progress,omitempty"`
+	Step     int    `json:"step,omitempty"` // 1 reach the foreign panel, 2 test the path, 3 swap
 }
 
 func apCarrierOf(l peerLive, main bool, st tunnelStatus) string {
@@ -776,6 +840,16 @@ func apCarrierOf(l peerLive, main bool, st tunnelStatus) string {
 		return ""
 	}
 	return peerCarrier(l.peerRecord).ID()
+}
+
+func apStep(phase string) int {
+	switch {
+	case strings.HasPrefix(phase, "Testing"):
+		return 2
+	case strings.HasPrefix(phase, "Moving"):
+		return 3
+	}
+	return 1
 }
 
 func autopilotView() map[string]any {
@@ -791,8 +865,8 @@ func autopilotView() map[string]any {
 	ap.mu.Lock()
 	state := ap.stateLocked()
 	tunnels := []apTunnelView{}
-	for _, l := range snap.All() {
-		main := snap.Main != nil && l.ID == snap.Main.ID
+	for _, l := range apLinks(snap) {
+		main := snap.Main != nil && l.ID == snap.Main.ID && l.ID == mainTunnelID
 		v := apTunnelView{ID: l.ID, Name: l.Name, State: l.HealthState, Skipped: skip[l.ID], CanSwap: apSwappable(l.Engine),
 			IsMain: main, Engine: l.Engine, Carrier: apCarrierOf(l, main, st)}
 		if v.Name == "" {
@@ -810,12 +884,23 @@ func autopilotView() map[string]any {
 			v.Waiting = ap.wait[l.ID]
 		}
 		if ap.running && ap.runID == l.ID {
-			v.Running, v.Progress, v.Waiting = true, ap.phase, ""
+			v.Running, v.Progress, v.Waiting, v.Step = true, ap.phase, "", apStep(ap.phase)
 		}
 		tunnels = append(tunnels, v)
 	}
 	events := append([]apEvent(nil), state.Events...)
 	ap.mu.Unlock()
+	switched, failedRuns := 0, 0
+	for _, e := range events {
+		if at, err := time.Parse(time.RFC3339, e.At); err == nil && now.Sub(at) < 24*time.Hour {
+			switch e.Kind {
+			case "switched":
+				switched++
+			case "failed":
+				failedRuns++
+			}
+		}
+	}
 	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 { // newest first
 		events[i], events[j] = events[j], events[i]
 	}
@@ -836,6 +921,7 @@ func autopilotView() map[string]any {
 		"config": cfg, "licensed": hasPro(proAutopilot), "iran": iran, "tunnels": tunnels, "events": events,
 		"carriers": all, "notify_ready": loadAlertConfig().WebhookURL != "" || (wd.TGBotToken != "" && wd.TGChatID != ""),
 		"path_test_licensed": hasPro(proPathTest),
+		"switched_day":       switched, "failed_day": failedRuns,
 	}
 }
 

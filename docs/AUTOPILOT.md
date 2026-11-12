@@ -1,8 +1,8 @@
 # Autopilot
 
 **Autopilot** (Hashem Pro) moves a tunnel that stays down to a carrier that
-gets through, on both servers, without you. It is in **Settings → Autopilot**
-on the Iran server, and off until you turn it on.
+gets through, on both servers, without you. It has its own **Autopilot** tab
+on the Iran server, and is off until you turn it on.
 
 ## What it does
 
@@ -46,7 +46,7 @@ GRE addresses is never moved onto GRE.
 - A tunnel whose service is stopped on this server: that is not a blocked path
   (the watchdog restarts services).
 - Xray, Bagher and Spoof tunnels: they have no carrier to swap.
-- A tunnel you unticked in the list.
+- A tunnel you switched off in the list.
 - A tunnel that came back while the path was being tested.
 
 ## The limits
@@ -87,7 +87,7 @@ Every run is also in the audit log (`autopilot_switched`, `autopilot_failed`,
 
 ## When it does not switch
 
-Open **Settings → Autopilot**. Next to each down tunnel is the reason Autopilot
+Open the **Autopilot** tab. Next to each down tunnel is the reason Autopilot
 is waiting ("down for 2 of 5 minutes", "next run in 12 minutes", "quiet
 hours"), and the history says what the last run found.
 
