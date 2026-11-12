@@ -42,6 +42,10 @@ jobs:
           fi
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.panelVersion=$VER" -o ${BIN}-linux-amd64 .
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.panelVersion=$VER" -o ${BIN}-linux-arm64 .
+          # the node core: the same program without the web page (panel/core.go)
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -tags nodecore -ldflags "-s -w -X main.panelVersion=$VER" -o hashem-node-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -tags nodecore -ldflags "-s -w -X main.panelVersion=$VER" -o hashem-node-linux-arm64 .
+          ./hashem-node-linux-amd64 --version
           if [ "$BIN" != "gre-panel" ]; then
             cp ${BIN}-linux-amd64 gre-panel-linux-amd64
             cp ${BIN}-linux-arm64 gre-panel-linux-arm64
@@ -64,6 +68,7 @@ jobs:
         run: |
           cd panel
           sha256sum "${BIN_NAME}-linux-amd64" "${BIN_NAME}-linux-arm64" gre-panel-linux-amd64 gre-panel-linux-arm64 \
+            hashem-node-linux-amd64 hashem-node-linux-arm64 \
             dist/hashem.sh dist/grepanel \
             | sed 's#  dist/#  #' | sort -u -k2 > checksums.txt
           cat checksums.txt
@@ -83,6 +88,8 @@ jobs:
           files: |
             panel/${{ env.BIN_NAME }}-linux-amd64
             panel/${{ env.BIN_NAME }}-linux-arm64
+            panel/hashem-node-linux-amd64
+            panel/hashem-node-linux-arm64
             panel/dist/hashem.sh
             panel/dist/grepanel
             panel/dist/hashem-customer.sh
@@ -102,6 +109,8 @@ jobs:
           files: |
             panel/${{ env.BIN_NAME }}-linux-amd64
             panel/${{ env.BIN_NAME }}-linux-arm64
+            panel/hashem-node-linux-amd64
+            panel/hashem-node-linux-arm64
             panel/dist/hashem.sh
             panel/dist/grepanel
             panel/dist/hashem-customer.sh
@@ -133,6 +142,8 @@ jobs:
             panel/${{ env.BIN_NAME }}-linux-arm64
             panel/gre-panel-linux-amd64
             panel/gre-panel-linux-arm64
+            panel/hashem-node-linux-amd64
+            panel/hashem-node-linux-arm64
             panel/dist/hashem.sh
             panel/dist/grepanel
             panel/dist/hashem-customer.sh

@@ -120,5 +120,5 @@ func writeBusy(w http.ResponseWriter) {
 
 // panelChain wraps the panel mux in the full middleware stack.
 func panelChain(mux http.Handler) http.Handler {
-	return inflightLimiter(metricsMiddleware(securityMiddleware(mux)))
+	return inflightLimiter(metricsMiddleware(securityMiddleware(coreGate(mux))))
 }

@@ -10,7 +10,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -28,9 +27,6 @@ import (
 	"syscall"
 	"time"
 )
-
-//go:embed index.html app.js i18n-fa.js fonts.css tokens.css base.css enterprise.css favicon.png favicon.svg apple-touch-icon.png xterm.js xterm-fit.js xterm-search.js xterm.css fonts/vazirmatn.woff2
-var panelFS embed.FS
 
 var configDir = "/etc/gre-panel"
 
@@ -499,6 +495,11 @@ func cliShowInfo() int {
 		configDir = v
 	}
 	loadOrInit()
+	if nodeCore {
+		fmt.Println("This server runs the Hashem node core: it has no web panel.")
+		fmt.Println("Manage it from its central panel; `hashem node status` shows the central.")
+		return 0
+	}
 	ip := getOutboundIP()
 	fmt.Println("==================================================")
 	fmt.Println("Hashem GRE-FRP Web Panel Info")
@@ -530,7 +531,7 @@ func main() {
 			fmt.Println(panelVersion)
 			return
 		case "--help", "-h", "help":
-			fmt.Println("Usage: gre-panel [password <new-password> | info | version | tls [status|issue|renew|remove|ip|custom] | settings [show|2fa off|terminal on|off|idle N] | doctor [check|fix] | tls-proxy | pathtest | autopilot [status|on|off] | cluster [status|pool|member|join-code|add-hub|events|rules|reset] | license [status|activate|deactivate] | node [status|join CODE|-|leave|move]]")
+			fmt.Println("Usage: " + binName() + " [password <new-password> | info | version | tls [status|issue|renew|remove|ip|custom] | settings [show|2fa off|terminal on|off|idle N] | doctor [check|fix] | tls-proxy | pathtest | autopilot [status|on|off] | cluster [status|pool|member|join-code|add-hub|events|rules|reset] | license [status|activate|deactivate] | node [status|join CODE|-|leave|move]]")
 			return
 		case "tls-proxy":
 			os.Exit(tlsProxyCmd(os.Args[2:]))
@@ -801,7 +802,11 @@ func main() {
 	mux.HandleFunc("POST "+base+"/api/pathtest", requireAuth(requireCSRF(handlePathTestPost)))
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
-	log.Printf("gre-panel listening on %s under /%s", addr, cfg.BasePath)
+	if nodeCore {
+		log.Printf("hashem-node (node core, no web panel) on %s: server-to-server calls only", addr)
+	} else {
+		log.Printf("gre-panel listening on %s under /%s", addr, cfg.BasePath)
+	}
 	histStop := make(chan struct{})
 	loadLicenseFromDisk()
 	startHistoryPersistence(histStop)

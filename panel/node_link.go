@@ -991,6 +991,9 @@ func nodeInfoClean(i nodeInfo) nodeInfo {
 		return string(r[:len(r)-1])
 	}
 	i.Version, i.Hostname, i.PublicIP, i.Side = cut(i.Version, 64), cut(i.Hostname, 128), cut(i.PublicIP, 64), cut(i.Side, 16)
+	if i.Kind != nodeKindCore {
+		i.Kind = "" // anything else is a panel
+	}
 	i.MachineHash, i.License.Customer, i.License.KeyHash = cut(i.MachineHash, 64), cut(i.License.Customer, 128), cut(i.License.KeyHash, 32)
 	if len(i.License.Features) > 32 {
 		i.License.Features = i.License.Features[:32]
@@ -1034,5 +1037,6 @@ func nodeLocalInfo() nodeInfo {
 	}
 	activeLicenseMu.RUnlock()
 	info.License.Reported = true
+	info.Kind = nodeLocalKind()
 	return info
 }
