@@ -3,6 +3,14 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## v3.0.3 — 2026-11-12
+
+**A removed tunnel gives its ports back.** Run `hashem update` on the Iran server.
+
+- **Firewall.** With ufw active, a tunnel's control port and user ports were opened when it was made and stayed open after it was removed. Hashem now records the ufw rules it adds (`/etc/gre-panel/ufw.opened`) and deletes them when the tunnel is removed, unless another tunnel still uses the port. A rule that was already there is yours: it is not recorded and never deleted. Rules opened by an older release are not in the record, so they stay; remove those by hand (`ufw delete allow PORT/tcp`).
+- **Reserved ports.** The kernel's reserved list (`net.ipv4.ip_local_reserved_ports`) and its boot-time copy only ever grew: the ports of a removed tunnel, Xray link or sold tunnel stayed reserved for good. The panel now takes a port off the list when no config claims it any more, and leaves the entries that were never Hashem's.
+- **A tunnel that failed to start.** When the service of a new tunnel did not start, its config (`frps-N.toml`, `server-N.toml`), units and GRE interface stayed on disk without a record. The panel then reported its control port as taken, and the tunnel was in no list to remove it from. A failed add now removes everything it made and prints the service's last log lines. What older releases left that way is cleaned up by `hashem update`, and whenever a tunnel is added or removed.
+
 ## v3.0.2 — 2026-11-06
 
 **The Spoof tunnel carries traffic, and Sentinel uses the panel's certificate.** Run `hashem update` on both servers.

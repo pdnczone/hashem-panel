@@ -2831,9 +2831,8 @@ UNIT
     systemctl daemon-reload
     systemctl enable "$u.service" >/dev/null 2>&1 || true
     systemctl restart "$u.service" >/dev/null 2>&1 || true
-    if [[ "$unit" == backhaul-server* ]] && command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
-        ufw allow "${port}/tcp" >/dev/null 2>&1 || true
-        ufw allow "${port}/udp" >/dev/null 2>&1 || true
+    if [[ "$unit" == backhaul-server* ]]; then
+        hashem_ufw_allow "${port}/tcp" "${port}/udp"
     fi
     echo -e "${CYAN}[*] UDP: ${u} carries the UDP of the same ports on control port ${port}.${NC}"
 }
@@ -3828,10 +3827,151 @@ UNIT
     systemctl daemon-reload >/dev/null 2>&1 || true
     systemctl enable "$SVC" >/dev/null 2>&1 || true
     systemctl restart "$SVC" >/dev/null 2>&1 || true
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
-        ufw allow "${FPORT}/tcp" >/dev/null 2>&1 || true
-    fi
+    hashem_ufw_allow "${FPORT}/tcp"
     echo -e "${GREEN}[OK] WSS TLS front listening on :${FPORT} (-> frps :${CPORT})${NC}"
+}
+
+# hashem_ufw_allow RULE...: with ufw active, allows each rule ("443/tcp") and
+# records the ones it added in ufw.opened, so removing the tunnel closes them
+# again (hashem_ufw_release). A rule that was there before ("Skipping") is the
+# admin's own: it is not recorded and never deleted. The panel records the
+# same way (allowUFWTunnelPorts, setup_ports.go).
+hashem_ufw_allow() {
+    command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active" || return 0
+    local f="${PANEL_CONFIG_DIR}/ufw.opened" r out
+    for r in "$@"; do
+        out=$(ufw allow "$r" 2>&1) || continue
+        [[ "$out" == *Skipping* ]] && continue
+        mkdir -p "$PANEL_CONFIG_DIR" 2>/dev/null
+        grep -qxF "$r" "$f" 2>/dev/null || echo "$r" >> "$f"
+    done
+}
+
+# hashem_ports_needed: every port the configs still on this server use (the
+# panel, frps and Backhaul control ports, WSS fronts, the tunnels' user ports).
+hashem_ports_needed() {
+    PEERS_F="$PEERS_FILE" FRP_D="$CONFIG_DIR" BH_D="$BACKHAUL_CONFIG_DIR" PANEL_D="$PANEL_CONFIG_DIR" \
+    UNIT_D="${HASHEM_SYSTEMD_DIR:-/etc/systemd/system}" python3 - <<'PYEOF'
+import glob, json, os, re
+need = {22}
+def span(tok):
+    tok = tok.strip().split("=")[0]
+    if re.match(r"^\d+\.\d+\.\d+\.\d+:", tok):
+        tok = tok.rsplit(":", 1)[-1]
+    m = re.match(r"^(\d+)(?:-(\d+))?$", tok)
+    if m:
+        a = int(m.group(1)); b = int(m.group(2) or a)
+        if 1 <= a <= b <= 65535:
+            need.update(range(a, b + 1))
+def text(p):
+    try:
+        return open(p).read()
+    except OSError:
+        return ""
+for k in ("port", "tls_port"):
+    for m in re.finditer(r'"%s": *(\d+)' % k, text(os.path.join(os.environ["PANEL_D"], "panel.json"))):
+        need.add(int(m.group(1)))
+for f in glob.glob(os.path.join(os.environ["FRP_D"], "frps*.toml")):
+    for m in re.finditer(r"(?m)^\s*(?:bindPort|kcpBindPort|quicBindPort)\s*=\s*(\d+)", text(f)):
+        need.add(int(m.group(1)))
+bh = os.environ["BH_D"]
+for f in glob.glob(os.path.join(bh, "*.toml")) + glob.glob(os.path.join(bh, "udp", "*.toml")):
+    t = text(f)
+    for m in re.finditer(r'(?m)^\s*bind_addr\s*=\s*"[^"]*:(\d+)"', t):
+        need.add(int(m.group(1)))
+    m = re.search(r"(?ms)^\s*ports\s*=\s*\[(.*?)\]", t)
+    if m:
+        for q in re.findall(r'"([^"]*)"', m.group(1)):
+            span(q)
+for f in glob.glob(os.path.join(os.environ["UNIT_D"], "frps-wss*.service")):
+    for m in re.finditer(r"(?m)^ExecStart=.* -listen \S*:(\d+)", text(f)):
+        need.add(int(m.group(1)))
+try:
+    for p in json.load(open(os.environ["PEERS_F"])).get("peers", []):
+        for x in [p.get("frp_port")] + list(p.get("ports") or []):
+            if isinstance(x, int):
+                need.add(x)
+        raw = p.get("raw_ports") or []
+        for q in (raw.replace(",", " ").split() if isinstance(raw, str) else raw):
+            span(str(q))
+except (OSError, ValueError, AttributeError):
+    pass
+print(" ".join(str(x) for x in sorted(need)))
+PYEOF
+}
+
+# hashem_ufw_release: deletes the ufw rules Hashem added (ufw.opened) for
+# ports no remaining config uses. Called after a tunnel is removed, so its
+# ports do not stay open in the firewall.
+hashem_ufw_release() {
+    local f="${PANEL_CONFIG_DIR}/ufw.opened" need r keep=""
+    [[ -s "$f" ]] || return 0
+    command -v ufw >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 || return 0
+    need=" $(hashem_ports_needed) " || return 0
+    [[ "$need" == *" 22 "* ]] || return 0 # the list could not be built: close nothing
+    while IFS= read -r r; do
+        [[ "$r" =~ ^([0-9]+)/(tcp|udp)$ ]] || continue
+        if [[ "$need" == *" ${BASH_REMATCH[1]} "* ]]; then
+            keep+="${r}"$'\n'
+        else
+            ufw delete allow "$r" >/dev/null 2>&1 || true
+        fi
+    done < "$f"
+    if [[ -n "$keep" ]]; then printf '%s' "$keep" > "$f"; else rm -f "$f"; fi
+}
+
+# peer_add_rollback SVC GRE_IF CONF: a tunnel whose service did not start
+# leaves nothing behind. Its config used to stay on disk without a record in
+# peers.json: the panel then counted its control port as taken for good, and
+# the tunnel was in no list to remove it from.
+peer_add_rollback() {
+    local svc=$1 gif=$2 conf=$3 d="${HASHEM_SYSTEMD_DIR:-/etc/systemd/system}"
+    [[ -n "$svc" && -n "$conf" ]] || return 0
+    journalctl -u "$svc" -n 5 --no-pager 2>/dev/null | sed 's/^/    /' || true
+    [[ "$svc" == backhaul-* ]] && backhaul_udp_remove "$svc"
+    [[ "$svc" == frps* ]] && frps_wss_front_remove "${svc#frps}"
+    systemctl disable --now "$svc" >/dev/null 2>&1 || true
+    rm -f "${d:?}/${svc:?}.service" "${conf:?}"
+    if [[ -n "$gif" && "$gif" != "none" ]]; then
+        systemctl disable --now "${gif}.service" >/dev/null 2>&1 || true
+        rm -f "${d:?}/${gif:?}.service"
+        ip link del "$gif" >/dev/null 2>&1 || ip tunnel del "$gif" >/dev/null 2>&1 || true
+        ip link del "$(gre6_sit_name "$gif")" >/dev/null 2>&1 || true
+    fi
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl reset-failed >/dev/null 2>&1 || true
+    hashem_ufw_release
+    reserve_service_ports
+    echo -e "${YELLOW}[*] Nothing of the failed tunnel was kept: its port is free again.${NC}"
+}
+
+# peer_sweep_orphans: removes the numbered relay configs (frps-N.toml,
+# backhaul server-N.toml) that no peers.json record has and whose unit is not
+# running: what a failed add-peer left behind before peer_add_rollback.
+peer_sweep_orphans() {
+    [[ -s "$PEERS_FILE" ]] && command -v python3 >/dev/null 2>&1 || return 0
+    local ids f n svc d="${HASHEM_SYSTEMD_DIR:-/etc/systemd/system}" swept=0
+    ids=$(PEERS_F="$PEERS_FILE" python3 -c 'import json,os; print(" ".join(["ok"]+[str(int(p["id"])) for p in json.load(open(os.environ["PEERS_F"])).get("peers",[])]))' 2>/dev/null) || return 0
+    [[ "$ids" == ok* ]] || return 0
+    for f in "${CONFIG_DIR}"/frps-*.toml "${BACKHAUL_CONFIG_DIR}"/server-*.toml; do
+        [[ -f "$f" ]] || continue
+        n=${f##*-}; n=${n%.toml}
+        [[ "$n" =~ ^[0-9]+$ ]] || continue
+        [[ " $ids " == *" $n "* ]] && continue
+        if [[ "$f" == "${CONFIG_DIR}"/* ]]; then svc="frps-${n}"; else svc="backhaul-server-${n}"; fi
+        systemctl is-active --quiet "$svc" 2>/dev/null && continue
+        [[ "$svc" == backhaul-* ]] && backhaul_udp_remove "$svc"
+        [[ "$svc" == frps-* ]] && frps_wss_front_remove "-${n}"
+        systemctl disable --now "$svc" >/dev/null 2>&1 || true
+        rm -f "${d:?}/${svc:?}.service" "${f:?}"
+        echo -e "${CYAN}[*] Removed the left-over config of a tunnel that was never added: ${f}${NC}"
+        swept=1
+    done
+    [[ "$swept" -eq 1 ]] || return 0
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl reset-failed >/dev/null 2>&1 || true
+    hashem_ufw_release
+    reserve_service_ports
 }
 
 # frps_ufw_open CONTROL_PORT [PORTS]: with ufw active, open what frps listens
@@ -3842,13 +3982,10 @@ frps_ufw_open() {
     command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active" || return 0
     local CPORT=$1 QPORT=$(($1 + 1)) p
     (( QPORT > 65535 )) && QPORT=$(($1 - 1))
-    ufw allow "${CPORT}/tcp" >/dev/null 2>&1 || true
-    ufw allow "${CPORT}/udp" >/dev/null 2>&1 || true
-    ufw allow "${QPORT}/udp" >/dev/null 2>&1 || true
+    hashem_ufw_allow "${CPORT}/tcp" "${CPORT}/udp" "${QPORT}/udp"
     for p in $(echo "${2:-}" | tr ',' ' '); do
         is_valid_port "$p" || continue
-        ufw allow "$((10#$p))/tcp" >/dev/null 2>&1 || true
-        ufw allow "$((10#$p))/udp" >/dev/null 2>&1 || true
+        hashem_ufw_allow "$((10#$p))/tcp" "$((10#$p))/udp"
     done
 }
 
@@ -4304,9 +4441,7 @@ setup_backhaul_iran_server_noninteractive() {
         fi
     fi
 
-    if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
-        ufw allow "${BIND_PORT}/$([[ "$TRANSPORT" == udp ]] && echo udp || echo tcp)" >/dev/null 2>&1 || true
-    fi
+    hashem_ufw_allow "${BIND_PORT}/$([[ "$TRANSPORT" == udp ]] && echo udp || echo tcp)"
 
     tune_apply >/dev/null 2>&1 || true
     watchdog_timer_ensure >/dev/null 2>&1 || true  # drives Auto-Pool + schedules, not just alerts
@@ -4505,9 +4640,7 @@ setup_gre_backhaul_iran_server_noninteractive() {
         fi
     fi
 
-    if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
-        ufw allow "${BIND_PORT}/$([[ "$TRANSPORT" == udp ]] && echo udp || echo tcp)" >/dev/null 2>&1 || true
-    fi
+    hashem_ufw_allow "${BIND_PORT}/$([[ "$TRANSPORT" == udp ]] && echo udp || echo tcp)"
 
     tune_apply >/dev/null 2>&1 || true
     watchdog_timer_ensure >/dev/null 2>&1 || true  # drives Auto-Pool + schedules, not just alerts
@@ -4923,6 +5056,7 @@ cli_add_peer() {
     CLEANED=$(echo "$CLEANED" | xargs)
     [[ -n "$CLEANED" ]] || { echo -e "${RED}[!] --ports needs at least one valid port.${NC}"; return 1; }
     peer_init; peer_require_py || return 1
+    peer_sweep_orphans
     local ID
     ID=$(peer_next_id)
     [[ "$ID" -ge 1 ]] || { echo -e "${RED}[!] Peer table full (max ${MAX_PEERS} foreign servers). Remove one first.${NC}"; return 1; }
@@ -4970,6 +5104,7 @@ cli_add_peer() {
     sleep 1
     if ! systemctl is-active --quiet "$FRPS_SVC"; then
         echo -e "${RED}[!] Error: ${FRPS_SVC} failed to start. Generated configuration might be invalid.${NC}"
+        peer_add_rollback "$FRPS_SVC" "$GRE_IF" "${CONFIG_DIR}/${FRPS_SVC}.toml"
         return 1
     fi
     frps_ufw_open "$FRP_PORT" "$CLEANED"
@@ -5038,6 +5173,10 @@ cli_remove_peer() {
     fi
     [[ -f "$PEERS_FILE" ]] && PEERS_F="$PEERS_FILE" PEER_ID="$ID" python3 -c \
 'import json,os; f=os.environ["PEERS_F"]; d=json.load(open(f)); d["peers"]=[p for p in d.get("peers",[]) if p["id"]!=int(os.environ["PEER_ID"])]; json.dump(d,open(f,"w"),indent=2)'
+    # its ports: out of the firewall and the kernel's reserved list again
+    peer_sweep_orphans
+    hashem_ufw_release
+    reserve_service_ports
     echo -e "${GREEN}[OK] Peer '${NAME}' (id ${ID}) removed.${NC}"
 }
 
@@ -5096,6 +5235,7 @@ cli_add_backhaul_peer() {
     fi
     [[ -n "$TOKEN" ]] || { echo -e "${RED}[!] --token is required.${NC}"; return 1; }
     peer_init; peer_require_py || return 1
+    peer_sweep_orphans
     local ID
     ID=$(peer_next_id)
     [[ "$ID" -ge 1 ]] || { echo -e "${RED}[!] Peer table full (max ${MAX_PEERS}).${NC}"; return 1; }
@@ -5139,7 +5279,8 @@ cli_add_backhaul_peer() {
 
     sleep 1
     if ! systemctl is-active --quiet "$SVC_NAME"; then
-        echo -e "${RED}[!] Error: ${SVC_NAME} failed to start. Review config in ${CONF_FILE}.${NC}"
+        echo -e "${RED}[!] Error: ${SVC_NAME} failed to start. Its config was ${CONF_FILE}.${NC}"
+        peer_add_rollback "$SVC_NAME" "$GRE_IF" "$CONF_FILE"
         return 1
     fi
 
@@ -5323,12 +5464,9 @@ PYEOF
         # accepts them, and [[proxies]] in frps-N.toml breaks it. So the Iran
         # side just records the ports (peers.json, step 4) and opens the firewall.
         echo -e "${YELLOW}[i] Ports saved for ${CUR_SVC}. Apply them on the foreign server too (re-run its setup with the updated bundle).${NC}"
-        if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
-            for p in $CLEANED; do
-                ufw allow "$p"/tcp >/dev/null 2>&1 || true
-                ufw allow "$p"/udp >/dev/null 2>&1 || true
-            done
-        fi
+        for p in $CLEANED; do
+            hashem_ufw_allow "${p}/tcp" "${p}/udp"
+        done
     fi
 
     # 4. Update peers.json
@@ -6335,6 +6473,8 @@ remove_tunnel_force() {
         rm -rf "$CONFIG_DIR" "$BACKHAUL_CONFIG_DIR" "$BACKHAUL_LEGACY_DIR"
         rm -f /usr/local/bin/hashem-backhaul.sh
         rm -f "$PEERS_FILE"
+        hashem_ufw_release
+        reserve_service_ports
 
         echo -e "${GREEN}[OK] Tunnel removed — GRE interface, FRP/Backhaul services, binaries and configs gone. Panel still running.${NC}"
 }
@@ -6369,6 +6509,8 @@ remove_base_tunnel() {
     rm -f "${CONFIG_DIR}/frps.toml" "${CONFIG_DIR}/frpc.toml" \
           "${BACKHAUL_CONFIG_DIR}/config.toml" "${BACKHAUL_CONFIG_DIR}/server.toml" "${BACKHAUL_CONFIG_DIR}/client.toml" \
           "${PANEL_CONFIG_DIR}/server.toml" "${PANEL_CONFIG_DIR}/client.toml"
+    hashem_ufw_release
+    reserve_service_ports
     echo -e "${GREEN}[OK] First tunnel removed. The other tunnels are untouched.${NC}"
 }
 
@@ -6470,7 +6612,14 @@ print(" ".join(str(x) for p in d.get("peers",[]) for x in [p.get("frp_port")]+li
     local list
     list=$(printf '%s
 ' $ports | grep -E '^[0-9]+$' | awk '$1 >= 1024 && $1 <= 65535' | sort -n -u | paste -sd, -)
-    [[ -n "$list" ]] || return 0
+    if [[ -z "$list" ]]; then
+        # nothing left to reserve: clear what an earlier run set
+        if [[ -f /etc/sysctl.d/99-hashem-reserved-ports.conf ]]; then
+            sysctl -w net.ipv4.ip_local_reserved_ports="" >/dev/null 2>&1 || true
+            rm -f /etc/sysctl.d/99-hashem-reserved-ports.conf
+        fi
+        return 0
+    fi
     sysctl -w net.ipv4.ip_local_reserved_ports="$list" >/dev/null 2>&1 || return 0
     printf '# hashem: service ports kept out of the ephemeral range (rewritten automatically)
 net.ipv4.ip_local_reserved_ports = %s
@@ -8976,6 +9125,7 @@ update_all() {
         echo -e "${GREEN}[OK] New hashem.sh downloaded and syntax-checked.${NC}"
     fi
     remove_legacy_units
+    peer_sweep_orphans # a failed add-peer of an older release: its port is free again
     # 2. reinstall panel binary from latest release (downloads prebuilt, restarts service)
     echo -e "${CYAN}[*] Updating panel binary...${NC}"
     # backup panel config so a failed update can be rolled back

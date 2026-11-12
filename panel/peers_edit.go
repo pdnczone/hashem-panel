@@ -603,13 +603,13 @@ func editPeerDirect(peer *peerRecord, req peerPatchRequest) (string, error) {
 				}
 			}
 			_ = runSystemctl("reload-or-restart", svc)
-			allowUFWPorts(numList)
+			allowUFWTunnelPorts(numList)
 		} else {
 			// FRP proxies are defined by frpc on the foreign server; frps only
 			// accepts them. Writing [[proxies]] into frps-N.toml is invalid
 			// (strict config rejects it) and took the peer's tunnel down, so
 			// the Iran side only records the ports and opens the firewall.
-			allowUFWPorts(numList)
+			allowUFWTunnelPorts(numList)
 			if warning != "" {
 				warning += "; "
 			}
@@ -691,7 +691,7 @@ func editMainTunnelDirect(req peerPatchRequest, legacyPeer *peerRecord) (string,
 			updated := rewriteBackhaulTomlPorts(string(rawToml), *req.RawPorts)
 			_ = writeTokenFile(filepath.Join(backhaulDir, "config.toml"), []byte(updated))
 			_ = runSystemctl("reload-or-restart", "backhaul-server")
-			allowUFWPorts(extractNumericPorts(*req.RawPorts))
+			allowUFWTunnelPorts(extractNumericPorts(*req.RawPorts))
 		}
 	}
 	if req.Ports != nil {
@@ -941,7 +941,7 @@ func editMainTunnelPortsDirect(newPorts []int) error {
 	}
 
 	// 4. Open ports in UFW if active
-	allowUFWPorts(newPorts)
+	allowUFWTunnelPorts(newPorts)
 
 	if !editedAny {
 		// Still create a minimal peers record or return ok if it was applied

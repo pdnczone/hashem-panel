@@ -20,6 +20,8 @@ for f in cli_remove_peer remove_base_tunnel peers_other_than; do
     declare -F "$f" >/dev/null || { echo "FAIL: $f not found in hashem.sh"; exit 1; }
 done
 remove_tunnel_force() { echo FORCE >> "$T/calls.log"; rm -f "$PEERS_FILE"; }
+# the ports' clean-up has its own tests (test_frps_ufw.sh, test_peer_add_rollback.sh)
+peer_sweep_orphans() { :; }; hashem_ufw_release() { :; }; reserve_service_ports() { :; }
 RED= GREEN= YELLOW= CYAN= NC=
 TUNNEL_NAME=gre-tunnel CONFIG_DIR="$T/frp" BACKHAUL_CONFIG_DIR="$T/bh" PANEL_CONFIG_DIR="$T/panel"
 PEERS_FILE="$T/panel/peers.json"

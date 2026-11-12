@@ -1406,18 +1406,68 @@ func custReservedPath() string { return filepath.Join(configDir, "ports.reserved
 // custReserveSysctl is the kernel's reserved port list (swappable for tests).
 var custReserveSysctl = "/proc/sys/net/ipv4/ip_local_reserved_ports"
 
+// custReserveConf is the boot-time copy of Hashem's reserved ports, also
+// written by hashem.sh's reserve_service_ports (swappable for tests).
+var custReserveConf = "/etc/sysctl.d/99-hashem-reserved-ports.conf"
+
+// custPortSet reads a port list ("80", "7000-7002", separated by commas or
+// lines) into set; text that is not a port or a range is skipped.
+func custPortSet(text string, set map[int]bool) {
+	for _, part := range strings.FieldsFunc(text, func(r rune) bool { return r == ',' || r == '\n' || r == ' ' || r == '\t' }) {
+		lo, hi, rng := strings.Cut(part, "-")
+		a, err := strconv.Atoi(lo)
+		b := a
+		if rng && err == nil {
+			b, err = strconv.Atoi(hi)
+		}
+		if err != nil || a < 1 || b > 65535 || b < a {
+			continue
+		}
+		for p := a; p <= b; p++ {
+			set[p] = true
+		}
+	}
+}
+
+// custPortRanges writes set as the kernel does: "80,7000-7002".
+func custPortRanges(set map[int]bool) string {
+	ports := make([]int, 0, len(set))
+	for p := range set {
+		ports = append(ports, p)
+	}
+	sort.Ints(ports)
+	var parts []string
+	for i := 0; i < len(ports); {
+		j := i
+		for j+1 < len(ports) && ports[j+1] == ports[j]+1 {
+			j++
+		}
+		if j > i {
+			parts = append(parts, strconv.Itoa(ports[i])+"-"+strconv.Itoa(ports[j]))
+		} else {
+			parts = append(parts, strconv.Itoa(ports[i]))
+		}
+		i = j + 1
+	}
+	return strings.Join(parts, ",")
+}
+
 // custReservePorts keeps every claimed port (sold ones included) out of the
 // ephemeral range: the server's own outgoing connections never take a sold
 // port as their source port, so they are never billed to a customer or cut
-// with them. It adds to the kernel's list, never removes from it.
+// with them. A port Hashem reserved before and no config claims any more (a
+// removed tunnel) leaves the kernel's list again; entries that were never
+// Hashem's stay.
 func custReservePorts() {
-	seen := map[int]bool{}
-	var ports []int
+	claimed := map[int]bool{}
 	for _, c := range hashemPortClaims() {
-		if c.Port >= 1024 && !seen[c.Port] {
-			seen[c.Port] = true
-			ports = append(ports, c.Port)
+		if c.Port >= 1024 {
+			claimed[c.Port] = true
 		}
+	}
+	ports := make([]int, 0, len(claimed))
+	for p := range claimed {
+		ports = append(ports, p)
 	}
 	sort.Ints(ports)
 	strs := make([]string, len(ports))
@@ -1428,41 +1478,53 @@ func custReservePorts() {
 	if sig == custApplied.reserved {
 		return
 	}
+	// what Hashem reserved before: its own list and the boot-time copy
+	was := map[int]bool{}
+	if old, err := os.ReadFile(custReservedPath()); err == nil {
+		custPortSet(string(old), was)
+	}
+	if old, err := os.ReadFile(custReserveConf); err == nil {
+		for _, line := range strings.Split(string(old), "\n") {
+			if k, v, ok := strings.Cut(line, "="); ok && strings.TrimSpace(k) == "net.ipv4.ip_local_reserved_ports" {
+				custPortSet(v, was)
+			}
+		}
+	}
 	_ = writeFileAtomic(custReservedPath(), []byte(strings.Join(strs, "\n")+"\n"), 0o644)
 	cur, err := os.ReadFile(custReserveSysctl)
 	if err != nil {
 		custApplied.reserved = sig
 		return
 	}
-	merged := strings.TrimSpace(string(cur))
 	have := map[int]bool{}
-	for _, part := range strings.Split(merged, ",") {
-		lo, hi, rng := strings.Cut(strings.TrimSpace(part), "-")
-		a, err1 := strconv.Atoi(lo)
-		b := a
-		var err2 error
-		if rng {
-			b, err2 = strconv.Atoi(hi)
-		}
-		if err1 != nil || err2 != nil || b-a > 65535 {
-			continue
-		}
-		for p := a; p <= b; p++ {
-			have[p] = true
+	custPortSet(string(cur), have)
+	want := map[int]bool{}
+	for p := range have {
+		if !was[p] || claimed[p] {
+			want[p] = true
 		}
 	}
-	var add []string
-	for _, p := range ports {
+	for p := range claimed {
+		want[p] = true
+	}
+	changed := len(want) != len(have)
+	for p := range want {
 		if !have[p] {
-			add = append(add, strconv.Itoa(p))
+			changed = true
 		}
 	}
-	if len(add) > 0 {
-		if merged != "" {
-			merged += ","
-		}
-		if err := os.WriteFile(custReserveSysctl, []byte(merged+strings.Join(add, ",")), 0o644); err != nil {
+	if changed {
+		if err := os.WriteFile(custReserveSysctl, []byte(custPortRanges(want)), 0o644); err != nil {
 			return // retried next tick
+		}
+	}
+	if _, err := os.Stat(filepath.Dir(custReserveConf)); err == nil {
+		conf := "# hashem: service ports kept out of the ephemeral range (rewritten automatically)\n" +
+			"net.ipv4.ip_local_reserved_ports = " + sig + "\n"
+		if sig == "" {
+			_ = os.Remove(custReserveConf)
+		} else {
+			_ = writeFileAtomic(custReserveConf, []byte(conf), 0o644)
 		}
 	}
 	custApplied.reserved = sig
