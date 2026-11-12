@@ -7209,14 +7209,32 @@ release_verify() {
     return 1
 }
 
+# panel_is_core: 0 when this server runs (or is being given) the node core,
+# the panel's build without the web page. HASHEM_NODE_CORE=1 / 0 decides for
+# a new install or a change; otherwise the installed binary says.
+panel_is_core() {
+    case "${HASHEM_NODE_CORE:-}" in
+        1) return 0 ;;
+        0) return 1 ;;
+    esac
+    [[ -x "$PANEL_BIN" ]] || return 1
+    "$PANEL_BIN" --help 2>/dev/null | grep -q '^Usage: hashem-node '
+}
+
 install_panel() {
     echo -e "${CYAN}[*] Installing Hashem web panel...${NC}"
     ensure_doctor_tools
 
+    # a node core stays a core: same path and unit, the build without the web page
+    local PANEL_BASE="gre-panel" PANEL_TAGS=""
+    if panel_is_core; then
+        PANEL_BASE="hashem-node"; PANEL_TAGS="nodecore"
+        echo -e "${CYAN}[*] This server is a node core (no web panel): installing hashem-node.${NC}"
+    fi
     ARCH=$(uname -m)
     case "$ARCH" in
-        x86_64)  PANEL_ASSET="gre-panel-linux-amd64" ;;
-        aarch64|arm64) PANEL_ASSET="gre-panel-linux-arm64" ;;
+        x86_64)  PANEL_ASSET="${PANEL_BASE}-linux-amd64" ;;
+        aarch64|arm64) PANEL_ASSET="${PANEL_BASE}-linux-arm64" ;;
         *) echo -e "${RED}[!] Unsupported arch for panel: $ARCH${NC}"; return 1 ;;
     esac
 
@@ -7344,7 +7362,7 @@ install_panel() {
             rm -rf "$TMP_PANEL"
             return 1
         fi
-        (cd "$SRC" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$TMP_PANEL/gre-panel" .)
+        (cd "$SRC" && CGO_ENABLED=0 go build -trimpath -tags "$PANEL_TAGS" -ldflags "-s -w" -o "$TMP_PANEL/gre-panel" .)
         if [[ -f "$SRC/grepanel" ]]; then
             cp "$SRC/grepanel" /usr/local/bin/grepanel
             chmod +x /usr/local/bin/grepanel

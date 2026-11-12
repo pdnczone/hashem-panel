@@ -144,11 +144,10 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 // panelAsset maps runtime arch to the release asset name.
 func panelAsset() (arch, asset string, err error) {
+	// a core updates to a core: binName is "hashem-node" on that build
 	switch runtime.GOARCH {
-	case "amd64":
-		return "amd64", "gre-panel-linux-amd64", nil
-	case "arm64":
-		return "arm64", "gre-panel-linux-arm64", nil
+	case "amd64", "arm64":
+		return runtime.GOARCH, binName() + "-linux-" + runtime.GOARCH, nil
 	}
 	return "", "", fmt.Errorf("unsupported arch for update: %s", runtime.GOARCH)
 }
