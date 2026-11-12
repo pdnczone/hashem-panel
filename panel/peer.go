@@ -272,6 +272,7 @@ func mountPeerRoutes(mux *http.ServeMux, base string) {
 		{"GET", "/api/peer/node-offer", handlePeerNodeOffer}, // nodes N5 (node_migrate.go)
 		{"POST", "/api/peer/swap-carrier", handlePeerSwapCarrier},
 		{"GET", "/api/peer/swap-status", handlePeerSwapStatus},
+		{"POST", "/api/peer/pathtest-join", handlePeerPathTestJoin}, // autopilot.go
 		{"GET", "/api/peer/swap-request", handlePeerSwapRequestGet},
 		{"POST", "/api/peer/swap-request", handlePeerSwapRequest},
 		{"GET", "/api/peer/wrap-request", handlePeerWrapStatus},

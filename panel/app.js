@@ -358,6 +358,7 @@ const PRO_TXT = {
   spoof: ['pro_t_spoof', 'Spoof Tunnel — Hashem Pro', 'pro_b_spoof', 'The Spoof Tunnel is a Hashem Pro feature, on both servers: an IP-spoofing pipe wrapped with WireGuard to cross whitelist-based Layer-3 firewalls.'],
   xray: ['pro_t_xray', 'Xray Tunnel — Hashem Pro', 'pro_b_xray', 'The Xray Tunnel is a Hashem Pro feature, on both servers: Reality, XHTTP, gRPC or mKCP, direct or reverse, next to any Xray panel.'],
   limits: ['pro_t_limits', 'Speed and volume limits — Hashem Pro', 'pro_b_limits', 'Limiting the speed and volume of each foreign server is a Hashem Pro feature. Limits already set keep working without it, and can always be removed.'],
+  autopilot: ['pro_t_autopilot', 'Autopilot — Hashem Pro', 'pro_b_autopilot', 'Autopilot is a Hashem Pro feature: a tunnel that stays down is tested and moved to a carrier that gets through, by itself. Turn it on on the Iran server.'],
   customers: ['pro_t_customers', 'Customers — Hashem Pro', 'pro_b_customers', 'Selling tunnels to customers is a Hashem Pro feature. Customers already set up keep running without it, and can always be paused or removed.'],
 };
 function isSentinelLicensed() {
@@ -380,6 +381,7 @@ function proSync() {
   tag('limitsPro', 'limits');
   tag('navCustomersPro', 'customers');
   tag('custPro', 'customers');
+  tag('apPro', 'autopilot');
   if ($('navClusterPro')) $('navClusterPro').classList.toggle('hidden', clLicensed());
   if ($('navSentinelPro')) $('navSentinelPro').classList.toggle('hidden', isSentinelLicensed());
   ['navPerfPro', 'navWatchdogPro', 'navBenchmarkPro', 'navSpoofPro', 'navXrayPro', 'navCustomersPro', 'navClusterPro', 'navDoctorPro', 'navSentinelPro'].forEach(id => {
@@ -3677,7 +3679,7 @@ function doLogin() {
     try {
       await api('/api/login', {username: $('u').value, password: $('p').value, code: $('totpCode').value.trim()});
       $('p').value = ''; $('totpCode').value = ''; $('codeField').classList.add('hidden'); $('loginErr').textContent = '';
-      showApp(); refresh(); loadSetupDefaults(); loadVersion(); accessRefresh(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); metricsRefresh(); histRefresh(); advisorRefresh();
+      showApp(); refresh(); loadSetupDefaults(); loadVersion(); accessRefresh(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); metricsRefresh(); histRefresh(); advisorRefresh(); autopilotRefresh();
       nodePickLoad(); // a node chosen before the login reopens
       migrateBannerLoad();
     } catch(e) {
@@ -4308,6 +4310,62 @@ async function advisorRefresh() {
   } catch(e) {}
 }
 $('advRefresh').onclick = advisorRefresh;
+// ---- Autopilot (autopilot.go): a down tunnel is moved to a carrier that gets through ----
+let _apData = null;
+function apStateText(t) {
+  if (t.running) return tr('', 'Autopilot is working') + (t.progress ? ': ' + tr('', t.progress) : '');
+  if (t.state === 'down') return tr('', 'down') + (t.down_sec ? ' ' + Math.floor(t.down_sec / 60) + ' ' + tr('', 'min') : '') + (t.waiting ? ' · ' + tr('', t.waiting) : '');
+  return tr('', t.state || 'unknown');
+}
+function apRender() {
+  const r = _apData; if (!r) return;
+  const c = r.config || {};
+  $('apEnabled').checked = !!c.enabled; $('apDown').value = c.down_minutes || 5; $('apCool').value = c.cooldown_minutes || 30;
+  $('apPerDay').value = c.max_per_day || 6; $('apPathTest').checked = !!c.path_test; $('apNotify').checked = !!c.notify;
+  $('apQuietFrom').value = c.quiet_from || 0; $('apQuietTo').value = c.quiet_to || 0;
+  $('apCarriers').value = (c.carriers || []).join(', ');
+  $('apNotifyNote').textContent = r.notify_ready ? '' : tr('', '(set a webhook in External alerts or a Telegram bot in the Watchdog tab first)');
+  $('apCarrierList').textContent = tr('', 'Carriers') + ': ' + (r.carriers || []).join(', ');
+  let note = '';
+  if (!r.iran) note = tr('', 'Autopilot runs on the Iran server: it switches the foreign server too. Turn it on there.');
+  else if (!r.licensed) note = tr('', 'Autopilot is a Hashem Pro feature. Without a license it does nothing.');
+  else if (c.enabled && c.path_test && !r.path_test_licensed) note = tr('', 'This license does not include the path test: the carriers are tried in order instead.');
+  else if (c.enabled) note = tr('', 'On. The foreign panel must answer on its public address: with the tunnel down there is no other way to tell it.');
+  $('apNote').textContent = note;
+  const skip = new Set(c.skip || []);
+  $('apTunnels').innerHTML = (r.tunnels || []).map(t => {
+    const can = t.can_swap;
+    return `<label class="ent-help"><input type="checkbox" class="ap-tun" value="${t.id}" ${can && !skip.has(t.id) ? 'checked' : ''} ${can ? '' : 'disabled'}> ` +
+      `<b>${esc(t.name)}</b>${t.carrier ? ' · ' + esc(t.carrier) : ''} · ${esc(apStateText(t))}` +
+      `${can ? '' : ' · ' + esc(tr('', 'no carrier to swap'))}${can && !t.seen_up ? ' · ' + esc(tr('', 'not seen up yet')) : ''}` +
+      `${t.runs_day ? ' · ' + t.runs_day + ' ' + esc(tr('', 'runs today')) : ''}</label>`;
+  }).join('') || '<div class="ent-help">' + esc(tr('', 'No tunnels yet.')) + '</div>';
+  const ev = r.events || [];
+  $('apEvents').innerHTML = '<b>' + esc(tr('', 'History')) + '</b><br>' + (ev.length ? ev.map(e =>
+    esc((e.at || '').replace('T', ' ').slice(0, 16)) + ' · <b>' + esc(e.name || ('#' + e.tunnel)) + '</b> · ' + esc(tr('', e.kind)) + ': ' + esc(e.text || '')).join('<br>')
+    : esc(tr('', 'Nothing yet: Autopilot has not had to act.')));
+}
+async function autopilotRefresh() {
+  if (!$('autopilotCard')) return;
+  try { _apData = await api('/api/autopilot'); apRender(); } catch (e) {}
+}
+$('apRefresh').onclick = autopilotRefresh;
+$('apSave').onclick = async () => {
+  const on = $('apEnabled').checked;
+  if (on && !isProLicensed('autopilot')) { $('apEnabled').checked = false; openBagherLicModal('autopilot'); return; }
+  const skip = [...document.querySelectorAll('#apTunnels .ap-tun')].filter(x => !x.disabled && !x.checked).map(x => parseInt(x.value, 10));
+  const num = (id, d) => { const n = parseInt($(id).value, 10); return isNaN(n) ? d : n; };
+  try {
+    _apData = await api('/api/autopilot', {enabled: on, down_minutes: num('apDown', 5), cooldown_minutes: num('apCool', 30),
+      max_per_day: num('apPerDay', 6), path_test: $('apPathTest').checked, notify: $('apNotify').checked,
+      quiet_from: num('apQuietFrom', 0), quiet_to: num('apQuietTo', 0),
+      carriers: $('apCarriers').value.split(',').map(s => s.trim()).filter(Boolean), skip});
+    apRender(); toastOk(on ? 'Autopilot is on' : 'Autopilot settings saved');
+  } catch (e) { toastErr('Autopilot', e.message); }
+};
+$('apEnabled').onchange = () => {
+  if ($('apEnabled').checked && !isProLicensed('autopilot')) { $('apEnabled').checked = false; openBagherLicModal('autopilot'); }
+};
 async function metricsRefresh() {
   try { const r = await api('/api/metrics-token'); $('metricsState').firstChild && ($('metricsState').textContent = r.enabled ? 'Enabled. Scrape GET …/metrics with the bearer token (rotate to get a new one; the old one stops working).' : 'Disabled. Generate a token to enable GET …/metrics for your scraper (Authorization: Bearer <token>). The token is shown once.'); } catch(e) {}
 }
@@ -7739,14 +7797,14 @@ if ($('docCopyBtn')) $('docCopyBtn').onclick = () => { if (doctorData) copyTextS
 (async () => {
   if (NV) { // a node's view: the central's own login, HTTPS, 2FA and terminal are not this page's
     try {
-      await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); alertsRefresh(); histRefresh(); advisorRefresh();
+      await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); alertsRefresh(); histRefresh(); advisorRefresh(); autopilotRefresh();
       const tb = new URLSearchParams(location.search).get('tab'); // opened from the central on a page (its customers list)
       if (tb === 'customers') goTab(tb); // the one page the central opens a node on
     }
     catch(e) { showApp(); toastErr(tr('', 'Failed'), e.message); }
     return;
   }
-  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); metricsRefresh(); histRefresh(); advisorRefresh(); migrateBannerLoad(); }
+  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); metricsRefresh(); histRefresh(); advisorRefresh(); autopilotRefresh(); migrateBannerLoad(); }
   catch(e) { showLogin(); }
 })();
 // light pollers: skip when the tab is in the background (background tabs

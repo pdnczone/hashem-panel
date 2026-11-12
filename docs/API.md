@@ -37,6 +37,8 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/bagher` | session + CSRF | `handleSSHFwdPost` |
 | `GET` | `/api/benchmark` | session | `handleBenchmarkGet` |
 | `POST` | `/api/benchmark/apply` | session + CSRF | `handleBenchmarkApply` |
+| `GET` | `/api/autopilot` | session | `handleAutopilotGet` |
+| `POST` | `/api/autopilot` | session + CSRF | `handleAutopilotPost` |
 | `POST` | `/api/benchmark/autopilot` | session + CSRF | `handleBenchmarkAutoPilot` |
 | `POST` | `/api/benchmark/run` | session + CSRF | `handleBenchmarkRun` |
 | `GET` | `/api/carrier` | session | `handleCarrierGet` |
@@ -97,6 +99,7 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/peer/revpath-probe` | peer secret (or session) | `handlePeerRevPathProbe` |
 | `POST` | `/api/peer/sshfwd-install-key` | peer secret (or session) | `handlePeerSSHFwdInstallKey` |
 | `GET` | `/api/peer/status` | peer secret (or session) | `handlePeerStatus` |
+| `POST` | `/api/peer/pathtest-join` | peer secret (or session) | `handlePeerPathTestJoin` |
 | `POST` | `/api/peer/swap-carrier` | peer secret (or session) | `handlePeerSwapCarrier` |
 | `GET` | `/api/peer/swap-request` | peer secret (or session) | `handlePeerSwapRequestGet` |
 | `POST` | `/api/peer/swap-request` | peer secret (or session) | `handlePeerSwapRequest` |

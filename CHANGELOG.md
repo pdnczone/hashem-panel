@@ -3,6 +3,17 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## v3.1.0 — 2026-11-12
+
+**Autopilot: a tunnel that stays down moves itself to a carrier that gets through.** A Hashem Pro feature; every Pro key includes it. Run `hashem update` on both servers, then turn it on in **Settings → Autopilot** on the Iran server (or `hashem autopilot on`). It is off until you do. [Guide](docs/AUTOPILOT.md)
+
+- When a tunnel has been down for 5 minutes, the Iran server runs the path test with the foreign server, picks the fastest carrier that got through and swaps the tunnel to it on both servers. A carrier that does not connect within 45 seconds is undone on both servers and the next one is tried, three at most in one run.
+- You get a message on the webhook and Telegram for every switch and every run that found nothing, and the card keeps a history.
+- Limits you set: minutes down, minutes between two runs for one tunnel (30), runs per tunnel a day (6), quiet hours, the carriers it may choose and the tunnels it leaves alone.
+- It never touches a tunnel it has not seen up yet, a tunnel whose service is stopped on the Iran server, or an Xray, Bagher or Spoof tunnel. When the foreign panel does not answer on its public address it changes nothing and says so.
+- The foreign server needs this release for the path test; with an older foreign panel the carriers are tried in order.
+- The Carrier advisor card still only advises.
+
 ## v3.0.3 — 2026-11-12
 
 **A removed tunnel gives its ports back.** Run `hashem update` on the Iran server.

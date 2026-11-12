@@ -92,7 +92,7 @@ var (
 	cfg panelConfig
 	// panelVersion is set at release build time:
 	// go build -ldflags "-X main.panelVersion=v3.0.1"
-	panelVersion = "v3.0.3"
+	panelVersion = "v3.1.0"
 	// panelMux is shared between the HTTP listener and the HTTPS listener.
 	panelMux *http.ServeMux
 )
@@ -530,7 +530,7 @@ func main() {
 			fmt.Println(panelVersion)
 			return
 		case "--help", "-h", "help":
-			fmt.Println("Usage: gre-panel [password <new-password> | info | version | tls [status|issue|renew|remove|ip|custom] | settings [show|2fa off|terminal on|off|idle N] | doctor [check|fix] | tls-proxy | pathtest | cluster [status|pool|member|join-code|add-hub|events|rules|reset] | license [status|activate|deactivate] | node [status|join CODE|-|leave|move]]")
+			fmt.Println("Usage: gre-panel [password <new-password> | info | version | tls [status|issue|renew|remove|ip|custom] | settings [show|2fa off|terminal on|off|idle N] | doctor [check|fix] | tls-proxy | pathtest | autopilot [status|on|off] | cluster [status|pool|member|join-code|add-hub|events|rules|reset] | license [status|activate|deactivate] | node [status|join CODE|-|leave|move]]")
 			return
 		case "tls-proxy":
 			os.Exit(tlsProxyCmd(os.Args[2:]))
@@ -540,6 +540,8 @@ func main() {
 			os.Exit(custBagherRelayCmd(os.Args[2:]))
 		case "pathtest":
 			os.Exit(cliPathTest(os.Args[2:]))
+		case "autopilot":
+			os.Exit(cliAutopilot(os.Args[2:]))
 		case "cluster", "mesh":
 			os.Exit(cliCluster(os.Args[2:]))
 		case "password", "pass", "set-password":
@@ -660,6 +662,8 @@ func main() {
 	mux.HandleFunc("GET "+base+"/api/metrics-token", requireAuth(handleMetricsTokenGet))
 	mux.HandleFunc("POST "+base+"/api/metrics-token", requireAuth(requireCSRF(handleMetricsTokenPost)))
 	mux.HandleFunc("GET "+base+"/api/carrier/advice", requireAuth(handleCarrierAdvice))
+	mux.HandleFunc("GET "+base+"/api/autopilot", requireAuth(handleAutopilotGet))
+	mux.HandleFunc("POST "+base+"/api/autopilot", requireAuth(requireCSRF(handleAutopilotPost)))
 	mux.HandleFunc("GET "+base+"/api/suggest", requireAuth(handleSuggest))
 	mux.HandleFunc("GET "+base+"/api/2fa", requireAuth(handle2FAStatus))
 	mux.HandleFunc("POST "+base+"/api/2fa/setup", requireAuth(requireCSRF(handle2FASetup)))

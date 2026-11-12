@@ -49,6 +49,7 @@ The GRE link itself can be wrapped four ways: **Direct** (protocol 47), **WSS** 
 
 - **One health model** for the dashboard, the map and every card, with latency per link and alerts by webhook or Telegram when a tunnel changes state.
 - **Swap a tunnel's carrier** from either server; both switch, and both go back if the new one does not connect within 45 seconds.
+- **Autopilot (Pro):** a tunnel that stays down is tested and moved to a carrier that gets through, on both servers, by itself; you get a message. [Guide](docs/AUTOPILOT.md)
 - **Cluster:** several foreign servers behind one Iran port (failover, balance, sticky, least connections), Iran servers backing each other up, and DNS failover. [Guide](docs/CLUSTER.md)
 - **Nodes:** manage all your servers from one panel: add them with one line or SSH, open any server's pages from the central, make a tunnel between two of them from one page, update and back them up, and get their alerts in one place. [Guide](docs/NODES.md)
 - **Customers (Pro):** sell tunnels: each customer brings foreign servers, you set the plan (days, volume, speed), and their tunnels stop when it ends. [Guide](docs/CUSTOMERS.md)
@@ -90,14 +91,14 @@ More foreign servers are added from the panel's **Setup** tab. To read the insta
 
 ## Hashem Pro
 
-GRE + FRP, the panel and updates are free. A **Pro license** unlocks Backhaul setup, Xray, Bagher, Spoof, limits, the cluster, the path test, diagnostics, performance tuning, the watchdog and the benchmark. Every Pro key opens every Pro feature, including ones added later, and tunnels and settings that already run keep running without one. [pdnczone.ir](https://pdnczone.ir)
+GRE + FRP, the panel and updates are free. A **Pro license** unlocks Backhaul setup, Xray, Bagher, Spoof, limits, the cluster, Autopilot, the path test, diagnostics, performance tuning, the watchdog and the benchmark. Every Pro key opens every Pro feature, including ones added later, and tunnels and settings that already run keep running without one. [pdnczone.ir](https://pdnczone.ir)
 
 ## Documentation
 
 | | |
 | --- | --- |
 | **Start** | [Choosing a tunnel](docs/ENGINES.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Secure deployment](docs/DEPLOYMENT.md) |
-| **Guides** | [IPv6](docs/IPV6.md) · [Xray tunnel](docs/XRAY_TUNNEL.md) · [Cluster](docs/CLUSTER.md) · [Cluster tutorial](docs/CLUSTER_TUTORIAL.md) · [Nodes](docs/NODES.md) · [Customers](docs/CUSTOMERS.md) · [FRP transports](docs/FRP_TUNNELS_GUIDE.md) |
+| **Guides** | [IPv6](docs/IPV6.md) · [Xray tunnel](docs/XRAY_TUNNEL.md) · [Cluster](docs/CLUSTER.md) · [Cluster tutorial](docs/CLUSTER_TUTORIAL.md) · [Nodes](docs/NODES.md) · [Customers](docs/CUSTOMERS.md) · [Autopilot](docs/AUTOPILOT.md) · [FRP transports](docs/FRP_TUNNELS_GUIDE.md) |
 | **Reference** | [Operations: health model, updates, CLI, uninstall](docs/OPERATIONS.md) · [HTTP API](docs/API.md) · [Error codes](docs/ERROR_CODES.md) · [Changelog](CHANGELOG.md) |
 | **Project** | [Contributing](CONTRIBUTING.md) · [Development](docs/dev/DEVELOPMENT.md) · [Security policy](SECURITY.md) · [Code of conduct](CODE_OF_CONDUCT.md) |
 
