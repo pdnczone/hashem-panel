@@ -598,8 +598,22 @@ func sendToPeerTimeout(path string, method string, payload any, timeout time.Dur
 		}
 	}
 
+	// The node channel first, when both servers belong to one central: it
+	// gets through when this server cannot reach the peer's port (node_peer.go).
+	var lastErr error
+	if st, data, ok := peerChannel(peerPublicIPs(c), method, "/"+strings.TrimLeft(path, "/"), c.PeerSecret, bodyBytes, timeout); ok {
+		if st >= 200 && st < 300 && json.Valid(data) {
+			markPeerSeen()
+			return data, nil
+		}
+		lastErr = fmt.Errorf("peer returned HTTP %d over the node channel: %s", st, truncateForError(data))
+	}
+
 	targetURLs := peerTargetURLs(c, path)
 	if len(targetURLs) == 0 {
+		if lastErr != nil {
+			return nil, lastErr
+		}
 		return nil, fmt.Errorf("no peer address configured (both InternalIP and PeerURL are empty)")
 	}
 
@@ -615,7 +629,6 @@ func sendToPeerTimeout(path string, method string, payload any, timeout time.Dur
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 
-	var lastErr error
 	deadHosts := map[string]bool{} // scheme://host:port that failed to connect
 	for _, target := range targetURLs {
 		pu, _ := url.Parse(target)
@@ -663,6 +676,23 @@ func sendToPeerTimeout(path string, method string, payload any, timeout time.Dur
 
 	_ = updatePeerConfig(func(p *PeerConfig) { p.IsConnected = false })
 	return nil, lastErr
+}
+
+// peerPublicIPs: the peer's public address, as the node channel knows servers.
+func peerPublicIPs(c PeerConfig) []string {
+	var out []string
+	if u := strings.TrimSpace(c.PeerURL); u != "" {
+		if !strings.Contains(u, "://") {
+			u = "http://" + u
+		}
+		if parsed, err := url.Parse(u); err == nil && parsed.Hostname() != "" {
+			out = append(out, parsed.Hostname())
+		}
+	}
+	if st := currentLocal(); st.RemotePub != "" {
+		out = append(out, st.RemotePub)
+	}
+	return out
 }
 
 func truncateForError(b []byte) string {

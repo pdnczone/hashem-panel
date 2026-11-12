@@ -56,7 +56,7 @@ var (
 )
 
 type nodeFrame struct {
-	T       string          `json:"t"` // hello | enroll | welcome | refused | req | res | bye
+	T       string          `json:"t"` // hello | enroll | welcome | refused | req | res | part | bye | ask | ans
 	ID      uint64          `json:"id,omitempty"`
 	Proto   int             `json:"proto,omitempty"`
 	NodeID  int             `json:"node_id,omitempty"`
@@ -191,6 +191,7 @@ type nodeSession struct {
 	parts   map[uint64]*bytes.Buffer // pm: answers arriving in parts
 	lastRx  atomic.Int64             // unix nano of the last frame from the node
 	slots   chan struct{}            // "http" calls in flight: they wait here, so the node never has to say busy
+	asks    chan struct{}            // this node's own asks in flight (node_peer.go)
 	done    chan struct{}
 	once    sync.Once
 }
@@ -479,7 +480,7 @@ func nodeServeHello(nc *nodeConn, f nodeFrame, key, addr string) {
 	}
 	s := &nodeSession{id: rec.ID, conn: nc, addr: addr, version: f.Version, since: time.Now(),
 		pending: map[uint64]chan nodeFrame{}, parts: map[uint64]*bytes.Buffer{}, done: make(chan struct{}),
-		slots: make(chan struct{}, nodeReqParallel)}
+		slots: make(chan struct{}, nodeReqParallel), asks: make(chan struct{}, nodePeerParallel)}
 	s.lastRx.Store(time.Now().UnixNano())
 	if old := nodeSessions[rec.ID]; old != nil {
 		old.close()
@@ -506,6 +507,10 @@ func nodeServeHello(nc *nodeConn, f nodeFrame, key, addr string) {
 		if fr.T == "bye" {
 			nodeForget(s, fr.Reason)
 			break
+		}
+		if fr.T == "ask" { // the node asks for a peer call to be passed on (node_peer.go)
+			go nodeServeAsk(s, fr)
+			continue
 		}
 		if fr.T != "res" && fr.T != "part" {
 			continue
@@ -855,6 +860,8 @@ func nodeRunOnce(s nodeSelf) string {
 	}
 	nodeLinkSet(true, "")
 	defer nodeLinkSet(false, "")
+	nodeUpSet(nc, f.Proto)
+	defer nodeUpClear(nc)
 	// leave: node.json gone or changed while connected
 	stop := make(chan struct{})
 	defer close(stop)
@@ -884,6 +891,8 @@ func nodeRunOnce(s nodeSelf) string {
 			return "ok"
 		}
 		switch fr.T {
+		case "ans":
+			nodeUpAnswer(fr)
 		case "bye":
 			nodesMu.Lock()
 			if cur, err := nodeSelfLoad(); err == nil && cur.Role == nodeRoleNode && cur.CentralKey == s.CentralKey {
@@ -944,6 +953,8 @@ func nodeHandleReq(f nodeFrame) (json.RawMessage, error) {
 		return nodeAlertsSince(f.Body)
 	case "http":
 		return nodeServeHTTP(f.Body)
+	case "peer":
+		return nodePeerServe(f.Body)
 	}
 	return nil, fmt.Errorf("this node (%s) does not know %q: update it", panelVersion, f.Method)
 }

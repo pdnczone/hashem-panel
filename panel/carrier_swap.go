@@ -884,6 +884,21 @@ func tunnelPeerCall(t swapTunnel, method, path string, payload any, timeout time
 		return nil, errNoPeerLink
 	}
 	l := loadTunnelLinks()[t.ID]
+	// the node channel first, when both servers belong to one central (node_peer.go)
+	var lastErr error
+	for _, sec := range secrets {
+		st, data, ok := peerChannel([]string{t.RemotePub, l.PublicIP}, method, path, sec, body, timeout)
+		if !ok {
+			break
+		}
+		if st >= 200 && st < 300 && json.Valid(data) {
+			return data, nil
+		}
+		lastErr = fmt.Errorf("foreign panel answered HTTP %d over the node channel: %s", st, truncateForError(data))
+		if st != http.StatusNotFound {
+			break // the secret was right; another one will not help
+		}
+	}
 	pin := l.TLSPin
 	tr := &http.Transport{
 		DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext,
@@ -910,7 +925,6 @@ func tunnelPeerCall(t swapTunnel, method, path string, payload any, timeout time
 	defer tr.CloseIdleConnections()
 	client := &http.Client{Timeout: timeout, Transport: tr,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	var lastErr error
 	dead := map[string]bool{}
 	for _, base := range tunnelPeerBases(t, l) {
 		host := base
