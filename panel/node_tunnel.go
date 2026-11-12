@@ -711,6 +711,12 @@ type nodeTunLink struct {
 	Engine   string `json:"engine,omitempty"`
 	ServerIP string `json:"server_ip"`
 	ClientIP string `json:"client_ip"`
+	// what the Iran server says now (nodeTunLinksLive): empty when not read
+	State   string `json:"state,omitempty"`
+	Carrier string `json:"carrier,omitempty"`
+	CanSwap bool   `json:"can_swap,omitempty"`
+	Auto    string `json:"auto,omitempty"`    // Autopilot watches it: on | off
+	Working bool   `json:"working,omitempty"` // Autopilot is moving it now
 }
 
 // nodeTunLinks reads every online server's plan and pairs the ends: by
@@ -857,19 +863,9 @@ func nodeTunRemove(ctx context.Context, j *nodeTunJob, q nodeTunRemoveReq) error
 	if q.Left > 0 {
 		return nodeTunRemoveLeft(ctx, j, q.Left)
 	}
-	pctx, cancel := context.WithTimeout(ctx, nodeTunPlanTO)
-	links, _ := nodeTunLinks(pctx)
-	cancel()
-	var link *nodeTunLink
-	n := 0
-	for i, l := range links {
-		if l.Server == q.Server && l.Client == q.Client && l.PeerID == q.PeerID && l.Hub == q.Hub {
-			link = &links[i]
-			n++
-		}
-	}
-	if n != 1 {
-		return errors.New("this tunnel is not listed between these servers (any more): refresh the list")
+	link, err := nodeTunFindLink(ctx, q)
+	if err != nil {
+		return err
 	}
 	if q.Hub == 1 {
 		// the client's first tunnel: removing it removes the whole client
@@ -886,7 +882,6 @@ func nodeTunRemove(ctx context.Context, j *nodeTunJob, q nodeTunRemoveReq) error
 	}
 	j.logf("removing the client end on %s", nodeTunName(q.Client))
 	cctx, cancel := context.WithTimeout(ctx, nodeTunActionTO)
-	var err error
 	if q.Hub >= 2 {
 		err = nodeAPIJSON(cctx, q.Client, http.MethodPost, "/api/cluster/leave-hub", map[string]any{"id": q.Hub}, nil)
 	} else {

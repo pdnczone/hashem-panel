@@ -45,7 +45,7 @@ const (
 
 // nodeRelayGroups: the first path element after /api/ that may be relayed.
 var nodeRelayGroups = map[string]bool{
-	"action": true, "alerts": true, "audit": true, "bagher": true, "benchmark": true, "carrier": true,
+	"action": true, "alerts": true, "audit": true, "autopilot": true, "bagher": true, "benchmark": true, "carrier": true,
 	"cluster": true, "customers": true, "dashboard": true, "dial": true, "doctor": true, "errors": true,
 	"fleet": true, "health": true, "history": true, "license": true, "limits": true, "link-name": true,
 	"logs": true, "pathtest": true, "peers": true, "perf": true, "releases": true, "rescue": true,

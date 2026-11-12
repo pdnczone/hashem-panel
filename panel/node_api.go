@@ -122,6 +122,9 @@ type nodeRequest struct {
 	Hub    int   `json:"hub"`
 	Left   int   `json:"left"`
 	IDs    []int `json:"ids"` // fleet-update: the nodes, in order
+	// autopilot-set (node_manage.go): on server ID, the whole of it or one tunnel
+	On     bool `json:"on"`
+	Tunnel *int `json:"tunnel"`
 }
 
 func handleNodesPost(w http.ResponseWriter, r *http.Request) {
@@ -312,9 +315,57 @@ func handleNodesPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), nodeTunPlanTO)
-		links, errs := nodeTunLinks(ctx)
+		links, errs := nodeTunLinksLive(ctx)
 		cancel()
 		writeJSON(w, map[string]any{"links": links, "errors": errs})
+		return
+	case "tunnel-restart": // both ends of a tunnel between two servers (node_manage.go)
+		if !isCentral() {
+			return
+		}
+		q := nodeTunRemoveReq{Server: req.Server, Client: req.Client, PeerID: req.PeerID, Hub: req.Hub}
+		if q.Server == q.Client || q.Server < 0 || q.Client < 0 || q.PeerID < 0 || q.Hub < 1 {
+			writeAPIError(w, r, "E-NODE-01", "bad tunnel")
+			return
+		}
+		id, jerr := nodeTunStart("restart", q.Server, q.Client, func(j *nodeTunJob) error { return nodeTunRestart(context.Background(), j, q) })
+		if jerr != nil {
+			writeAPIError(w, r, nodeErrCode(jerr), jerr.Error())
+			return
+		}
+		LogSecurityAudit("node_tunnel_restart", cfg.Username, ClientIP(r), fmt.Sprintf("server=%d client=%d peer=%d hub=%d", q.Server, q.Client, q.PeerID, q.Hub))
+		writeJSON(w, map[string]any{"status": "ok", "job": id})
+		return
+	case "autopilot", "autopilot-set": // Autopilot on every Iran server (node_manage.go)
+		if !isCentral() {
+			return
+		}
+		if req.Action == "autopilot-set" {
+			if req.ID < 0 || (req.Tunnel != nil && *req.Tunnel < 0) {
+				writeAPIError(w, r, "E-NODE-01", "bad server or tunnel")
+				return
+			}
+			sctx, cancel := context.WithTimeout(r.Context(), nodeTunPlanTO)
+			serr := nodeApSet(sctx, req.ID, req.Tunnel, req.On)
+			cancel()
+			if serr != nil {
+				writeAPIError(w, r, nodeErrCode(serr), serr.Error())
+				return
+			}
+			what := "all"
+			if req.Tunnel != nil {
+				what = fmt.Sprintf("tunnel %d", *req.Tunnel)
+			}
+			LogSecurityAudit("node_autopilot", cfg.Username, ClientIP(r), fmt.Sprintf("server=%d %s on=%v", req.ID, what, req.On))
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), nodeTunPlanTO)
+		var links []nodeTunLink
+		done := make(chan struct{})
+		go func() { defer close(done); links, _ = nodeTunLinks(ctx) }()
+		views, errs := nodeApViews(ctx)
+		<-done
+		cancel()
+		writeJSON(w, map[string]any{"servers": nodeApFleet(views, links), "errors": errs})
 		return
 	case "tunnel-remove":
 		if !isCentral() {

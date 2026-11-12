@@ -4406,7 +4406,7 @@ function apRenderStatus() {
   if (!r.iran) note = 'Autopilot runs on the Iran server: it switches the foreign server too. Turn it on there.';
   else if (!r.licensed) { note = 'Autopilot is a Hashem Pro feature. Without a license it does nothing.'; warn = true; }
   else if (c.enabled && c.path_test && !r.path_test_licensed) note = 'This license does not include the path test: the carriers are tried in order instead.';
-  else if (c.enabled) note = 'The foreign panel must answer on its public address: with the tunnel down there is no other way to tell it.';
+  else if (c.enabled) note = 'With the tunnel down, the foreign server is told over the central\'s node channel (both servers under one central), or else on its panel\'s public address, which must answer.';
   const n = $('apNote'); n.textContent = tr('', note); n.classList.toggle('hidden', !note); n.classList.toggle('warn', warn);
   const watched = tuns.filter(t => t.can_swap && !t.skipped).length;
   const kpi = (l, v, k) => `<div class="cl-kpi ${k || ''}"><span>${esc(tr('', l))}</span><b>${esc(String(v))}</b></div>`;
@@ -4429,12 +4429,63 @@ function apRender(rules) {
 }
 async function autopilotRefresh(rules) {
   if (!$('tab-autopilot')) return;
+  apFleetLoad();
   try { _apData = await api('/api/autopilot'); apRender(!!rules); } catch (e) {}
-  if (!_apTimer) _apTimer = setInterval(() => {
-    if ($('tab-autopilot').hidden || document.hidden || _apBusy) return;
-    api('/api/autopilot').then(r => { _apData = r; apRender(false); }).catch(() => {});
-  }, 5000);
+  if (!_apTimer) {
+    let n = 0;
+    _apTimer = setInterval(() => {
+      if ($('tab-autopilot').hidden || document.hidden || _apBusy) return;
+      api('/api/autopilot').then(r => { _apData = r; apRender(false); }).catch(() => {});
+      if (++n % 3 === 0) apFleetLoad(); // every server is asked: less often
+    }, 5000);
+  }
 }
+// ---- Autopilot on every server of a central (node_manage.go) ----
+// Each Iran server runs its own Autopilot; this card shows them together.
+let _apFleet = null, _apFleetBusy = false;
+const apFleetOn = () => { try { return !NV && _nodePickList.length > 0; } catch (_) { return false; } }; // the list is declared further down
+async function apFleetLoad() {
+  const card = $('apFleetCard');
+  if (!card) return;
+  card.hidden = !apFleetOn();
+  if (card.hidden || _apFleetBusy) return;
+  try { _apFleet = await api('/api/nodes', { action: 'autopilot' }); } catch (e) { _apFleet = { servers: [], errors: [e.message] }; }
+  apFleetRender();
+}
+function apFleetRender() {
+  const body = $('apFleetBody'), f = _apFleet;
+  if (!body || !f) return;
+  const open = s => s.id ? `openNodeHere(${Number(s.id)}, 'autopilot')` : `$('apFlow').scrollIntoView({behavior: 'smooth'})`;
+  const rows = (f.servers || []).map(s => {
+    const st = !s.licensed ? ['warn', tr('', 'Needs a license')] : s.enabled ? ['ok', tr('', 'On')] : ['dim', tr('', 'Off')];
+    const tuns = (s.tunnels || []).map(t => {
+      const v = Object.assign({}, t, { name: (t.name || '') + (t.client >= 0 ? ' → ' + ntName(t.client) : '') });
+      return apTunHTML(v, { enabled: s.enabled }).replace('class="ap-tun-on"', `class="ap-tun-on" data-s="${Number(s.id)}"`);
+    }).join('') || `<div class="ap-empty">${esc(tr('', 'No tunnels yet.'))}</div>`;
+    const ev = (s.events || []).slice(0, 3).map(e => `<div class="qs-hint lm-num">${esc((e.at || '').replace('T', ' ').slice(0, 16))} · ${esc(e.name || ('#' + e.tunnel))} · ${esc(tr('', e.kind))}${e.to ? ' ' + esc(e.from) + ' → ' + esc(e.to) : ''}</div>`).join('');
+    return `<div class="lm-row"><div class="lm-head"><div class="lm-name"><b>${esc(ntName(s.id))}</b>
+      <small>${esc(tr('', 'Switched in 24 hours'))}: ${Number(s.switched_day || 0)} · ${esc(tr('', 'Runs without a way through'))}: ${Number(s.failed_day || 0)}</small></div>
+      <div class="u-flex-center-gap8"><span class="badge ${st[0]}">${esc(st[1])}</span>
+      <label class="ap-switch sm" title="${esc(tr('', 'Turn Autopilot on'))}"><input type="checkbox" class="ap-fleet-on" value="${Number(s.id)}" ${s.enabled ? 'checked' : ''} aria-label="${esc(ntName(s.id))}"><i></i></label></div></div>
+      <div class="ap-tuns">${tuns}</div>${ev}
+      <div class="lm-acts"><button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="${open(s)}">${esc(tr('', 'Rules and history'))}</button></div></div>`;
+  }).join('');
+  const errs = (f.errors || []).length ? `<div class="qs-hint">${esc(tr('', 'Not read'))}: ${esc(f.errors.join(' · '))}</div>` : '';
+  body.innerHTML = `<div class="lm-list">${rows || `<div class="qs-hint">${esc(tr('', 'No Iran server with a tunnel yet.'))}</div>`}</div>` + errs;
+}
+async function apFleetSet(body) {
+  _apFleetBusy = true;
+  try {
+    _apFleet = await api('/api/nodes', Object.assign({ action: 'autopilot-set' }, body));
+    if (body.id === 0) autopilotRefresh(true); // this server's own card below
+  } catch (e) { toastErr('Autopilot', e.message); }
+  finally { _apFleetBusy = false; apFleetRender(); }
+}
+if ($('apFleetBody')) $('apFleetBody').onchange = ev => {
+  const all = ev.target.closest('.ap-fleet-on'), one = ev.target.closest('.ap-tun-on');
+  if (all) apFleetSet({ id: +all.value, on: all.checked });
+  else if (one) apFleetSet({ id: +one.dataset.s, tunnel: +one.value, on: one.checked });
+};
 function apRulesBody() {
   const all = (_apData && _apData.carriers) || [];
   const cars = all.filter(c => _apCars.has(c));
@@ -7914,9 +7965,15 @@ if ($('docCopyBtn')) $('docCopyBtn').onclick = () => { if (doctorData) copyTextS
 (async () => {
   if (NV) { // a node's view: the central's own login, HTTPS, 2FA and terminal are not this page's
     try {
-      await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); alertsRefresh(); histRefresh(); advisorRefresh();
-      const tb = new URLSearchParams(location.search).get('tab'); // opened from the central on a page (its customers list)
-      if (tb === 'customers') goTab(tb); // the one page the central opens a node on
+      await api('/api/status'); showApp(); const ready = refresh(); loadSetupDefaults(); loadVersion(); alertsRefresh(); histRefresh(); advisorRefresh();
+      // opened from the central on a page (its customers, a tunnel's own pages) or on one tunnel's dialog
+      const qs = new URLSearchParams(location.search), tb = qs.get('tab');
+      if (['customers', 'tunnel', 'autopilot', 'benchmark'].includes(tb)) goTab(tb);
+      const m = /^(swap|edit):(\d{1,6})$/.exec(qs.get('do') || '');
+      if (m) {
+        try { await ready; } catch (_) { /* the dialog says what it cannot read */ }
+        if (m[1] === 'swap') openSwap(+m[2]); else openEditPeer(+m[2]);
+      }
     }
     catch(e) { showApp(); toastErr(tr('', 'Failed'), e.message); }
     return;
@@ -12365,15 +12422,28 @@ function ntServerOpts(sel) {
 function ntJobRow(j) {
   const st = j.state === 'done' ? ['ok', tr('', 'Done')] : j.state === 'failed' ? ['err', tr('', 'Failed')] : ['info', tr('', 'Working…')];
   const open = j.id in _ntOpen ? _ntOpen[j.id] : j.state !== 'done';
-  const what = j.kind === 'remove' ? tr('', 'Removing a tunnel') : j.kind === 'update' ? tr('', 'Updating nodes') : tr('', 'Making a tunnel');
+  const what = j.kind === 'remove' ? tr('', 'Removing a tunnel') : j.kind === 'restart' ? tr('', 'Restarting a tunnel') : j.kind === 'update' ? tr('', 'Updating nodes') : tr('', 'Making a tunnel');
   return `<details class="lm-row"${open ? ' open' : ''} ontoggle="_ntOpen[${Number(j.id)}] = this.open"><summary class="lm-head"><div class="lm-name"><b>${esc(what)}</b>
     <small>${esc(ntName(j.server))} → ${esc(ntName(j.client))}</small></div><span class="badge ${st[0]}">${esc(st[1])}</span></summary>
     <pre class="cs-code">${esc(j.log || '')}</pre></details>`;
 }
+// ntOpen opens a tunnel's own page or dialog on its Iran server (server 0:
+// this page itself).
+function ntOpen(server, tab, act) {
+  if (server) { openNodeHere(server, tab, act); return; }
+  goTab(tab);
+  const m = /^(swap|edit):(\d+)$/.exec(act || '');
+  if (m && m[1] === 'swap') openSwap(+m[2]); else if (m) openEditPeer(+m[2]);
+}
 function ntLinkRow(l) {
-  return `<div class="lm-row"><div class="lm-head"><div class="lm-name"><b>${esc(ntName(l.server))} → ${esc(ntName(l.client))}</b>
-    <small class="lm-num">${esc([l.server_ip + ' → ' + l.client_ip, l.engine || 'frp', l.name || ''].filter(Boolean).join(' · '))}</small></div>
-    <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30 u-c-er" onclick="ntRemove(${Number(l.server)}, ${Number(l.client)}, ${Number(l.peer_id)}, ${Number(l.hub)})">${esc(tr('', 'Remove both ends'))}</button></div></div>`;
+  const st = l.working ? ['warn', tr('', 'Autopilot is working')] : l.state === 'healthy' ? ['ok', tr('', 'Healthy')] : l.state === 'degraded' ? ['warn', tr('', 'Degraded')]
+    : l.state === 'down' ? ['err', tr('', 'Down')] : null;
+  const s = Number(l.server), c = Number(l.client), p = Number(l.peer_id), h = Number(l.hub);
+  const btn = (label, fn, cls) => `<button type="button" class="hashem-btn ${cls || 'hashem-btn-ghost'} u-btn-30" onclick="${fn}">${esc(label)}</button>`;
+  return `<div class="lm-row${l.state === 'down' ? ' cut' : ''}"><div class="lm-head"><div class="lm-name"><b>${esc(ntName(l.server))} → ${esc(ntName(l.client))}</b>
+    <small class="lm-num">${esc([l.server_ip + ' → ' + l.client_ip, l.carrier || l.engine || 'frp', l.name || ''].filter(Boolean).join(' · '))}${l.auto ? ' · ' + esc(tr('', 'Autopilot')) + ' ' + esc(l.auto === 'on' ? tr('', 'On') : tr('', 'Off')) : ''}</small></div>
+    ${st ? `<span class="badge ${st[0]}">${esc(st[1])}</span>` : ''}</div>
+    <div class="lm-acts">${btn(tr('', 'Swap carrier'), `ntOpen(${s}, 'tunnel', 'swap:${p}')`, 'hashem-btn-secondary')}${btn(tr('', 'Ports and settings'), `ntOpen(${s}, 'tunnel', 'edit:${p}')`)}${btn(tr('', 'Test the path'), `ntOpen(${s}, 'benchmark')`)}${btn(tr('', 'Restart both ends'), `ntRestart(${s}, ${c}, ${p}, ${h})`)}${btn(tr('', 'Remove both ends'), `ntRemove(${s}, ${c}, ${p}, ${h})`, 'hashem-btn-ghost u-c-er')}</div></div>`;
 }
 function ntLeftRow(l) {
   return `<div class="lm-row cut"><div class="lm-head"><div class="lm-name"><b>${esc(tr('', 'Left over'))}: ${esc(ntName(l.server))}</b>
@@ -12454,6 +12524,10 @@ async function ntRemove(server, client, peer, hub) {
   if (!await entConfirm(tr('', 'Remove this tunnel?'), tr('', 'The foreign server\'s end is removed first, then the Iran server\'s. Users of this tunnel are cut.'), tr('', 'Remove'))) return;
   try { await api('/api/nodes', { action: 'tunnel-remove', server, client, peer_id: peer, hub }); loadNodes(); } catch (e) { toastErr(tr('', 'Failed'), e.message); }
 }
+async function ntRestart(server, client, peer, hub) {
+  if (!await entConfirm(tr('', 'Restart this tunnel?'), tr('', 'Its engine is restarted on the Iran server, then on the foreign one. Users of this tunnel are cut for a few seconds.'), tr('', 'Restart'))) return;
+  try { await api('/api/nodes', { action: 'tunnel-restart', server, client, peer_id: peer, hub }); loadNodes(); } catch (e) { toastErr(tr('', 'Failed'), e.message); }
+}
 async function ntRemoveLeft(id) {
   try { await api('/api/nodes', { action: 'tunnel-remove', left: id }); loadNodes(); } catch (e) { toastErr(tr('', 'Failed'), e.message); }
 }
@@ -12518,7 +12592,7 @@ async function nodeViewOpen() {
     try {
       const d = await api('/api/nodes', { action: 'view', id });
       _nodeViewTok = { id, token: d.token };
-    } catch (e) { _nodeViewTab = ''; toastErr(tr('', 'Failed'), e.message); nodePickSet(null); return; }
+    } catch (e) { _nodeViewTab = _nodeViewDo = ''; toastErr(tr('', 'Failed'), e.message); nodePickSet(null); return; }
   }
   if (NODE !== id || $('nodeFrame')) return; // changed meanwhile
   const f = document.createElement('iframe');
@@ -12530,6 +12604,7 @@ async function nodeViewOpen() {
   const q = new URLSearchParams({ nv: String(id), lang: currentLang || 'en', t: document.documentElement.dataset.t || 'dark' });
   if (document.documentElement.dataset.acc) q.set('acc', document.documentElement.dataset.acc);
   if (_nodeViewTab) { q.set('tab', _nodeViewTab); _nodeViewTab = ''; }
+  if (_nodeViewDo) { q.set('do', _nodeViewDo); _nodeViewDo = ''; }
   f.src = BASE + '/?' + q.toString();
   box.appendChild(f);
 }
@@ -12573,8 +12648,10 @@ async function nodeViewEnded() {
   try { sessionStorage.setItem('hashemNodeEnded', String(Date.now())); } catch (_) { /* private mode: no cap across the reload */ }
   setTimeout(() => location.reload(), r ? 0 : 3000); // not answering: give a restart a moment
 }
-let _nodeViewTab = '';
-function openNodeHere(id, tab) { _nodeViewTab = tab || ''; nodePickSet(id); }
+let _nodeViewTab = '', _nodeViewDo = '';
+// openNodeHere shows a node's pages: on tab, and with act ("swap:3",
+// "edit:3") on that tunnel's dialog.
+function openNodeHere(id, tab, act) { _nodeViewTab = tab || ''; _nodeViewDo = act || ''; nodePickSet(id); }
 (function initNodePick() {
   if (NV) {
     // what this page cannot do for a node: the central's login, access,
