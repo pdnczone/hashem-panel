@@ -421,11 +421,11 @@ func TestNodeCodeAndURL(t *testing.T) {
 			t.Errorf("parseNodeCode(%q) passed", bad)
 		}
 	}
-	cmd := nodeJoinCommand(c, "it's", true)
+	cmd := nodeJoinCommand(c, "it's", true, false)
 	if !strings.HasPrefix(cmd, "bash <(curl -fsSL "+nodeInstallURL+") node-join '") || !strings.Contains(cmd, `--name 'it'\''s'`) {
 		t.Fatalf("install command: %s", cmd)
 	}
-	ssh := nodeSSHCommand("n", true)
+	ssh := nodeSSHCommand("n", true, false)
 	if !strings.HasPrefix(ssh, "sudo -n bash -c '") || !strings.Contains(ssh, "command -v hashem") ||
 		strings.Contains(ssh, "hn1.") || !strings.Contains(ssh, "node-join -") {
 		t.Fatalf("ssh command (the code goes on stdin, never in it): %s", ssh)
@@ -645,7 +645,7 @@ func TestNodeWriteFileAtomic(t *testing.T) {
 }
 
 func TestNodeSSHCommandChecksVersion(t *testing.T) {
-	cmd := nodeSSHCommand("n", false)
+	cmd := nodeSSHCommand("n", false, false)
 	if !strings.Contains(cmd, `hashem help 2>/dev/null | grep -q '\''node-join.*code | ->'\''`) || !strings.Contains(cmd, nodeInstallURL) {
 		t.Fatalf("an old Hashem must go through the installer: %s", cmd)
 	}

@@ -119,3 +119,19 @@ func TestCoreBuild(t *testing.T) {
 		t.Errorf("binName %q on nodeCore=%v", binName(), nodeCore)
 	}
 }
+
+// A new server gets the core unless the panel was asked for; --core comes
+// after the code, where a hashem.sh from before the core ignores it.
+func TestNodeJoinCommandCore(t *testing.T) {
+	cmd := nodeJoinCommandArg("'hn1.x'", "n", true, true)
+	if !strings.HasSuffix(cmd, " node-join 'hn1.x' --name 'n' --core") {
+		t.Errorf("core install command: %s", cmd)
+	}
+	if cmd := nodeJoinCommandArg("'hn1.x'", "", false, false); cmd != "hashem node-join 'hn1.x'" {
+		t.Errorf("panel join command: %s", cmd)
+	}
+	ssh := nodeSSHCommand("n", false, true)
+	if strings.Count(ssh, "--core") != 2 || strings.Contains(ssh, "hn1.") {
+		t.Errorf("ssh command: %s", ssh)
+	}
+}
