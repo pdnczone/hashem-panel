@@ -792,11 +792,10 @@ func main() {
 	mux.HandleFunc("GET "+base+"/api/peer/config", requireAuth(handlePeerConfigGet))
 	mux.HandleFunc("POST "+base+"/api/peer/config", requireAuth(requireCSRF(handlePeerConfigPost)))
 
-	// Carrier benchmark & auto-pilot
+	// Carrier benchmark
 	mux.HandleFunc("GET "+base+"/api/benchmark", requireAuth(handleBenchmarkGet))
 	mux.HandleFunc("POST "+base+"/api/benchmark/run", requireAuth(requireCSRF(handleBenchmarkRun)))
 	mux.HandleFunc("POST "+base+"/api/benchmark/apply", requireAuth(requireCSRF(handleBenchmarkApply)))
-	mux.HandleFunc("POST "+base+"/api/benchmark/autopilot", requireAuth(requireCSRF(handleBenchmarkAutoPilot)))
 	// Path test: which transports cross between the two servers, before any tunnel
 	mux.HandleFunc("GET "+base+"/api/pathtest", requireAuth(handlePathTestGet))
 	mux.HandleFunc("POST "+base+"/api/pathtest", requireAuth(requireCSRF(handlePathTestPost)))
@@ -811,7 +810,6 @@ func main() {
 	startSdWatchdog(context.Background())
 	go startHTTPSListener()
 	startTLSRenewWatcher()
-	go startAutoPilotMonitor()
 	go startPeerSyncWorker()
 	go startTrafficRecorder()
 	go startFleetSampler()

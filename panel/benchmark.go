@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"log"
 	"math"
 	"net"
 	"net/http"
@@ -47,15 +46,7 @@ type BenchmarkReport struct {
 	ActiveCarrier   string          `json:"active_carrier"`
 	BestCarrier     string          `json:"best_carrier"`
 	BestCarrierName string          `json:"best_carrier_name,omitempty"`
-	AutoPilot       AutoPilotStatus `json:"auto_pilot"`
 	Metrics         []CarrierMetric `json:"metrics"`
-}
-
-type AutoPilotStatus struct {
-	Enabled       bool    `json:"enabled"`
-	ThresholdLoss float64 `json:"threshold_loss"`
-	LastTriggered string  `json:"last_triggered"`
-	TriggerCount  int     `json:"trigger_count"`
 }
 
 type BenchmarkRunRequest struct {
@@ -71,17 +62,10 @@ type BenchmarkApplyRequest struct {
 	Carrier string `json:"carrier"` // e.g. "fou:443"
 }
 
-type BenchmarkAutoPilotRequest struct {
-	Enabled   *bool    `json:"enabled,omitempty"`
-	Threshold *float64 `json:"threshold,omitempty"`
-}
-
 var (
-	benchmarkMu           sync.RWMutex
-	benchmarkRunning      atomic.Bool
-	lastBenchmarkReport   *BenchmarkReport
-	autoPilotTriggerCount int
-	lastAutoPilotSwitch   string
+	benchmarkMu         sync.RWMutex
+	benchmarkRunning    atomic.Bool
+	lastBenchmarkReport *BenchmarkReport
 )
 
 func benchmarkReportFile() string {
@@ -622,34 +606,10 @@ func runCarrierBenchmark(customReq ...BenchmarkRunRequest) *BenchmarkReport {
 		ActiveCarrier:   activeCarrier,
 		BestCarrier:     bestCarrier,
 		BestCarrierName: bestCarrierName,
-		AutoPilot: AutoPilotStatus{
-			Enabled:       peerCfg.AutoPilotEnabled,
-			ThresholdLoss: peerCfg.AutoPilotThreshold,
-			LastTriggered: lastAutoPilotSwitch,
-			TriggerCount:  autoPilotTriggerCount,
-		},
-		Metrics: candidates,
+		Metrics:         candidates,
 	}
 
 	saveBenchmarkReport(report)
-
-	// Check AutoPilot triggering
-	// Automatic carrier switching is strictly disabled: carrier changes require manual user action.
-	if peerCfg.AutoPilotEnabled && peerCfg.Role == "master" && bestCarrier != "" && bestCarrier != activeCarrier {
-		// Find active carrier metric
-		var activeLoss float64 = 100.0
-		for _, m := range candidates {
-			if m.IsActive {
-				activeLoss = m.PacketLoss
-				break
-			}
-		}
-
-		if activeLoss >= peerCfg.AutoPilotThreshold {
-			log.Printf("[AutoPilot] Active carrier %s has %.1f%% loss (threshold: %.1f%%). Best candidate: %s (automatic switching is disabled — carrier remains manual)",
-				activeCarrier, activeLoss, peerCfg.AutoPilotThreshold, bestCarrier)
-		}
-	}
 
 	return report
 }
@@ -757,51 +717,4 @@ func handleBenchmarkApply(w http.ResponseWriter, r *http.Request) {
 		"active_carrier": carrier,
 		"detail":         detail,
 	})
-}
-
-// POST /api/benchmark/autopilot
-func handleBenchmarkAutoPilot(w http.ResponseWriter, r *http.Request) {
-	if proRequired(w, r, proBenchmark, "The benchmark") {
-		return
-	}
-	var req BenchmarkAutoPilotRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeAPIError(w, r, "E-ACTION-01", "invalid json")
-		return
-	}
-
-	c := loadPeerConfig()
-	if req.Enabled != nil {
-		c.AutoPilotEnabled = *req.Enabled
-		c.AutoPilotExplicit = true
-	}
-	if req.Threshold != nil && *req.Threshold > 0 {
-		c.AutoPilotThreshold = *req.Threshold
-	}
-
-	if err := savePeerConfig(c); err != nil {
-		writeAPIError(w, r, "E-ACTION-02", "failed to save autopilot settings")
-		return
-	}
-
-	writeJSON(w, map[string]any{
-		"status":              "ok",
-		"autopilot_enabled":   c.AutoPilotEnabled,
-		"autopilot_threshold": c.AutoPilotThreshold,
-	})
-}
-
-// startAutoPilotMonitor runs a periodic check every 60s when AutoPilot is enabled.
-func startAutoPilotMonitor() {
-	ticker := time.NewTicker(60 * time.Second)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		pcfg := loadPeerConfig()
-		if pcfg.AutoPilotEnabled && pcfg.Role == "master" {
-			if !benchmarkRunning.Load() {
-				_ = runCarrierBenchmark()
-			}
-		}
-	}
 }

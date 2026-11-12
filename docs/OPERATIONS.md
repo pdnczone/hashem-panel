@@ -39,7 +39,7 @@ The panel is one page with these tabs:
 - **Setup** — create any tunnel: GRE + FRP, Backhaul (with or without GRE) or Bagher; bundles and peers.
 - **Watchdog** [PRO] — monitoring, backups and alerts.
 - **Cluster** [PRO] — opens on a live map of the cluster; click anything to change it. Pools (one Iran port served by several foreign servers: failover, balance, sticky per user, lowest latency or least connections; one-second health check, service check, standby servers, connection limits, drain, manual failback), linked Iran hubs that take over each other's ports, DNS failover (Cloudflare or webhook), and on a foreign server, serving several Iran hubs. See [Cluster](CLUSTER.md).
-- **Benchmark** [PRO] — the Path Test (which transports get through between the two servers, before any tunnel: plain TCP/UDP, GRE, SSH, FRP x 5, Backhaul x 7, with latency and speed), carrier probing and the optional auto-pilot.
+- **Benchmark** [PRO] — the Path Test (which transports get through between the two servers, before any tunnel: plain TCP/UDP, GRE, SSH, FRP x 5, Backhaul x 7, with latency and speed) and carrier probing.
 - **Update** — channels, install any tag, rollback state.
 - **Logs, Settings, Terminal** — redacted logs with error codes; password, 2FA, idle timeout, alerts, TLS, metrics token; the audited shell (off by default).
 

@@ -21,18 +21,15 @@ import (
 )
 
 type PeerConfig struct {
-	Role               string  `json:"role"`          // "master" (Iran) or "worker" (Kharej)
-	PeerSecret         string  `json:"peer_secret"`   // Shared secret token for inter-panel authentication
-	PeerURL            string  `json:"peer_url"`      // Public URL of peer, e.g. "http://5.6.7.8:8080"
-	InternalIP         string  `json:"internal_ip"`   // Tunnel internal IP, e.g. "10.10.10.1"
-	InternalPort       int     `json:"internal_port"` // Panel port on internal IP (default 8080)
-	LastSync           string  `json:"last_sync"`     // Timestamp of last successful handshake/sync
-	IsConnected        bool    `json:"is_connected"`
-	LatencyMs          float64 `json:"latency_ms"`
-	AutoPilotEnabled   bool    `json:"autopilot_enabled"`
-	AutoPilotExplicit  bool    `json:"autopilot_explicit,omitempty"`
-	AutoPilotThreshold float64 `json:"autopilot_threshold"`       // Packet loss percentage threshold (e.g. 20.0)
-	TLSFingerprint     string  `json:"tls_fingerprint,omitempty"` // Pinned SHA-256 (hex) of the peer's leaf TLS cert (TOFU)
+	Role           string  `json:"role"`          // "master" (Iran) or "worker" (Kharej)
+	PeerSecret     string  `json:"peer_secret"`   // Shared secret token for inter-panel authentication
+	PeerURL        string  `json:"peer_url"`      // Public URL of peer, e.g. "http://5.6.7.8:8080"
+	InternalIP     string  `json:"internal_ip"`   // Tunnel internal IP, e.g. "10.10.10.1"
+	InternalPort   int     `json:"internal_port"` // Panel port on internal IP (default 8080)
+	LastSync       string  `json:"last_sync"`     // Timestamp of last successful handshake/sync
+	IsConnected    bool    `json:"is_connected"`
+	LatencyMs      float64 `json:"latency_ms"`
+	TLSFingerprint string  `json:"tls_fingerprint,omitempty"` // Pinned SHA-256 (hex) of the peer's leaf TLS cert (TOFU)
 	// PeerBasePath is the peer panel's own random base path (each panel has a
 	// different one), learned from the handshake or from a pasted panel URL.
 	// Only needed to reach peers that predate the fixed peerRoutePrefix.
@@ -66,13 +63,11 @@ type PeerApplyEngineRequest struct {
 }
 
 type PeerConfigUpdateRequest struct {
-	Action             string  `json:"action,omitempty"` // "save", "test"
-	PeerURL            string  `json:"peer_url,omitempty"`
-	PeerSecret         string  `json:"peer_secret,omitempty"`
-	InternalIP         string  `json:"internal_ip,omitempty"`
-	Role               string  `json:"role,omitempty"`
-	AutoPilotEnabled   *bool   `json:"autopilot_enabled,omitempty"`
-	AutoPilotThreshold float64 `json:"autopilot_threshold,omitempty"`
+	Action     string `json:"action,omitempty"` // "save", "test"
+	PeerURL    string `json:"peer_url,omitempty"`
+	PeerSecret string `json:"peer_secret,omitempty"`
+	InternalIP string `json:"internal_ip,omitempty"`
+	Role       string `json:"role,omitempty"`
 }
 
 var (
@@ -102,17 +97,14 @@ func defaultPeerConfig() PeerConfig {
 	}
 
 	return PeerConfig{
-		Role:               role,
-		PeerSecret:         secret,
-		PeerURL:            "",
-		InternalIP:         internalIP,
-		InternalPort:       cfg.Port,
-		LastSync:           "",
-		IsConnected:        false,
-		LatencyMs:          0,
-		AutoPilotEnabled:   false,
-		AutoPilotExplicit:  true,
-		AutoPilotThreshold: 20.0,
+		Role:         role,
+		PeerSecret:   secret,
+		PeerURL:      "",
+		InternalIP:   internalIP,
+		InternalPort: cfg.Port,
+		LastSync:     "",
+		IsConnected:  false,
+		LatencyMs:    0,
 	}
 }
 
@@ -148,19 +140,7 @@ func readPeerConfig() (PeerConfig, bool) {
 	if c.InternalPort <= 0 {
 		c.InternalPort = cfg.Port
 	}
-	if c.AutoPilotThreshold <= 0 {
-		c.AutoPilotThreshold = 20.0
-	}
-
-	needsSave := false
-	// Migration: disable AutoPilot on existing configs so tunnels do not switch automatically.
-	// AutoPilot was previously true by default, causing unwanted tunnel flap/switching.
-	if !c.AutoPilotExplicit {
-		c.AutoPilotEnabled = false
-		c.AutoPilotExplicit = true
-		needsSave = true
-	}
-	return c, needsSave
+	return c, false
 }
 
 func savePeerConfig(c PeerConfig) error {
@@ -485,8 +465,6 @@ func handlePeerStatus(w http.ResponseWriter, r *http.Request) {
 		"last_sync":      c.LastSync,
 		"active_carrier": carrierCfg.ActiveCarrier,
 		"tunnel_name":    st.Gre.Name,
-		"autopilot":      c.AutoPilotEnabled,
-		"threshold":      c.AutoPilotThreshold,
 	})
 }
 
@@ -552,13 +530,6 @@ func handlePeerConfigPost(w http.ResponseWriter, r *http.Request) {
 		if role == "master" || role == "worker" {
 			c.Role = role
 		}
-	}
-	if req.AutoPilotEnabled != nil {
-		c.AutoPilotEnabled = *req.AutoPilotEnabled
-		c.AutoPilotExplicit = true
-	}
-	if req.AutoPilotThreshold > 0 {
-		c.AutoPilotThreshold = req.AutoPilotThreshold
 	}
 
 	if err := savePeerConfig(c); err != nil {

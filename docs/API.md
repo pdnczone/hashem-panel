@@ -39,7 +39,6 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/benchmark/apply` | session + CSRF | `handleBenchmarkApply` |
 | `GET` | `/api/autopilot` | session | `handleAutopilotGet` |
 | `POST` | `/api/autopilot` | session + CSRF | `handleAutopilotPost` |
-| `POST` | `/api/benchmark/autopilot` | session + CSRF | `handleBenchmarkAutoPilot` |
 | `POST` | `/api/benchmark/run` | session + CSRF | `handleBenchmarkRun` |
 | `GET` | `/api/carrier` | session | `handleCarrierGet` |
 | `POST` | `/api/carrier` | session + CSRF | `handleCarrierPost` |

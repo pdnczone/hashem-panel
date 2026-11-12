@@ -1381,6 +1381,7 @@
       <button role="tab" aria-selected="false" aria-controls="tab-nodes" tabindex="-1" class="nav-item" data-tab="nodes" id="nodesNav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="2.5" width="6" height="5" rx="1"/><rect x="2.5" y="16.5" width="6" height="5" rx="1"/><rect x="15.5" y="16.5" width="6" height="5" rx="1"/><path d="M12 7.5v4.5M5.5 16.5V12h13v4.5"/></svg><span data-i18n="nav_nodes">Nodes</span></button>
       <button role="tab" aria-selected="false" aria-controls="tab-setup" tabindex="-1" class="nav-item" data-tab="setup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg><span data-i18n="nav_setup">Setup</span></button>
       <button role="tab" aria-selected="false" aria-controls="tab-xray" tabindex="-1" class="nav-item" data-tab="xray" id="xrayNav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5l7 7-7 7"/><path d="M20 5l-7 7 7 7"/></svg><span data-i18n="nav_xray">Xray</span><span class="nav-lock hidden" id="navXrayPro" role="img" title="Hashem Pro" aria-label="Hashem Pro"><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg></span></button>
+      <button role="tab" aria-selected="false" aria-controls="tab-autopilot" tabindex="-1" class="nav-item" data-tab="autopilot" id="autopilotNav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2.5 14.6 9l6.9 2.2-6.9 2.2L12 20l-2.6-6.6L2.5 11.2 9.4 9z"/></svg><span data-i18n="nav_autopilot">Autopilot</span><span class="nav-lock hidden" id="navAutopilotPro" role="img" title="Hashem Pro" aria-label="Hashem Pro"><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg></span></button>
       <button role="tab" aria-selected="false" aria-controls="tab-customers" tabindex="-1" class="nav-item" data-tab="customers" id="customersNav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8"/><path d="M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/></svg><span data-i18n="nav_customers">Customers</span><span class="nav-lock hidden" id="navCustomersPro" role="img" title="Hashem Pro" aria-label="Hashem Pro"><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg></span></button>
       <button role="tab" aria-selected="false" aria-controls="tab-logs" tabindex="-1" class="nav-item" data-tab="logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span data-i18n="nav_logs">Logs</span></button>
       <div class="nav-sec" role="presentation" data-i18n="sec_system">System</div>
@@ -2746,7 +2747,7 @@
           </div>
         </div>
       </section>
-      <!-- Tab: Carrier Benchmark & Auto-Pilot -->
+      <!-- Tab: Carrier Benchmark -->
       <section id="tab-benchmark" role="tabpanel" hidden>
         <!-- Path test: which transports cross between the two servers, before any tunnel -->
         <div class="tunnel-card u-mb-20" id="ptCard">
@@ -2986,8 +2987,8 @@
           </div>
         </div>
 
-        <!-- Secondary Controls Grid: Peer Link & Automatic Failover -->
-        <div class="u-grid-2 u-gap-16 u-mt-16">
+        <!-- Peer Link -->
+        <div class="u-mt-16">
           <!-- Card 1: Peer Link Status -->
           <div class="tunnel-card u-card-tint">
             <div class="tc-header">
@@ -3024,39 +3025,6 @@
             </div>
           </div>
 
-          <!-- Card 2: Automatic Failover Settings -->
-          <div class="tunnel-card u-card-tint" id="failoverCard">
-            <div class="tc-header">
-              <span class="tc-title u-flex-center-gap8">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                <span data-i18n="bench_failover_title">Automatic Failover</span>
-              </span>
-              <span class="badge dim" id="autoPilotBadge">[ OFF ] Manual Mode</span>
-            </div>
-            <div class="qs-hint" data-i18n="bench_failover_sub">Default: <b>OFF</b>. When enabled, watchdog automatically promotes the healthiest backup carrier upon packet loss spike.</div>
-            <div class="fg u-mt-12">
-              <label class="u-flex-center-wrap10">
-                <input type="checkbox" id="autoPilotToggle">
-                <span class="u-fw-600" data-i18n="bench_failover_toggle">Enable Carrier Auto-Failover</span>
-              </label>
-            </div>
-            <div class="fg u-mt-8">
-              <label for="autoPilotThresholdInput" data-i18n="bench_failover_threshold">Packet Loss Trigger Threshold (%)</label>
-              <input class="hashem-input u-maxw-140" id="autoPilotThresholdInput" type="number" min="5" max="90" value="20">
-              <span class="ent-help">If the current carrier packet loss exceeds this threshold, the tunnel seamlessly switches to the best candidate.</span>
-            </div>
-            <div class="trow u-mt-4">
-              <span class="k">Last Auto Failover</span>
-              <span class="v" id="autoPilotLastVal">—</span>
-            </div>
-            <div class="trow">
-              <span class="k">Switch Counter</span>
-              <span class="v" id="autoPilotCountVal">0</span>
-            </div>
-            <div class="qs-actions u-mt-12">
-              <button class="hashem-btn hashem-btn-primary u-btn-xs" id="autoPilotSaveBtn" data-i18n="bench_failover_save">Save Failover Policy</button>
-            </div>
-          </div>
         </div>
 
         <!-- Modal / Inline Panel for Peer Configuration -->
@@ -3161,6 +3129,78 @@
         </div>
       </section>
       <!-- Customers: tunnels sold to customers (customers.go; loadCustomers in app.js) -->
+      <section id="tab-autopilot" role="tabpanel" hidden>
+        <div class="tunnel-card ap-hero u-mb-20">
+          <div class="ap-hero-top">
+            <div class="ap-hero-id">
+              <span class="ap-logo"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 14.6 9l6.9 2.2-6.9 2.2L12 20l-2.6-6.6L2.5 11.2 9.4 9z"/></svg></span>
+              <div>
+                <span class="tc-title u-fs-18 u-fw-700">Autopilot</span> <span class="eng-pro hidden" id="apPro" data-no-i18n>PRO</span>
+                <div class="qs-hint u-mt-4">A tunnel that stays down is tested and moved to a carrier that gets through, on both servers, by itself. When the new carrier does not connect, both servers go back.</div>
+              </div>
+            </div>
+            <div class="ap-hero-ctl">
+              <span class="badge dim" id="apPill"><span class="dot"></span><span id="apPillTxt">Off</span></span>
+              <label class="ap-switch" title="Turn Autopilot on"><input type="checkbox" id="apEnabled" aria-label="Turn Autopilot on"><i></i></label>
+            </div>
+          </div>
+          <ol class="ap-flow" id="apFlow">
+            <li class="ap-step" data-step="0"><span class="ap-node"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 15 5.5 18.5a3 3 0 0 1-4.2-4.2L4.8 10.8"/><path d="M15 9l3.5-3.5a3 3 0 0 1 4.2 4.2l-3.5 3.5"/><path d="M8 3v3M3 8h3M16 21v-3M21 16h-3"/></svg></span><b>Tunnel down</b><small id="apFlowDown">5 min</small></li>
+            <li class="ap-step" data-step="1"><span class="ap-node"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></span><b>Reach the foreign panel</b><small>Does it answer?</small></li>
+            <li class="ap-step" data-step="2"><span class="ap-node"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></span><b>Test the path</b><small id="apFlowTest">Every transport, measured</small></li>
+            <li class="ap-step" data-step="3"><span class="ap-node"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4 3 8l4 4"/><path d="M3 8h14"/><path d="M17 20l4-4-4-4"/><path d="M21 16H7"/></svg></span><b>Swap the carrier</b><small>Both servers, with rollback</small></li>
+            <li class="ap-step" data-step="4"><span class="ap-node"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 3 10 14"/><path d="M21 3l-7 18-4-7-7-4z"/></svg></span><b>Tell you</b><small id="apFlowTell">Webhook and Telegram</small></li>
+          </ol>
+          <div class="ap-note hidden" id="apNote"></div>
+          <div class="cl-kpis" id="apKpis"></div>
+        </div>
+
+        <div class="ap-grid">
+          <div class="tunnel-card">
+            <div class="tc-header"><span class="tc-title">Tunnels</span><span class="qs-hint u-m-0">Switch a tunnel off to leave it alone.</span></div>
+            <div class="ap-tuns" id="apTunnels"></div>
+          </div>
+
+          <div class="tunnel-card">
+            <div class="tc-header"><span class="tc-title">Rules</span><span class="badge warn hidden" id="apDirty">Not saved</span></div>
+            <div class="ap-rule">
+              <div class="ap-rule-h"><label for="apDown">Act after the tunnel was down for</label><output id="apDownOut">5 min</output></div>
+              <input type="range" class="ap-range" id="apDown" min="2" max="60" step="1" value="5">
+            </div>
+            <div class="ap-rule">
+              <div class="ap-rule-h"><label for="apCool">Pause between two runs for one tunnel</label><output id="apCoolOut">30 min</output></div>
+              <input type="range" class="ap-range" id="apCool" min="10" max="240" step="5" value="30">
+            </div>
+            <div class="ap-rule">
+              <div class="ap-rule-h"><label for="apPerDay">Runs for one tunnel in 24 hours</label><output id="apPerDayOut">6</output></div>
+              <input type="range" class="ap-range" id="apPerDay" min="1" max="24" step="1" value="6">
+            </div>
+            <div class="ap-rule">
+              <div class="ap-rule-h"><span class="ap-lbl">Quiet hours (server time): no switching</span><output id="apQuietOut">None</output></div>
+              <div class="ap-hours" id="apHours" role="group" aria-label="Quiet hours"></div>
+              <div class="qs-hint u-m-0">Click the first hour, then the last one. Click <button type="button" class="ap-link" id="apQuietClear">Clear</button> for none.</div>
+            </div>
+            <label class="ap-opt"><span><b>Test the path first</b><small>Measure every transport and take the fastest one that gets through. Off: try the carriers in order.</small></span><span class="ap-switch sm"><input type="checkbox" id="apPathTest"><i></i></span></label>
+            <label class="ap-opt"><span><b>Send a message</b><small id="apNotifyNote">To the webhook of External alerts and the Telegram bot of the Watchdog.</small></span><span class="ap-switch sm"><input type="checkbox" id="apNotify"><i></i></span></label>
+          </div>
+        </div>
+
+        <div class="tunnel-card u-mt-16">
+          <div class="tc-header"><span class="tc-title">Carriers Autopilot may choose</span>
+            <span class="lm-acts"><button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" id="apCarAll">All</button></span></div>
+          <div class="ap-cars" id="apCars"></div>
+          <div class="ap-save">
+            <span class="qs-hint u-m-0">A tunnel that is down on GRE is moved off GRE first. A tunnel without GRE addresses is never moved onto GRE.</span>
+            <button type="button" class="hashem-btn hashem-btn-primary" id="apSave">Save rules</button>
+          </div>
+        </div>
+
+        <div class="tunnel-card u-mt-16">
+          <div class="tc-header"><span class="tc-title">History</span><button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" id="apRefresh">Refresh</button></div>
+          <ol class="ap-tl" id="apEvents"></ol>
+        </div>
+      </section>
+
       <section id="tab-customers" role="tabpanel" hidden>
         <div class="tunnel-card u-mb-20">
           <div class="tc-header u-bb-ln u-pb-16 u-mb-16">
@@ -3288,30 +3328,9 @@
           <div class="tc-header"><p class="tc-title">Carrier advisor</p></div>
           <div class="ent-help" id="advMsg">Collecting data…</div>
           <div class="ent-help" id="advStats"></div>
-          <div class="ent-help">Advice only. Autopilot (the next card) switches by itself when a tunnel stays down. Suggestions for a new port / SNI:</div>
+          <div class="ent-help">Advice only. The Autopilot tab switches by itself when a tunnel stays down. Suggestions for a new port / SNI:</div>
           <div class="ent-help" id="advSuggest"></div>
           <div><button class="hashem-btn hashem-btn-secondary" id="advRefresh">Refresh</button></div>
-        </div>
-        <div class="tunnel-card" id="autopilotCard">
-          <div class="tc-header"><p class="tc-title">Autopilot <span class="eng-pro hidden" id="apPro" data-no-i18n>PRO</span></p></div>
-          <div class="ent-help">When a tunnel stays down, Autopilot tests the path between the two servers, moves the tunnel to a carrier that gets through, on both servers, and tells you. When the new carrier does not connect, both servers go back to the old one.</div>
-          <div class="ent-help" id="apNote"></div>
-          <label class="ent-help"><input type="checkbox" id="apEnabled"> Turn Autopilot on</label>
-          <div class="fg"><label for="apDown">Minutes a tunnel must be down first (2–720)</label><input class="hashem-input" id="apDown" type="number" min="2" max="720" value="5"></div>
-          <div class="fg"><label for="apCool">Minutes between two runs for one tunnel (10–1440)</label><input class="hashem-input" id="apCool" type="number" min="10" max="1440" value="30"></div>
-          <div class="fg"><label for="apPerDay">Runs for one tunnel in 24 hours (1–24)</label><input class="hashem-input" id="apPerDay" type="number" min="1" max="24" value="6"></div>
-          <label class="ent-help"><input type="checkbox" id="apPathTest"> Test the path first and take the fastest carrier that gets through</label>
-          <label class="ent-help"><input type="checkbox" id="apNotify"> Send a message to the webhook and Telegram <span id="apNotifyNote"></span></label>
-          <div class="fg"><label for="apQuietFrom">Quiet hours: no switching from this hour (0–23, server time)</label><input class="hashem-input" id="apQuietFrom" type="number" min="0" max="23" value="0"></div>
-          <div class="fg"><label for="apQuietTo">to this hour (the same hour twice: no quiet hours)</label><input class="hashem-input" id="apQuietTo" type="number" min="0" max="23" value="0"></div>
-          <div class="fg"><label for="apCarriers">Allowed carriers, comma separated (empty: every carrier the tunnel can run)</label><input class="hashem-input" id="apCarriers" autocomplete="off" spellcheck="false" placeholder="backhaul:wssmux, backhaul:tcpmux, frp:kcp"></div>
-          <div class="ent-help" id="apCarrierList"></div>
-          <div id="apTunnels"></div>
-          <div>
-            <button class="hashem-btn hashem-btn-primary" id="apSave">Save</button>
-            <button class="hashem-btn hashem-btn-secondary" id="apRefresh">Refresh</button>
-          </div>
-          <div class="ent-help" id="apEvents"></div>
         </div>
         <div class="tunnel-card" id="historyCard">
           <div class="tc-header"><p class="tc-title">Link history (last hours)</p></div>

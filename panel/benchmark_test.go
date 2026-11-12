@@ -112,25 +112,6 @@ func TestBenchmarkExecutionAndEndpoints(t *testing.T) {
 		t.Fatalf("handleBenchmarkRun returned %d", rrRun.Code)
 	}
 
-	// 4. POST /api/benchmark/autopilot
-	enable := true
-	thresh := 30.0
-	reqAPBody, _ := json.Marshal(BenchmarkAutoPilotRequest{
-		Enabled:   &enable,
-		Threshold: &thresh,
-	})
-	reqAP := httptest.NewRequest("POST", "/api/benchmark/autopilot", bytes.NewReader(reqAPBody))
-	rrAP := httptest.NewRecorder()
-	handleBenchmarkAutoPilot(rrAP, reqAP)
-	if rrAP.Code != http.StatusOK {
-		t.Fatalf("handleBenchmarkAutoPilot returned %d", rrAP.Code)
-	}
-
-	pcfg := loadPeerConfig()
-	if !pcfg.AutoPilotEnabled || pcfg.AutoPilotThreshold != 30.0 {
-		t.Errorf("autopilot config not updated: %+v", pcfg)
-	}
-
 	// 5. POST /api/benchmark/apply
 	reqApplyBody, _ := json.Marshal(BenchmarkApplyRequest{
 		Carrier: "direct",

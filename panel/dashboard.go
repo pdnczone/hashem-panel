@@ -133,7 +133,6 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if !snap.At.IsZero() {
 		snapAt = snap.At.UTC().Format(time.RFC3339)
 	}
-	peerCfg := loadPeerConfig()
 	carrierCfg := loadCarrierConfig()
 	lastErr := lastErrorEvent()
 
@@ -167,7 +166,7 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"remote_pub":      nilIfEmpty(st.RemotePub),
 		"active_engine":   engine,
 		"active_carrier":  carrierCfg.ActiveCarrier,
-		"auto_failover":   peerCfg.AutoPilotEnabled,
+		"auto_failover":   loadAutopilotConfig().Enabled && hasPro(proAutopilot), // Autopilot (autopilot.go)
 		"last_error":      lastErr,
 		"gre": map[string]any{
 			"exists": st.Gre.Exists,
