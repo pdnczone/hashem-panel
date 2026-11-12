@@ -7429,7 +7429,9 @@ EOF
     systemctl restart gre-panel
     sleep 2
 
-    if systemctl is-active --quiet gre-panel; then
+    if systemctl is-active --quiet gre-panel && [[ "$PANEL_BASE" == "hashem-node" ]]; then
+        echo -e "${GREEN}[OK] Node core installed and running (no web panel on this server).${NC}"
+    elif systemctl is-active --quiet gre-panel; then
         echo -e "${GREEN}[OK] Panel installed and running.${NC}"
         # full credentials right here — no need to open another menu
         echo ""
@@ -10605,7 +10607,8 @@ Usage:
   hashem settings [show | 2fa off | terminal on|off | terminal-allow [IP ...] | idle MIN]  # panel settings
   hashem license [status | activate KEY | machine-id | deactivate]
   hashem cluster [status | pool add PORT [--mode M] | pool rm|mode ... | member add|rm|drain|resume PORT LINK | join-code | add-hub CODE | events | rules]
-  hashem node-join <hn1.code | -> [--name N] | node [status | leave | move]   # this server as a node of a central panel (move: look for the Iran panel's move offer again)
+  hashem panel [status | install | remove]   # this server with the web panel, or as a node core (no panel, managed by its central)
+  hashem node-join <hn1.code | -> [--name N] [--core] | node [status | leave | move]   # this server as a node of a central panel (move: look for the Iran panel's move offer again)
   hashem join-hub --bundle hsh1_...|bh1_...|gh1_... | leave-hub --id N | hubs   # foreign side: serve several Iran hubs
   hashem optimize | restore | tune-status
   hashem carrier [status|mode auto|direct|fou:P|wss:P|set direct|fou:P|wss:P|next] # multi-carrier failover
@@ -11648,14 +11651,15 @@ cli_node() {
 # node-join CODE [--name N]: install the panel if it is missing (or too old
 # for nodes), then join the central that made CODE. Tunnels are not touched.
 cli_node_join() {
-    local code="" name="" a
+    local code="" name="" a core=0
     while [[ $# -gt 0 ]]; do
         a="$1"
         case "$a" in
             --name)
                 [[ $# -ge 2 ]] || { echo -e "${RED}[!] --name needs a value${NC}"; return 1; }
                 name="$2"; shift 2 ;;
-            -h|--help) echo "Usage: hashem node-join <hn1.code | -> [--name NAME]   (-: the code on stdin)"; return 0 ;;
+            --core) core=1; shift ;;
+            -h|--help) echo "Usage: hashem node-join <hn1.code | -> [--name NAME] [--core]   (-: the code on stdin; --core: a server without Hashem gets the node core, no web panel)"; return 0 ;;
             *) [[ -z "$code" ]] && code="$a"; shift ;;
         esac
     done
@@ -11670,8 +11674,14 @@ cli_node_join() {
         return 1
     fi
     if [[ ! -x "$PANEL_BIN" ]]; then
-        echo -e "${CYAN}[*] Installing the Hashem panel on this server...${NC}"
-        install_panel_smart || return 1
+        if [[ "$core" -eq 1 ]]; then
+            # --core after the code: a hashem.sh from before the core ignores it
+            echo -e "${CYAN}[*] Installing the Hashem node core on this server (no web panel)...${NC}"
+            HASHEM_NODE_CORE=1 install_panel || return 1
+        else
+            echo -e "${CYAN}[*] Installing the Hashem panel on this server...${NC}"
+            install_panel_smart || return 1
+        fi
     elif ! panel_supports "node \\["; then
         echo -e "${CYAN}[*] Updating the panel: this version has no node support...${NC}"
         install_panel || return 1
@@ -11679,6 +11689,9 @@ cli_node_join() {
     if ! panel_supports "node \\["; then
         echo -e "${RED}[!] The installed panel has no node support (is the update channel on a release that has it?).${NC}"
         return 1
+    fi
+    if [[ "$core" -eq 1 ]] && ! panel_is_core; then
+        echo -e "${CYAN}[*] This server already has the web panel: it keeps it. \`hashem panel remove\` makes it a node core.${NC}"
     fi
     local -a nm=()
     [[ -n "$name" ]] && nm=(--name "$name")
@@ -11688,6 +11701,37 @@ cli_node_join() {
     else
         "$PANEL_BIN" node join "$code" "${nm[@]}"  # a first node build: no stdin yet
     fi
+}
+
+# panel [status | install | remove]: this server as a web panel or as a node
+# core (the same program without the page; its files and unit stay). remove
+# only on a node: a core is managed by its central.
+cli_panel_kind() {
+    case "${1:-status}" in
+        status)
+            if [[ ! -x "$PANEL_BIN" ]]; then echo "not installed"
+            elif panel_is_core; then echo "node core (no web panel): managed by its central"
+            else echo "web panel: $(panel_address)"; fi ;;
+        install)
+            if [[ -x "$PANEL_BIN" ]] && ! panel_is_core; then
+                echo -e "${GREEN}[OK] The web panel is already installed.${NC}"; return 0
+            fi
+            HASHEM_NODE_CORE=0 install_panel ;;
+        remove)
+            if [[ ! -x "$PANEL_BIN" ]]; then
+                echo -e "${RED}[!] Hashem is not installed on this server.${NC}"; return 1
+            fi
+            if panel_is_core; then
+                echo -e "${GREEN}[OK] This server is already a node core.${NC}"; return 0
+            fi
+            if ! grep -q '"role": *"node"' "${PANEL_CONFIG_DIR}/node.json" 2>/dev/null; then
+                echo -e "${RED}[!] This server is not a node of a central. Without its panel nothing could manage it: join a central first (its Nodes page gives the line).${NC}"
+                return 1
+            fi
+            echo -e "${CYAN}[*] Removing the web panel: this server becomes a node core. Tunnels are not touched.${NC}"
+            HASHEM_NODE_CORE=1 install_panel ;;
+        *) echo "Usage: hashem panel [status | install | remove]   (remove: keep only the node core, managed by the central)"; return 1 ;;
+    esac
 }
 
 cli_cluster() {
@@ -11985,6 +12029,7 @@ if [[ $# -gt 0 ]]; then
         join-hub) shift; cli_join_hub "$@" ;;
         node) shift; cli_node "$@" ;;
         node-join) shift; cli_node_join "$@" ;;
+        panel) shift; cli_panel_kind "$@" ;;
         leave-hub) shift; cli_leave_hub "$@" ;;
         hubs) cli_hubs ;;
         carrier-kernel-init) carrier_init_kernel ;;

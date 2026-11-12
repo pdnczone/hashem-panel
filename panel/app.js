@@ -12038,14 +12038,14 @@ const nodeAgo = sec => {
 };
 const nodePct = v => (typeof v === 'number' && v >= 0) ? v.toFixed(0) + '%' : '—';
 function nodeRow(n) {
-  const i = n.info || {}, lic = i.license || {};
+  const i = n.info || {}, lic = i.license || {}, core = i.kind === 'core';
   const side = i.side === 'iran' ? tr('', 'Iran') : i.side === 'foreign' ? tr('', 'Foreign') : tr('', 'Not set up');
   const state = n.online ? ['ok', tr('', 'Online')] : ['err', tr('', 'Offline')];
   const licTxt = lic.active ? ('Pro' + (lic.expires ? ' · ' + tr('', 'until') + ' ' + custDate(lic.expires) : '')) : tr('', 'No license');
   const kv = (k, v) => `<div class="lm-box"><div class="lm-k"><span>${esc(k)}</span><b class="lm-num">${esc(v)}</b></div></div>`;
   return `<div class="lm-row${n.online ? '' : ' cut'}" id="node-${n.id}">
     <div class="lm-head"><div class="lm-name"><b>${esc(n.name)}</b><small class="lm-num">${esc([i.public_ip || n.addr || '', i.hostname || ''].filter(Boolean).join(' · '))}</small></div>
-      <span class="badge ${state[0]}">${esc(state[1])}</span></div>
+      <span class="u-flex-center-gap8"><span class="badge info" title="${esc(core ? tr('', 'Node core: no web panel on this server; this panel manages it') : tr('', 'This server has its own web panel too'))}">${esc(core ? tr('', 'Core only') : tr('', 'With panel'))}</span><span class="badge ${state[0]}">${esc(state[1])}</span></span></div>
     <div class="lm-grid">
       ${kv(tr('', 'Side'), side)}${kv(tr('', 'Tunnels'), String(i.tunnels ?? '—'))}${kv(tr('', 'Version'), i.version || n.link_version || '—')}
       ${kv('CPU · RAM · ' + tr('', 'Disk'), [nodePct(i.cpu_pct), nodePct(i.mem_pct), nodePct(i.disk_pct)].join(' · '))}
@@ -12057,6 +12057,7 @@ function nodeRow(n) {
       ${n.held ? `<button type="button" class="hashem-btn hashem-btn-primary u-btn-30" onclick="nodeApprove(${Number(n.id)})">${esc(tr('', 'Approve'))}</button>` : ''}
       ${n.online && !n.held ? `<button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openNodeHere(${Number(n.id)})">${esc(tr('', 'Open'))}</button>` : ''}
       <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="openNodeRename(${n.id})">${esc(tr('', 'Rename'))}</button>
+      ${n.online && !n.held ? `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="nodeKind(${Number(n.id)}, ${core ? "'panel'" : "'core'"})">${esc(core ? tr('', 'Install its panel') : tr('', 'Make it a core'))}</button>` : ''}
       <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30 u-c-er" onclick="nodeRemove(${n.id})">${esc(tr('', 'Remove'))}</button>
     </div></div>`;
 }
@@ -12121,10 +12122,29 @@ function nodeAddrField() {
     <input class="hashem-input lm-num" id="ndUrl" dir="ltr" maxlength="200" placeholder="http://IP:PORT" value="${esc((_nodes && _nodes.default_url) || '')}">
     <div class="qs-hint">${esc(tr('', 'This panel\'s public IP and port. Use another address (a domain, or the GRE address) if nodes reach this server another way.'))}</div></div>`;
 }
+// a new server gets the node core; the web panel only when asked for
+function nodePanelField() {
+  return `<div class="xr-field"><label class="xr-check"><input type="checkbox" id="ndPanel"> ${esc(tr('', 'Install the web panel on it too'))}</label>
+    <div class="qs-hint">${esc(tr('', 'Off: the server gets only the node core, with no web panel of its own, and this panel manages all of it. A server that already has the panel keeps it.'))}</div></div>`;
+}
+async function nodeKind(id, kind) {
+  const n = nodeFind(id);
+  if (!n) return;
+  const core = kind === 'core';
+  if (!await entConfirm(core ? tr('', 'Make this node a core?') : tr('', 'Install the web panel on this node?'),
+    core ? tr('', 'Its own web panel is removed: no page, login or terminal on that server, and this panel manages all of it. Its tunnels are not touched. It restarts and is back in a few seconds.')
+      : tr('', 'The server gets its own web panel next to the core. Its tunnels are not touched. Run hashem on it to see the address and set the password.'),
+    core ? tr('', 'Make it a core') : tr('', 'Install its panel'))) return;
+  try {
+    const r = await api('/api/nodes', { action: 'kind', id, kind });
+    toastOk(n.name, r.detail || '');
+    setTimeout(loadNodes, 4000);
+  } catch (e) { toastErr(tr('', 'Failed'), e.message); }
+}
 function openNodeInvite() {
-  const html = `<div class="xr-field"><label class="qs-label" for="ndName">${esc(tr('', 'Name'))}</label><input class="hashem-input" id="ndName" maxlength="40" placeholder="${esc(tr('', 'e.g. Germany 1'))}"></div>${nodeAddrField()}`;
+  const html = `<div class="xr-field"><label class="qs-label" for="ndName">${esc(tr('', 'Name'))}</label><input class="hashem-input" id="ndName" maxlength="40" placeholder="${esc(tr('', 'e.g. Germany 1'))}"></div>${nodeAddrField()}${nodePanelField()}`;
   custModal(tr('', 'Add a server'), html, tr('', 'Make the line'), async () => {
-    const r = await api('/api/nodes', { action: 'invite', name: $('ndName').value, url: $('ndUrl').value });
+    const r = await api('/api/nodes', { action: 'invite', name: $('ndName').value, url: $('ndUrl').value, panel: $('ndPanel').checked });
     const box = (id, label, v) => `<div class="cs-srv"><div class="cs-srv-h"><b>${esc(label)}</b>
       <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="copyTextSafe($('${id}').textContent, ${jsArg(tr('', 'Copied'))}, ${jsArg(label)})">${esc(tr('', 'Copy'))}</button></div>
       <pre class="cs-code" id="${id}">${esc(v)}</pre></div>`;
@@ -12143,10 +12163,10 @@ function openNodeSSH() {
     <div class="xr-field"><label class="qs-label" for="nsPass">${esc(tr('', 'Password'))}</label><input class="hashem-input" id="nsPass" type="password" autocomplete="off" dir="ltr"></div>
     <div class="xr-field"><label class="qs-label" for="nsKey">${esc(tr('', 'Or a private key'))}</label><textarea class="hashem-input lm-num" id="nsKey" rows="3" dir="ltr" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea></div>
     <div class="xr-field"><label class="qs-label" for="ndName">${esc(tr('', 'Name'))}</label><input class="hashem-input" id="ndName" maxlength="40"></div>
-    ${nodeAddrField()}
+    ${nodeAddrField()}${nodePanelField()}
     <div class="qs-hint">${esc(tr('', 'This panel logs in once, installs or updates Hashem there and joins it. The password or key is not saved.'))}</div>`;
   const req = () => ({ action: 'ssh', host: $('nsHost').value, port: parseInt($('nsPort').value, 10) || 22, user: $('nsUser').value,
-    password: $('nsPass').value, ssh_key: $('nsKey').value, name: $('ndName').value, url: $('ndUrl').value });
+    password: $('nsPass').value, ssh_key: $('nsKey').value, name: $('ndName').value, url: $('ndUrl').value, panel: $('ndPanel').checked });
   custModal(tr('', 'Add with SSH'), html, tr('', 'Connect'), async () => {
     const body = req();
     if (!body.password && !body.ssh_key) throw new Error(tr('', 'Give the SSH password or a private key.'));
@@ -12180,7 +12200,11 @@ function openNodeRename(id) {
 }
 async function nodeRemove(id) {
   const n = nodeFind(id);
-  if (!n || !await entConfirm(tr('', 'Remove this node?'), tr('', 'The central forgets it and it becomes a standalone panel again. Its tunnels keep running.'), tr('', 'Remove'))) return;
+  if (!n) return;
+  const body = (n.info || {}).kind === 'core'
+    ? tr('', 'The central forgets it. It is a node core with no web panel: after this, only SSH reaches it (hashem panel install gives it a panel). Its tunnels keep running.')
+    : tr('', 'The central forgets it and it becomes a standalone panel again. Its tunnels keep running.');
+  if (!await entConfirm(tr('', 'Remove this node?'), body, tr('', 'Remove'))) return;
   try { renderNodes(await api('/api/nodes', { action: 'remove', id })); toastOk(tr('', 'Node removed'), n.name); } catch (e) { toastErr(tr('', 'Failed'), e.message); }
 }
 async function nodeLeave() {

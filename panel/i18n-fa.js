@@ -3348,5 +3348,18 @@ window.FA_TEXT = {
 "The limit of runs in 24 hours is reached": "سقف اجرا در ۲۴ ساعت پر شده",
 "Runs in 24 hours": "اجرا در ۲۴ ساعت",
 "a xray tunnel has no carrier to swap": "تونل Xray حاملی برای تعویض ندارد",
-"Autopilot": "اتوپایلوت"
+"Autopilot": "اتوپایلوت",
+"Node core: no web panel on this server; this panel manages it": "هسته‌ی نود: این سرور پنل وب ندارد و همین پنل آن را مدیریت می‌کند",
+"This server has its own web panel too": "این سرور پنل وب خودش را هم دارد",
+"Core only": "فقط هسته",
+"With panel": "با پنل",
+"Install its panel": "نصب پنل روی آن",
+"Make it a core": "تبدیل به هسته",
+"Install the web panel on it too": "پنل وب هم روی آن نصب شود",
+"Off: the server gets only the node core, with no web panel of its own, and this panel manages all of it. A server that already has the panel keeps it.": "خاموش: روی سرور فقط هسته‌ی نود نصب می‌شود، پنل وب جدا ندارد و همه‌چیزش از همین پنل مدیریت می‌شود. سروری که از قبل پنل دارد، آن را نگه می‌دارد.",
+"Make this node a core?": "این نود به هسته تبدیل شود؟",
+"Install the web panel on this node?": "پنل وب روی این نود نصب شود؟",
+"Its own web panel is removed: no page, login or terminal on that server, and this panel manages all of it. Its tunnels are not touched. It restarts and is back in a few seconds.": "پنل وب خودش حذف می‌شود: روی آن سرور دیگر صفحه، ورود و ترمینالی نیست و همه‌چیزش از همین پنل مدیریت می‌شود. به تونل‌هایش دست زده نمی‌شود. ری‌استارت می‌شود و چند ثانیه بعد برمی‌گردد.",
+"The server gets its own web panel next to the core. Its tunnels are not touched. Run hashem on it to see the address and set the password.": "سرور کنار هسته پنل وب خودش را هم می‌گیرد. به تونل‌هایش دست زده نمی‌شود. برای دیدن آدرس و تنظیم رمز، روی آن سرور hashem را اجرا کنید.",
+"The central forgets it. It is a node core with no web panel: after this, only SSH reaches it (hashem panel install gives it a panel). Its tunnels keep running.": "پنل مرکزی آن را فراموش می‌کند. این یک هسته‌ی نود بدون پنل وب است: بعد از این فقط با SSH در دسترس است (دستور hashem panel install به آن پنل می‌دهد). تونل‌هایش کار می‌کنند."
 };

@@ -70,7 +70,7 @@ func TestI18nFaServed(t *testing.T) {
 	if !strings.Contains(readUI(t, "main.go"), `"/i18n-fa.js", serveAsset("i18n-fa.js"`) {
 		t.Error("i18n-fa.js must be routed")
 	}
-	if !strings.Contains(readUI(t, "main.go"), "app.js i18n-fa.js") {
+	if !strings.Contains(readUI(t, "core_off.go"), "app.js i18n-fa.js") { // the panel build's embed
 		t.Error("i18n-fa.js must be embedded")
 	}
 }

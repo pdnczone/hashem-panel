@@ -7,6 +7,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -73,62 +74,11 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	LogSecurityAudit("update_initiated", cfg.Username, ClientIP(r), "from="+panelVersion+" to="+latest+" asset="+asset)
 
-	var dlURL string
-	if latest == "latest" {
-		dlURL = "https://github.com/pdnczone/hashem-panel/releases/latest/download/" + asset
-	} else {
-		dlURL = "https://github.com/pdnczone/hashem-panel/releases/download/" + latest + "/" + asset
-	}
-	tmp, err := os.CreateTemp("", "gre-panel-update-*")
+	exe, code, err := installAsset(latest, asset, cfg.Username, ClientIP(r))
 	if err != nil {
-		writeAPIError(w, r, "E-UPDATE-04", "")
+		writeAPIError(w, r, code, err.Error())
 		return
 	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	// downloadFile closes tmp only on success; this covers every failure path
-	// (L21). Deferred after Remove, so it runs first; a second Close is a no-op.
-	defer tmp.Close()
-
-	if err := downloadFile(dlURL, tmp); err != nil {
-		LogSecurityAudit("update_failed", cfg.Username, ClientIP(r), "download error: "+err.Error())
-		writeAPIError(w, r, "E-UPDATE-02", err.Error())
-		return
-	}
-
-	// Verify SHA256 against the release manifest. Fail-closed: an update with
-	// no manifest entry for this asset is refused (M-01) unless the operator
-	// explicitly opts out with GRE_PANEL_ALLOW_UNVERIFIED_UPDATE=1.
-	if err := verifyAssetChecksum(tmpPath, latest, asset); err != nil {
-		LogSecurityAudit("update_checksum_failed", cfg.Username, ClientIP(r), "asset="+asset+" err="+err.Error())
-		writeAPIError(w, r, "E-UPDATE-07", err.Error())
-		return
-	}
-
-	if err := verifyELF(tmpPath); err != nil {
-		LogSecurityAudit("update_failed", cfg.Username, ClientIP(r), "ELF verification failed: "+err.Error())
-		writeAPIError(w, r, "E-UPDATE-03", err.Error())
-		return
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		writeAPIError(w, r, "E-UPDATE-04", "")
-		return
-	}
-	// Swap in the new binary. Keep a .bak so a bad binary can be rolled back.
-	bak := exe + ".bak"
-	_ = os.Remove(bak)
-	if err := os.Rename(exe, bak); err != nil {
-		writeAPIError(w, r, "E-UPDATE-04", err.Error())
-		return
-	}
-	if err := copyFile(tmpPath, exe); err != nil {
-		_ = os.Rename(bak, exe) // roll back
-		LogSecurityAudit("update_rollback", cfg.Username, ClientIP(r), "copy failed: "+err.Error())
-		writeAPIError(w, r, "E-UPDATE-04", err.Error())
-		return
-	}
-	_ = os.Chmod(exe, 0755)
 	// Keep hashem.sh in sync with the binary
 	syncPanelScriptFrom(latest)
 
@@ -142,14 +92,138 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
+// installAsset downloads asset of release tag ("latest": the newest), checks
+// it against that release's checksums.txt, and puts it in place of the
+// running binary (the old one is kept as .bak). It does not restart. The
+// string is the API error code when it fails.
+func installAsset(tag, asset, who, ip string) (string, string, error) {
+	var dlURL string
+	if tag == "latest" {
+		dlURL = "https://github.com/pdnczone/hashem-panel/releases/latest/download/" + asset
+	} else {
+		dlURL = "https://github.com/pdnczone/hashem-panel/releases/download/" + tag + "/" + asset
+	}
+	tmp, err := os.CreateTemp("", "gre-panel-update-*")
+	if err != nil {
+		return "", "E-UPDATE-04", errors.New("no temporary file")
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	// downloadFile closes tmp only on success; this covers every failure path
+	// (L21). Deferred after Remove, so it runs first; a second Close is a no-op.
+	defer tmp.Close()
+
+	if err := downloadFile(dlURL, tmp); err != nil {
+		LogSecurityAudit("update_failed", who, ip, "download error: "+err.Error())
+		return "", "E-UPDATE-02", err
+	}
+
+	// Verify SHA256 against the release manifest. Fail-closed: an update with
+	// no manifest entry for this asset is refused (M-01) unless the operator
+	// explicitly opts out with GRE_PANEL_ALLOW_UNVERIFIED_UPDATE=1.
+	if err := verifyAssetChecksum(tmpPath, tag, asset); err != nil {
+		LogSecurityAudit("update_checksum_failed", who, ip, "asset="+asset+" err="+err.Error())
+		return "", "E-UPDATE-07", err
+	}
+
+	if err := verifyELF(tmpPath); err != nil {
+		LogSecurityAudit("update_failed", who, ip, "ELF verification failed: "+err.Error())
+		return "", "E-UPDATE-03", err
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return "", "E-UPDATE-04", errors.New("this program's own path is not known")
+	}
+	// Swap in the new binary. Keep a .bak so a bad binary can be rolled back.
+	bak := exe + ".bak"
+	_ = os.Remove(bak)
+	if err := os.Rename(exe, bak); err != nil {
+		return "", "E-UPDATE-04", err
+	}
+	if err := copyFile(tmpPath, exe); err != nil {
+		_ = os.Rename(bak, exe) // roll back
+		LogSecurityAudit("update_rollback", who, ip, "copy failed: "+err.Error())
+		return "", "E-UPDATE-04", err
+	}
+	_ = os.Chmod(exe, 0755)
+	return exe, "", nil
+}
+
+// assetFor is the release asset of a build ("gre-panel" | "hashem-node")
+// for this machine.
+func assetFor(name string) (string, error) {
+	switch runtime.GOARCH {
+	case "amd64", "arm64":
+		return name + "-linux-" + runtime.GOARCH, nil
+	}
+	return "", fmt.Errorf("unsupported arch for update: %s", runtime.GOARCH)
+}
+
+// handleUpdateKind (POST /api/update/kind {"kind":"core"|"panel"}) swaps this
+// server between the node core and the panel: the other build of the release
+// it runs, same files, same unit. To a core only on a node: a core is
+// managed by its central, and a server with neither would have no page at
+// all.
+func handleUpdateKind(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Kind string `json:"kind"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req)
+	name := ""
+	switch req.Kind {
+	case nodeKindCore:
+		name = "hashem-node"
+	case "panel":
+		name = "gre-panel"
+	default:
+		writeAPIError(w, r, "E-UPDATE-01", "kind: core or panel")
+		return
+	}
+	if name == binName() {
+		writeJSON(w, map[string]string{"status": "ok", "detail": "this server is already a " + req.Kind})
+		return
+	}
+	if self, err := nodeSelfLoad(); req.Kind == nodeKindCore && (err != nil || self.Role != nodeRoleNode) {
+		writeAPIError(w, r, "E-UPDATE-01", "only a node of a central can become a core: a core has no web panel of its own")
+		return
+	}
+	tag := runningReleaseTag()
+	if tag == "" {
+		writeAPIError(w, r, "E-UPDATE-01", "this build ("+panelVersion+") is not a release: update this server first")
+		return
+	}
+	asset, err := assetFor(name)
+	if err != nil {
+		writeAPIError(w, r, "E-UPDATE-05", err.Error())
+		return
+	}
+	who := cfg.Username
+	if nodeRelayed(r) {
+		who = "central"
+	}
+	LogSecurityAudit("kind_change", who, ClientIP(r), "to="+req.Kind+" asset="+asset+" release="+tag)
+	exe, code, err := installAsset(tag, asset, who, ClientIP(r))
+	if err != nil {
+		writeAPIError(w, r, code, err.Error())
+		return
+	}
+	guarded := guardUpdate(exe, panelVersion, tag)
+	detail := "this server is now a node core: its web panel is gone, the central manages it"
+	if req.Kind == "panel" {
+		detail = "the web panel is installed on this server; `hashem` on it shows the address and sets the password"
+	}
+	writeJSON(w, map[string]any{"status": "ok", "detail": detail, "kind": req.Kind, "guarded": guarded})
+	go func() {
+		time.Sleep(1000 * time.Millisecond)
+		restartSelf()
+	}()
+}
+
 // panelAsset maps runtime arch to the release asset name.
 func panelAsset() (arch, asset string, err error) {
 	// a core updates to a core: binName is "hashem-node" on that build
-	switch runtime.GOARCH {
-	case "amd64", "arm64":
-		return runtime.GOARCH, binName() + "-linux-" + runtime.GOARCH, nil
-	}
-	return "", "", fmt.Errorf("unsupported arch for update: %s", runtime.GOARCH)
+	asset, err = assetFor(binName())
+	return runtime.GOARCH, asset, err
 }
 
 // isOfficialGitHubURL restricts downloads to official GitHub repositories only (CWE-494)
