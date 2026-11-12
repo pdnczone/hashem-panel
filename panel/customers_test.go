@@ -827,7 +827,7 @@ func TestCustomersReviewFixes(t *testing.T) {
 	}
 
 	// sold ports are kept out of the ephemeral range, the kernel's list kept
-	if r, _ := os.ReadFile(custReserveSysctl); !strings.HasPrefix(string(r), "7000-7002,") || !strings.Contains(string(r), "31000") {
+	if r, _ := os.ReadFile(custReserveSysctl); !strings.Contains(string(r), "7000-7002") || !strings.Contains(string(r), "31000") {
 		t.Errorf("reserved ports: %q", r)
 	}
 	if r, _ := os.ReadFile(custReservedPath()); !strings.Contains(string(r), "\n31000\n") && !strings.HasPrefix(string(r), "31000\n") {
@@ -865,5 +865,39 @@ func TestCustomersReviewFixes(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(customersPath()); string(b) != "{broken" {
 		t.Errorf("the corrupt file was overwritten: %q", b)
+	}
+}
+
+// A port Hashem reserved and no config claims any more leaves the kernel's
+// list and the boot-time copy; the admin's own entries stay.
+func TestCustReservePortsReleasesRemoved(t *testing.T) {
+	dir := registryEnv(t)
+	oldSysctl, oldConf, oldSig := custReserveSysctl, custReserveConf, custApplied.reserved
+	t.Cleanup(func() { custReserveSysctl, custReserveConf, custApplied.reserved = oldSysctl, oldConf, oldSig })
+	custReserveSysctl = filepath.Join(dir, "reserved")
+	custReserveConf = filepath.Join(dir, "sysctl.d", "99-hashem-reserved-ports.conf")
+	_ = os.MkdirAll(filepath.Dir(custReserveConf), 0o755)
+	// the kernel merged the admin's 7000-7001 with Hashem's 7002; 31000 and
+	// 45000 were tunnels that are gone (one known from each of the two files)
+	_ = os.WriteFile(custReserveSysctl, []byte("7000-7002,31000,45000\n"), 0o644)
+	_ = os.WriteFile(custReservedPath(), []byte("7002\n31000\n"), 0o644)
+	_ = os.WriteFile(custReserveConf, []byte("# x\nnet.ipv4.ip_local_reserved_ports = 7002,45000\n"), 0o644)
+	custApplied.reserved = "stale"
+	custReservePorts()
+	want := map[int]bool{7000: true, 7001: true}
+	for _, c := range hashemPortClaims() {
+		if c.Port >= 1024 {
+			want[c.Port] = true
+		}
+	}
+	if want[7002] || want[31000] || want[45000] {
+		t.Fatalf("the test's ports are claimed by the environment: %v", want)
+	}
+	got, _ := os.ReadFile(custReserveSysctl)
+	if string(got) != custPortRanges(want) {
+		t.Errorf("kernel list = %q, want %q", got, custPortRanges(want))
+	}
+	if conf, _ := os.ReadFile(custReserveConf); strings.Contains(string(conf), "45000") || strings.Contains(string(conf), "7002") {
+		t.Errorf("boot-time copy still lists a released port: %q", conf)
 	}
 }

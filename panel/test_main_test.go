@@ -25,6 +25,7 @@ func TestMain(m *testing.M) {
 	frpDir = filepath.Join(dir, "frp")
 	backhaulDir = filepath.Join(dir, "backhaul")
 	revpathSysctlConf = filepath.Join(dir, "sysctl.d", "99-hashem-revpath.conf")
+	custReserveConf = filepath.Join(dir, "sysctl.d", "99-hashem-reserved-ports.conf")
 	sentinelDir = filepath.Join(dir, "sentinel")
 	sentinelUnitPath = filepath.Join(dir, "systemd", "sentinel.service")
 	sentinelTLSDropIn = filepath.Join(dir, "systemd", "sentinel.service.d", "hashem-tls.conf")

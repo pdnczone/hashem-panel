@@ -3,9 +3,12 @@ package main
 import (
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // allowUFWPorts opens both tcp and udp ports in UFW firewall if UFW is active.
@@ -16,6 +19,58 @@ func allowUFWPorts(ports []int) {
 			exec.Command("ufw", "allow", fmt.Sprintf("%d/udp", p)).CombinedOutput()
 		}
 	}
+}
+
+// ufwOpenedPath lists the ufw rules Hashem added for tunnels ("443/tcp" per
+// line), shared with hashem.sh (hashem_ufw_allow): removing a tunnel deletes
+// the rules listed here that no remaining tunnel needs. A rule that was there
+// before (ufw says "Skipping") is the admin's own and is never listed.
+func ufwOpenedPath() string { return filepath.Join(configDir, "ufw.opened") }
+
+var ufwOpenedMu sync.Mutex
+
+// allowUFWTunnelPorts is allowUFWPorts for a tunnel's ports: the rules it
+// adds are recorded, so removing the tunnel closes them again.
+func allowUFWTunnelPorts(ports []int) {
+	out, err := exec.Command("ufw", "status").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "Status: active") {
+		return
+	}
+	var added []string
+	for _, p := range ports {
+		for _, proto := range []string{"tcp", "udp"} {
+			rule := fmt.Sprintf("%d/%s", p, proto)
+			if out, err := exec.Command("ufw", "allow", rule).CombinedOutput(); err == nil && !strings.Contains(string(out), "Skipping") {
+				added = append(added, rule)
+			}
+		}
+	}
+	recordUFWOpened(added)
+}
+
+// recordUFWOpened appends rules to ufwOpenedPath, each once.
+func recordUFWOpened(rules []string) {
+	if len(rules) == 0 {
+		return
+	}
+	ufwOpenedMu.Lock()
+	defer ufwOpenedMu.Unlock()
+	old, _ := os.ReadFile(ufwOpenedPath())
+	have := map[string]bool{}
+	for _, l := range strings.Split(string(old), "\n") {
+		have[strings.TrimSpace(l)] = true
+	}
+	text := string(old)
+	if text != "" && !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	for _, r := range rules {
+		if !have[r] {
+			have[r] = true
+			text += r + "\n"
+		}
+	}
+	_ = os.WriteFile(ufwOpenedPath(), []byte(text), 0o600)
 }
 
 // rewriteTomlPorts rebuilds the [[proxies]] sections of an frpc TOML file

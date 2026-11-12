@@ -421,7 +421,7 @@ func openCarrierFirewall(port int, to carrierChoice) {
 		}
 		ports = append(ports, q)
 	}
-	allowUFWPorts(ports)
+	allowUFWTunnelPorts(ports)
 }
 
 // updatePeerRecord rewrites one peers.json record.
