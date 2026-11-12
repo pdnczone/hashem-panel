@@ -3130,6 +3130,16 @@
       </section>
       <!-- Customers: tunnels sold to customers (customers.go; loadCustomers in app.js) -->
       <section id="tab-autopilot" role="tabpanel" hidden>
+        <div class="tunnel-card u-mb-20" id="apFleetCard" hidden>
+          <div class="tc-header u-bb-ln u-pb-16 u-mb-16">
+            <div>
+              <span class="tc-title u-fs-18 u-fw-700">Autopilot on every server</span>
+              <div class="qs-hint u-mt-4">Each Iran server watches its own tunnels and moves them. Turn it on or off for a server or one tunnel from here; its rules and history open on that server.</div>
+            </div>
+            <div class="lm-acts"><button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="apFleetLoad()">Refresh</button></div>
+          </div>
+          <div id="apFleetBody"><div class="ent-skel u-h-14"></div></div>
+        </div>
         <div class="tunnel-card ap-hero u-mb-20">
           <div class="ap-hero-top">
             <div class="ap-hero-id">

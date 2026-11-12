@@ -3335,7 +3335,7 @@ window.FA_TEXT = {
 "Autopilot watches this tunnel": "Autopilot مراقب این تونل است",
 "Needs a license": "لایسنس لازم است",
 "Iran server only": "فقط روی سرور ایران",
-"The foreign panel must answer on its public address: with the tunnel down there is no other way to tell it.": "پنل سرور خارج باید روی آدرس عمومی‌اش جواب بدهد: وقتی تونل قطع است راه دیگری برای خبر دادن به آن نیست.",
+"With the tunnel down, the foreign server is told over the central's node channel (both servers under one central), or else on its panel's public address, which must answer.": "وقتی تانل قطع است، به سرور خارج از راه کانال نودِ پنل مرکزی خبر داده می‌شود (وقتی هر دو سرور زیر یک مرکزی‌اند)، وگرنه از آدرس عمومی پنلش که باید جواب بدهد.",
 "Tunnels watched": "تونل‌های زیر نظر",
 "Down now": "الان قطع",
 "Switched in 24 hours": "جابه‌جایی در ۲۴ ساعت",
@@ -3361,5 +3361,15 @@ window.FA_TEXT = {
 "Install the web panel on this node?": "پنل وب روی این نود نصب شود؟",
 "Its own web panel is removed: no page, login or terminal on that server, and this panel manages all of it. Its tunnels are not touched. It restarts and is back in a few seconds.": "پنل وب خودش حذف می‌شود: روی آن سرور دیگر صفحه، ورود و ترمینالی نیست و همه‌چیزش از همین پنل مدیریت می‌شود. به تونل‌هایش دست زده نمی‌شود. ری‌استارت می‌شود و چند ثانیه بعد برمی‌گردد.",
 "The server gets its own web panel next to the core. Its tunnels are not touched. Run hashem on it to see the address and set the password.": "سرور کنار هسته پنل وب خودش را هم می‌گیرد. به تونل‌هایش دست زده نمی‌شود. برای دیدن آدرس و تنظیم رمز، روی آن سرور hashem را اجرا کنید.",
-"The central forgets it. It is a node core with no web panel: after this, only SSH reaches it (hashem panel install gives it a panel). Its tunnels keep running.": "پنل مرکزی آن را فراموش می‌کند. این یک هسته‌ی نود بدون پنل وب است: بعد از این فقط با SSH در دسترس است (دستور hashem panel install به آن پنل می‌دهد). تونل‌هایش کار می‌کنند."
+"The central forgets it. It is a node core with no web panel: after this, only SSH reaches it (hashem panel install gives it a panel). Its tunnels keep running.": "پنل مرکزی آن را فراموش می‌کند. این یک هسته‌ی نود بدون پنل وب است: بعد از این فقط با SSH در دسترس است (دستور hashem panel install به آن پنل می‌دهد). تونل‌هایش کار می‌کنند.",
+"Restarting a tunnel": "ری‌استارت تانل",
+"Ports and settings": "پورت‌ها و تنظیمات",
+"Restart both ends": "ری‌استارت هر دو سر",
+"Restart this tunnel?": "این تانل ری‌استارت شود؟",
+"Its engine is restarted on the Iran server, then on the foreign one. Users of this tunnel are cut for a few seconds.": "موتور تانل اول روی سرور ایران و بعد روی سرور خارج ری‌استارت می‌شود. کاربران این تانل چند ثانیه قطع می‌شوند.",
+"Autopilot on every server": "اتوپایلوت روی همه‌ی سرورها",
+"Each Iran server watches its own tunnels and moves them. Turn it on or off for a server or one tunnel from here; its rules and history open on that server.": "هر سرور ایران تانل‌های خودش را زیر نظر دارد و جابه‌جا می‌کند. از همین‌جا برای یک سرور یا یک تانل روشن و خاموشش کنید؛ قانون‌ها و تاریخچه روی همان سرور باز می‌شود.",
+"Rules and history": "قانون‌ها و تاریخچه",
+"No Iran server with a tunnel yet.": "هنوز سرور ایرانی با تانل وجود ندارد.",
+"Turn Autopilot on": "روشن کردن اتوپایلوت"
 };

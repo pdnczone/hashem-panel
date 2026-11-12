@@ -695,7 +695,7 @@ func TestNodeRelayAllowed(t *testing.T) {
 	for p, want := range map[string]bool{
 		"/api/status": true, "/api/dashboard": true, "/api/customers/export.csv": true, "/api/license": true,
 		"/api/term/ws": false, "/api/login": false, "/api/access": false, "/api/password": false, "/api/2fa/setup": false,
-		"/api/nodes": false, "/api/node/1/status": false, "/api/peer/handshake": false, "/api/session-settings": false,
+		"/api/nodes": false, "/api/autopilot": true, "/api/node/1/status": false, "/api/peer/handshake": false, "/api/session-settings": false,
 		"/api/peer/status": true, "/api/peer/config": true, "/api/peer/apply-engine": false, "/api/nv/x/status": false,
 		"/api/status/../access": false, "/api//access": false, "/api/status%2f..": false, "/status": false, "/api/tls/ip": false,
 	} {
