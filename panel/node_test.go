@@ -137,7 +137,23 @@ func TestNodeHelperProcess(t *testing.T) {
 			writeJSON(w, map[string]string{"status": "ok"})
 		})))
 		m.HandleFunc("GET /x/api/access", requireAuth(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, "secret") }))
+		nodePeerTestRoute(m, "helper")
 		return m
+	}
+	if to := os.Getenv("NODE_HELPER_ASK"); to != "" { // a Peer Link call over the channel (node_peer_test.go)
+		go func() {
+			for i := 0; i < 300; i++ {
+				nodeUp.Lock()
+				up := nodeUp.nc != nil
+				nodeUp.Unlock()
+				if up {
+					break
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			st, data, ok := peerChannelCall([]string{to}, "POST", "/api/peer/echo", os.Getenv("NODE_HELPER_SECRET"), []byte(`{"n":1}`), 10*time.Second)
+			_ = os.WriteFile(filepath.Join(configDir, "ask-result"), []byte(fmt.Sprintf("%v %d %s", ok, st, data)), 0600)
+		}()
 	}
 	switch os.Getenv("NODE_HELPER_CMD") {
 	case "loop":

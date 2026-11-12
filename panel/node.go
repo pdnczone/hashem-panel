@@ -38,7 +38,7 @@ import (
 )
 
 const (
-	nodeProto       = 1           // channel protocol version
+	nodeProto       = 2           // channel protocol version (2: "ask" and "peer", node_peer.go)
 	nodeLinkPath    = "/_hn/link" // fixed: a node cannot know the central's base path
 	nodeInviteTTL   = 30 * time.Minute
 	nodeInvitesMax  = 20
