@@ -4971,22 +4971,33 @@ function netStackRows(n) {
   return rows;
 }
 
+// A state icon per kernel row: a check, a mark for what to improve, a dash when unknown.
+const NS_ICON = { ok: 'm5 12.5 4.5 4.5L19 7', warn: 'M12 6.5v7M12 17.5h.01', err: 'M12 6.5v7M12 17.5h.01', '': 'M7 12h10' };
+// Hero tile accent: ok, warn, off, or '' for the accent color.
+function perfTile(id, st) { const el = $(id); if (el) { if (st) el.dataset.st = st; else delete el.dataset.st; } }
+
 function renderNetStack(n) {
-  const list = $('netStackList'), badge = $('netStackBadge');
+  const list = $('netStackList'), badge = $('netStackBadge'), meter = $('perfNetMeter');
   if (!n || !n.known) {
     list.innerHTML = '<div class="ns-empty">' + esc(tr('', 'Kernel values cannot be read on this system.')) + '</div>';
     badge.className = 'badge'; badge.textContent = '—';
     perfSetText('perfNetVal', '—'); perfSetText('perfNetSub', '—');
+    perfTile('perfTileNet', 'off');
+    meter.hidden = true;
     return;
   }
   const rows = netStackRows(n);
   list.innerHTML = rows.map(([k, v, lvl, note]) =>
-    `<div class="ns-row" data-lvl="${lvl}"><span class="ns-dot" aria-hidden="true"></span><span class="ns-k">${esc(k)}<span class="ns-sub">${esc(note)}</span></span><span class="ns-v" data-no-i18n><bdi dir="ltr">${esc(v)}</bdi></span></div>`).join('');
+    `<div class="ns-row" data-lvl="${lvl}"><span class="ns-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="${NS_ICON[lvl] || NS_ICON['']}"/></svg></span><span class="ns-k">${esc(k)}<span class="ns-sub">${esc(note)}</span></span><span class="ns-v" data-no-i18n><bdi dir="ltr">${esc(v)}</bdi></span></div>`).join('');
   const bad = rows.filter(r => r[2] === 'warn' || r[2] === 'err').length;
+  const known = rows.filter(r => r[2]).length;
   badge.className = 'badge ' + (bad ? 'warn' : 'ok');
   badge.textContent = bad ? docTpl('{0} to improve', [bad]) : tr('', 'Optimized');
   perfSetText('perfNetVal', bad ? tr('', 'Not optimized') : tr('', 'Optimized'));
   perfSetLtr('perfNetSub', (n.cc || '?') + ' + ' + (n.qdisc || '?') + (n.gre_mtu ? ' · MTU ' + n.gre_mtu : ''));
+  perfTile('perfTileNet', bad ? 'warn' : 'ok');
+  meter.hidden = !known;
+  meter.style.setProperty('--pct', (known ? Math.round(100 * (known - bad) / known) : 0) + '%');
   $('perfRestoreBtn').hidden = !n.backup;
 }
 
@@ -5015,11 +5026,11 @@ async function loadPerf() {
   // Sync status
   const ind = $('perfSyncInd');
   if (!isFrp) {
-    ind.className = 'status-indicator offline';
+    ind.className = 'status-indicator upd-pill offline';
     perfSetText('perfSyncTxt', isBh ? 'Backhaul' : tr('', 'No tunnel'));
     ind.title = '';
   } else {
-    ind.className = 'status-indicator ' + (s.in_sync ? 'ok' : 'warn');
+    ind.className = 'status-indicator upd-pill ' + (s.in_sync ? 'ok' : 'warn');
     perfSetText('perfSyncTxt', tr('', s.in_sync ? 'Applied' : 'Not applied yet'));
     ind.title = s.sync_details || '';
   }
@@ -5029,6 +5040,8 @@ async function loadPerf() {
   const speedFirst = !s.proxy_encryption && !s.proxy_compression && !s.tcp_mux;
   perfSetText('perfEngLabel', isBh ? tr('', 'Tunnel engine') : tr('', 'FRP transport'));
   perfSetText('perfPoolLabel', isBh ? tr('', 'Connection pool') : tr('perf_status_pool', 'Work-conn pool (frpc / frps)'));
+  perfTile('perfTileEng', isBh ? '' : isFrp ? (speedFirst ? 'ok' : '') : 'off');
+  perfTile('perfTilePool', isBh || isFrp ? '' : 'off');
   if (isBh) {
     perfSetText('perfCryptoVal', 'Backhaul');
     perfSetText('perfCryptoSub', tr('', s.backhaul_role === 'foreign' ? 'Foreign server (dials)' : 'Iran server (listens)'));
