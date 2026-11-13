@@ -12491,9 +12491,11 @@ function nmCard(s, rel) {
   const tag = s.central ? `<span class="nm-tag">${esc(tr('', 'Central'))}</span>`
     : s.held ? `<span class="nm-tag warn">${esc(tr('', 'not approved'))}</span>`
     : s.core ? `<span class="nm-tag mu" title="${esc(tr('', 'Node core: no web panel on this server; this panel manages it'))}">${esc(tr('', 'Core'))}</span>` : '';
-  const btn = (label, fn) => `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="${fn}">${esc(label)}</button>`;
-  const acts = s.central ? btn(tr('', 'Dashboard'), "goTab('dashboard')")
-    : (s.online && !s.held ? btn(tr('', 'Open'), `openNodeHere(${s.id})`) : '') + btn(tr('', 'Details'), `nodeMapDetails(${s.id})`);
+  const btn = (label, fn, cls) => `<button type="button" class="hashem-btn ${cls || 'hashem-btn-ghost'} u-btn-30" onclick="${fn}">${esc(label)}</button>`;
+  // a tunnel from this server to another one, set up on both ends from here
+  const mk = s.online && !s.held ? btn(tr('', 'New tunnel'), `openNodeTunnel(${s.id})`, 'hashem-btn-secondary') : '';
+  const acts = mk + (s.central ? btn(tr('', 'Dashboard'), "goTab('dashboard')")
+    : (s.online && !s.held ? btn(tr('', 'Open'), `openNodeHere(${s.id})`) : '') + btn(tr('', 'Details'), `nodeMapDetails(${s.id})`));
   return `<div class="nm-node${s.central ? ' central' : ''}${s.online ? '' : ' off'}${_nmSel === s.id ? ' sel' : ''}${rel ? ' rel' : ''}" data-nm="${s.id}">
     <button type="button" class="nm-hit" onclick="nodeMapPick(${s.id})" aria-pressed="${_nmSel === s.id}" aria-label="${esc(s.name + ' · ' + st[1])}" title="${esc(st[1])}"></button>
     <div class="nm-top"><span class="nm-ic" aria-hidden="true">${s.central ? NM_ICON_CENTRAL : NM_ICON_SERVER}<i class="nm-dot ${st[0]}"></i></span>
@@ -12565,7 +12567,7 @@ function nodeMapRender() {
         ${rest.length ? `<div class="nm-rest"><div class="nm-col-h">${esc(tr('', 'No tunnel yet'))} <b>${rest.length}</b></div>${rest.map(s => nmCard(s, rel.has(s.id))).join('')}</div>` : ''}
       </div>
       <div class="nm-legend">${lg('ok', tr('', 'Healthy'))}${lg('warn', tr('', 'Degraded'))}${lg('err', tr('', 'Down'))}${lg('busy', tr('', 'Autopilot is working'))}
-        <span class="nm-hint">${esc(links.length ? tr('', 'Select a server to see its tunnels.') : tr('', 'No tunnel between these servers yet.'))}</span></div>`;
+        <span class="nm-hint">${esc(links.length ? tr('', 'Select a server to see its tunnels or make a new one.') : tr('', 'No tunnel between these servers yet: select one to make it.'))}</span></div>`;
     nmObserve();
   }
   nmUpdateLive(servers);
@@ -12728,12 +12730,21 @@ async function loadNodeTunnels() {
   renderNodeTunnels(_nodes);
   nodeMapRender();
 }
-function openNodeTunnel() {
-  const nodes = ((_nodes && _nodes.nodes) || []).filter(n => n.online);
-  const iran = nodes.find(n => n.info && n.info.side === 'iran'), out = nodes.find(n => !(n.info && n.info.side === 'iran'));
+// openNodeTunnel opens New tunnel; pick (a server's id, from its card on the
+// map) fills that server in on its side, and the other end with a server of
+// the other side.
+function openNodeTunnel(pick) {
+  const ids = [0].concat(((_nodes && _nodes.nodes) || []).filter(n => n.online && !n.held).map(n => Number(n.id)));
+  const sides = {};
+  nmServers().forEach(x => { sides[x.id] = x.side; });
+  ((_nodes && _nodes.nodes) || []).forEach(n => { if (!sides[n.id]) sides[n.id] = (n.info || {}).side || ''; });
+  let sv = null, cl = null;
+  if (typeof pick === 'number' && ids.includes(pick)) { if (sides[pick] === 'foreign') cl = pick; else sv = pick; }
+  if (sv === null) sv = ids.find(id => id !== cl && sides[id] === 'iran') ?? ids.find(id => id !== cl && sides[id] !== 'foreign') ?? ids.find(id => id !== cl) ?? 0;
+  if (cl === null) cl = ids.find(id => id !== sv && sides[id] === 'foreign') ?? ids.find(id => id !== sv && sides[id] !== 'iran') ?? ids.find(id => id !== sv) ?? -1;
   const html = `<div class="xr-fields">
-      <div class="xr-field"><label class="qs-label" for="ntS">${esc(tr('', 'Iran server (users connect to it)'))}</label><select class="hashem-input" id="ntS">${ntServerOpts(iran ? iran.id : 0)}</select></div>
-      <div class="xr-field"><label class="qs-label" for="ntC">${esc(tr('', 'Foreign server'))}</label><select class="hashem-input" id="ntC">${ntServerOpts(out ? out.id : -1)}</select></div>
+      <div class="xr-field"><label class="qs-label" for="ntS">${esc(tr('', 'Iran server (users connect to it)'))}</label><select class="hashem-input" id="ntS">${ntServerOpts(sv)}</select></div>
+      <div class="xr-field"><label class="qs-label" for="ntC">${esc(tr('', 'Foreign server'))}</label><select class="hashem-input" id="ntC">${ntServerOpts(cl)}</select></div>
     </div>
     <div class="xr-fields">
       <div class="xr-field"><label class="qs-label" for="ntE">${esc(tr('', 'Engine'))}</label><select class="hashem-input" id="ntE">

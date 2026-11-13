@@ -3390,5 +3390,6 @@ window.FA_TEXT = {
 "Iran servers": "سرورهای ایران",
 "No Iran server yet": "هنوز سرور ایران ندارید",
 "No foreign server yet": "هنوز سرور خارج ندارید",
-"Select a server to see its tunnels.": "روی یک سرور بزنید تا تونل‌هایش را ببینید."
+"Select a server to see its tunnels or make a new one.": "روی یک سرور بزنید تا تونل‌هایش را ببینید یا تونل تازه بسازید.",
+"No tunnel between these servers yet: select one to make it.": "هنوز بین این سرورها تونلی نیست: روی یکی بزنید تا بسازید."
 };
