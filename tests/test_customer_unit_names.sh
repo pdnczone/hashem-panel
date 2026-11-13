@@ -19,8 +19,9 @@ cmdlines=("/usr/local/lib/hashem-sell/frps -c /etc/gre-panel/customers/12-3.toml
     "/usr/local/lib/hashem-sell/xray run -c /etc/gre-panel/customers/12-5.json"
     "/usr/local/lib/hashem-sell/hashem-relay sell-bagher -frps /usr/local/lib/hashem-sell/frps -conf /etc/gre-panel/customers/12-6.toml")
 
-# the uninstall-everything path (and customers_teardown itself) may match
-body="$(awk '/^uninstall_all_force\(\) \{/,/^}/ {next} /^customers_teardown\(\) \{/,/^}/ {next} {print}' "$SH")"
+# the uninstall-everything path (and customers_teardown itself) may match;
+# frp_units reads every unit file but keeps only Hashem's own frps/frpc (6.)
+body="$(awk '/^uninstall_all_force\(\) \{/,/^}/ {next} /^customers_teardown\(\) \{/,/^}/ {next} /^frp_units\(\) \{/,/^}/ {next} {print}' "$SH")"
 
 # 1. unit globs: systemctl stop/disable/... '<glob>' and /etc/systemd/system/<glob>.service
 globs=$(printf '%s\n' "$body" | grep -oE "systemctl [a-z-]+ [^;|&#]*" | grep -oE "'[^']+'" | tr -d "'")
@@ -72,6 +73,18 @@ done < <(printf '%s\n' "$body" | grep -oE '(pkill|killall)( -[0-9A-Za-z]+)* [A-Z
 # 4. release_frps_port kills a stray frps holding a control port: never a customer's
 awk '/^release_frps_port\(\) \{/,/^}/' "$SH" | grep -q '/usr/local/lib/hashem-sell/' \
     || { echo "FAIL: release_frps_port does not spare customer frps (/usr/local/lib/hashem-sell)"; fail=1; }
+
+# 6. frp_units (cores-upgrade restarts what it lists) keeps only units that
+# run ${INSTALL_DIR}/frps or frpc; customer units run /usr/local/lib/hashem-sell
+fu=$(awk '/^frp_units\(\) \{/,/^}/' "$SH")
+grep -qF 'ExecStart=${INSTALL_DIR}/frp[sc]' <<<"$fu" \
+    || { echo "FAIL: frp_units does not keep only units that run \${INSTALL_DIR}/frps or frpc"; fail=1; }
+d=$(mktemp -d)
+printf '[Service]\nExecStart=/usr/local/lib/hashem-sell/frps -c /etc/gre-panel/customers/12-3.toml\n' > "$d/hsell-12-3.service"
+printf '[Service]\nExecStart=%s/frps -c /etc/frp/frps.toml\n' "$INSTALL_DIR" > "$d/frps.service"
+got=$(HASHEM_SYSTEMD_DIR="$d" INSTALL_DIR="$INSTALL_DIR" bash -c "$fu"$'\nfrp_units')
+[[ "$got" == "frps frps /etc/frp/frps.toml" ]] || { echo "FAIL: frp_units listed: $got"; fail=1; }
+rm -rf "$d"
 
 # 5. the customer names themselves stay what panel/customers.go writes
 if [[ -f "$ROOT/panel/customers.go" ]]; then
