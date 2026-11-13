@@ -5,10 +5,12 @@
 # panel/node_lab_test.go runs the central in nd-c and the node (the same test
 # binary) in nd-n: join with a code, info over the pinned channel, a firewall
 # that drops the path silently, the central restarting, and removal.
+# Then the same again with the node core (the nodecore build) as the node,
+# under the same panel-build central.
 #
-# Needs root (netns), ip, iptables and Go or a prebuilt test binary
-# (NODES_LAB_TEST_BIN). Skips cleanly otherwise. Touches nothing outside the
-# two namespaces.
+# Needs root (netns), ip, iptables and Go or prebuilt test binaries
+# (NODES_LAB_TEST_BIN, and NODES_LAB_CORE_BIN for the core). Skips cleanly
+# otherwise. Touches nothing outside the two namespaces.
 set -u
 cd "$(dirname "$0")/.." || exit 1
 for c in ip iptables; do
@@ -28,9 +30,21 @@ ip -n $N addr add 10.78.0.2/24 dev nd-nv && ip -n $N link set nd-nv up && ip -n 
 if command -v ping >/dev/null 2>&1; then ip netns exec $N ping -c1 -W2 10.78.0.1 >/dev/null || { echo "FAIL: no path between the namespaces"; exit 1; }; fi
 
 BIN=${NODES_LAB_TEST_BIN:-}
+CORE=${NODES_LAB_CORE_BIN:-}
 if [[ -z "$BIN" ]]; then
     command -v go >/dev/null 2>&1 || { echo "SKIP test_nodes_lab (no Go and no NODES_LAB_TEST_BIN)"; exit 0; }
     BIN=$(mktemp /tmp/nodeslab.XXXXXX)
     (cd panel && go test -c -o "$BIN" .) || exit 1
 fi
-ip netns exec $C env NODES_LAB_NODE_NS=$N NODES_LAB_ADDR=10.78.0.1 "$BIN" -test.run '^TestNodesLab$' -test.v -test.count=1
+if [[ -z "$CORE" ]] && command -v go >/dev/null 2>&1; then
+    CORE=$(mktemp /tmp/nodeslabcore.XXXXXX)
+    (cd panel && go test -c -tags nodecore -o "$CORE" .) || exit 1
+fi
+echo "== a central and a node with its panel"
+ip netns exec $C env NODES_LAB_NODE_NS=$N NODES_LAB_ADDR=10.78.0.1 NODES_LAB_NODE_BIN= NODES_LAB_NODE_KIND= \
+    "$BIN" -test.run '^TestNodesLab$' -test.v -test.count=1 || exit 1
+if [[ -z "$CORE" ]]; then echo "SKIP the node core part (no Go and no NODES_LAB_CORE_BIN)"; exit 0; fi
+ip netns pids $N 2>/dev/null | xargs -r kill -9 2>/dev/null
+echo "== a central and a node core"
+ip netns exec $C env NODES_LAB_NODE_NS=$N NODES_LAB_ADDR=10.78.0.1 NODES_LAB_NODE_BIN="$CORE" NODES_LAB_NODE_KIND=core \
+    "$BIN" -test.run '^TestNodesLab$' -test.v -test.count=1

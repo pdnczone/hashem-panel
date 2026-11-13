@@ -8,7 +8,7 @@ on the Iran server, and is off until you turn it on.
 
 1. The panel's health model reports a tunnel as down. Autopilot waits until it
    has been down for the minutes you set (5 by default).
-2. It asks the foreign panel whether it answers. If it does not, nothing is
+2. It asks the foreign server whether it answers. If it does not, nothing is
    changed.
 3. It runs the [path test](ENGINES.md) between the two servers: this server
    starts the test and tells the foreign server to join it. Every transport is
@@ -28,9 +28,13 @@ GRE addresses is never moved onto GRE.
 ## What it needs
 
 - **The Iran server.** The Iran side swaps a tunnel; the foreign side follows.
-- **A foreign panel that answers on its public address.** With the tunnel down
-  there is no other way to tell the foreign server. If its panel port is closed
-  to the Iran server, Autopilot records "the foreign panel does not answer" and
+- **A way to reach the foreign server with the tunnel down.** One of:
+  - both servers are [nodes](NODES.md) of one central (or one of them is the
+    central): the request goes over the channels they hold with the central,
+    and the foreign server's panel port can stay closed;
+  - or the foreign panel answers the Iran server on its public address.
+
+  With neither, Autopilot records "the foreign panel does not answer" and
   changes nothing.
 - **The same release on both servers** for the path test. With an older foreign
   panel Autopilot skips the test and tries the carriers in order.
@@ -64,6 +68,13 @@ A carrier that did not connect is tried last for the next 6 hours. One tunnel
 is handled at a time, the one down longest first. A run during which the
 foreign panel did not answer does not count toward the daily limit.
 
+## From a central
+
+On a [central](NODES.md), the Autopilot tab starts with **Autopilot on every
+server**: each Iran server with its tunnels, its newest events and a switch
+for the server or one tunnel. Autopilot still runs on each Iran server and
+needs that server's license.
+
 ## From SSH
 
 ```
@@ -93,7 +104,7 @@ hours"), and the history says what the last run found.
 
 | History says | Do this |
 | --- | --- |
-| the foreign panel does not answer | open the foreign panel's port to the Iran server's IP |
+| the foreign panel does not answer | add both servers to one central ([Nodes](NODES.md)), or open the foreign panel's port to the Iran server's IP |
 | the foreign panel is older than Autopilot | run `hashem update` on the foreign server |
 | no other allowed carrier got through the path test | the path between the two servers is blocked for every transport tested: try another foreign server or IP, or the Xray, Bagher or Spoof tunnel |
 | tried …: did not connect | the carriers were tried and both servers are back on the old one; the next run tries others |

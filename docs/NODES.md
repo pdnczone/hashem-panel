@@ -1,7 +1,18 @@
 # Nodes: one panel for all your servers
 
 One panel is the **central**; your other servers join it as **nodes**.
+A node does not need a panel of its own: a new one gets the **node core**,
+the same program without the web page, and the central manages all of it.
 The design is in [PLAN_NODES.md](PLAN_NODES.md).
+
+The short way to a first tunnel, also the first card on the **Setup** page:
+
+1. install Hashem on one server (usually the Iran one) and open its panel;
+2. **Add a server** there and run the line on the other server;
+3. **New tunnel**: pick the Iran server, the foreign server and the ports.
+
+No token or bundle is copied by hand. The manual setup (a role and a token
+on each server) is still on the Setup page below that card.
 
 ## Add a server
 
@@ -19,8 +30,35 @@ On the central, open **Nodes** and choose one of:
 The first server you add makes this panel the central. Tunnels that are
 already running are not touched on either side.
 
+A server without Hashem gets the node core. Tick **Install the web panel on
+it too** before you make the code (or in the SSH form) if you want its own
+panel as well. A server that already has the panel keeps it.
+
 On a server, `hashem node status` shows its role and `hashem node leave`
 makes it standalone again.
+
+## Core or panel
+
+Each node's row says **Core only** or **With panel**.
+
+| | Core only | With panel |
+|---|---|---|
+| Web page, login, terminal on the server | no | yes |
+| Managed from the central | everything | everything |
+| Tunnels, engines, Autopilot, Watchdog, license check | the same | the same |
+| What its port answers | only the other servers of its tunnels (Peer Link, cluster, a sold tunnel's status page); anything else is a 404 | the panel |
+
+- **Install its panel** / **Make it a core** on the row changes a node. It
+  downloads the other build of the release the node runs, checks it against
+  the release's checksums like an update, and restarts the service. Tunnels
+  are not touched and nothing in `/etc/gre-panel` changes.
+- On the server: `hashem panel status`, `hashem panel install`,
+  `hashem panel remove`. `remove` works only on a node: without a panel and
+  without a central nothing could manage the server.
+- A core that leaves its central (or is removed there) has no page: run
+  `hashem panel install` on it, or join it to a central again.
+- The `hashem` menu and every `hashem ...` command work on a core as on a
+  panel.
 
 ## How it works
 
@@ -35,7 +73,8 @@ makes it standalone again.
   pinned central. There is no shell or file access on the channel.
 - If the central or the path is down, every tunnel keeps running. The node
   dials again by itself (every few seconds up to once a minute).
-- Every node keeps its full local panel.
+- A node with a panel keeps its full local panel. A core has none, and its
+  tunnels do not need the central either.
 
 ## Moving an existing install
 
@@ -78,7 +117,6 @@ page; `hashem update` prints the same hint once).
 
 ## Manage a node from the central
 
-
 Pick the node in the server picker at the top of the page (or **Open** on its
 row). Every page then shows that server: dashboard, tunnels, setup,
 customers, cluster, logs, diagnostics, updates and its license. The central
@@ -88,7 +126,8 @@ records each change as `via_central`.
 
 Not relayed (they stay on the panel you are logged in to): the terminal, the
 login, password, 2FA, HTTPS and access settings, and the node list. For a
-node's own, open its panel.
+node's own, open its panel. A core has no login to set; its certificate, if
+you want one on its port, is `hashem tls ...` over SSH.
 
 The node's pages open in a frame of their own (a browser sandbox with no
 access to the central's page, cookies or API). It reaches only that node,
@@ -138,11 +177,35 @@ the Iran end is listed as **left over**, with a button to remove it. The
 list shows every tunnel whose two ends are your servers; **Remove both
 ends** removes the foreign end first, then the Iran end.
 
-To change a tunnel's engine or carrier, open the Iran server (the picker)
-and use its Tunnel page: it tells the foreign server, as it does today.
+Each tunnel in the list shows what its Iran server says about it now (up
+or down, its carrier, whether Autopilot watches it) and has:
+
+- **Swap carrier** and **Ports and settings**: open that dialog on the Iran
+  server's own pages, in its view. The Iran server tells the foreign one.
+- **Test the path**: opens the Iran server's path test.
+- **Restart both ends**: restarts the tunnel's engine on the Iran server,
+  then on the foreign one. A foreign server that joined as one more hub is
+  left alone: its client reconnects by itself.
+- **Remove both ends**.
+
+The two servers of a tunnel talk to each other on the Peer Link (carrier
+swap, path test, Autopilot). When both belong to one central, that goes over
+the channels they already hold with the central, so the foreign server's
+panel port does not have to be open to the Iran server. It falls back to the
+direct call when the channel cannot carry it (the central is down, or one
+server runs a version from before this).
+
+## Autopilot on every server
+
+[Autopilot](AUTOPILOT.md) runs on each tunnel's Iran server, as before. On a
+central, the **Autopilot** tab starts with **Autopilot on every server**:
+every Iran server with its tunnels, its newest events and a switch for the
+server or for one tunnel. The central reads and sets this with that server's
+own API, so turning it on needs that server's license. **Rules and history**
+opens that server's own Autopilot tab for the limits and the allowed
+carriers.
 
 ## Licenses on nodes
-
 
 A Pro key active on the central is copied to each node that has no key of
 its own, and activated there by the node's own license check:
@@ -162,8 +225,9 @@ servers.
 
 ## Remove or leave
 
-- **Remove** on the central: the node is told, and becomes a standalone panel
-  again. Its tunnels keep running.
+- **Remove** on the central: the node is told, and becomes a standalone
+  server again. Its tunnels keep running. A core then has no page: see
+  [Core or panel](#core-or-panel).
 - **Leave the central** on a node (or `hashem node leave`): the central drops
   it from its list.
 - A central with no nodes can **stop being a central**.
@@ -172,6 +236,6 @@ servers.
 
 | File | On | What |
 |---|---|---|
-| `/etc/gre-panel/node.key` | every panel | this panel's key (0600) |
+| `/etc/gre-panel/node.key` | every panel and core | this server's key (0600) |
 | `/etc/gre-panel/node.json` | central and nodes | the role; on a node, its central's address and key |
 | `/etc/gre-panel/nodes.json` | central | the nodes and the open join codes (only their hashes) |

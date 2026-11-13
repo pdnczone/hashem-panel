@@ -14,7 +14,7 @@ PANEL = ROOT / "panel"
 
 ROUTE = re.compile(r'mux\.HandleFunc\("(GET|POST|PUT|PATCH|DELETE) "\+base\+"([^"]+)",\s*(.+)\)\s*$')
 # Peer routes live in a table in peer.go: {"POST", "/api/peer/x", handleX},
-PEER_ROUTE = re.compile(r'^\{"(GET|POST|PUT|PATCH|DELETE)", "(/api/peer/[^"]+)", (handle[A-Za-z0-9]+)\},$')
+PEER_ROUTE = re.compile(r'^\{"(GET|POST|PUT|PATCH|DELETE)", "(/api/peer/[^"]+)", (handle[A-Za-z0-9]+)\},\s*(?://.*)?$')
 STATIC = ("/app.js", "/i18n-fa.js", "/tokens.css", "/fonts.css", "/base.css", "/enterprise.css",
           "/favicon.", "/apple-touch-icon.png", "/xterm", "/fonts/")
 

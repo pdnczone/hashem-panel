@@ -84,7 +84,7 @@ func TestNodeHelperProcess(t *testing.T) {
 	}
 	configDir = os.Getenv("NODE_HELPER_DIR")
 	nodeInfoFn = func() nodeInfo {
-		return nodeInfo{Proto: nodeProto, Version: "helper-v1", Hostname: "helper", MachineHash: getMachineHash(), CPUPct: -1,
+		return nodeInfo{Proto: nodeProto, Version: "helper-v1", Hostname: "helper", MachineHash: getMachineHash(), CPUPct: -1, Kind: nodeLocalKind(),
 			License: nodeLicense{Reported: os.Getenv("NODE_HELPER_LIC") == "1"}}
 	}
 	if os.Getenv("NODE_HELPER_FAST") == "1" {
