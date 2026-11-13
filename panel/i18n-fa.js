@@ -3416,5 +3416,17 @@ window.FA_TEXT = {
 "Score": "امتیاز",
 "In use now": "در حال استفاده",
 "in use": "در حال استفاده",
-"loss": "افت"
+"loss": "افت",
+"HTTPS & terminal": "ترمینال و HTTPS",
+"Monitoring": "پایش",
+"Settings sections": "بخش‌های تنظیمات",
+"License & add-ons": "لایسنس و افزونه‌ها",
+"Your Pro license, this server's fingerprint and the Sentinel monitor.": "لایسنس Pro، اثر انگشت این سرور و پایشگر سنتینل.",
+"Sign-in & security": "ورود و امنیت",
+"Password, two-step sign-in, idle sign-out and the panel's address.": "رمز، ورود دومرحله‌ای، خروج خودکار و نشانی پنل.",
+"Domain, HTTPS & terminal": "دامنه، HTTPS و ترمینال",
+"How the panel is reached over HTTPS, and the root shell in the browser.": "دسترسی به پنل با HTTPS، و پوسته‌ی root در مرورگر.",
+"Alerts & monitoring": "هشدار و پایش",
+"A message when a tunnel goes down, each link's history, and metrics for your scraper.": "پیام هنگام قطع تونل، تاریخچه‌ی هر لینک و متریک برای Prometheus.",
+"The accent colour and the table density of this browser.": "رنگ اصلی و تراکم جدول‌ها در این مرورگر."
 };
