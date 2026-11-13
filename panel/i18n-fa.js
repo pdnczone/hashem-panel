@@ -698,6 +698,8 @@ window.FA_TEXT = {
 "Save Link Configuration": "ذخیره‌ی تنظیمات اتصال",
 "Panel update": "به‌روزرسانی پنل",
 "Installed version": "نسخه‌ی نصب‌شده",
+"Tested releases, for running tunnels": "نسخه‌های آزموده، برای تونل‌های در حال کار",
+"Every new build, first": "هر ساخت تازه، زودتر از همه",
 "Update channel": "کانال به‌روزرسانی",
 "Stable": "پایدار",
 "Dev": "توسعه",

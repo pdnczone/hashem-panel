@@ -498,10 +498,6 @@
   /* Update tab */
   .ver-big { font-size:28px; font-weight:700; color:var(--tx); letter-spacing:-.02em;
     font-variant-numeric:tabular-nums; }
-  .ver-row { display:flex; align-items:center; justify-content:space-between; gap:10px;
-    padding:10px 0; border-bottom:1px solid var(--ln); font-size:var(--fs-body); }
-  .ver-row:last-child { border:0; }
-  .ver-row .k { color:var(--mu); }
   /* ---- Apple-grade micro-polish ---- */
   .tunnel-card, .qs { box-shadow:var(--lift-sm), inset 0 1px 0 rgba(255,255,255,.045); }
   body[data-t="light"] .tunnel-card, body[data-t="light"] .qs {
@@ -700,8 +696,61 @@
   #login .foot b { color:var(--tx2); font-weight:600; }
   .hidden { display:none !important; }
   /* Update tab */
-  .upd-hero { display:flex; align-items:flex-end; gap:16px; flex-wrap:wrap; margin-top:4px; }
-  .upd-to { display:flex; align-items:flex-end; gap:16px; }
+  /* Update tab: the installed version as a hero with a state icon, the facts as
+     tiles, the channel as two option cards. */
+  .upd-hero { --upd-c:var(--ac); display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-top:6px; padding:18px;
+    border:1px solid var(--ln); border-radius:var(--r-lg);
+    background:linear-gradient(135deg, color-mix(in srgb, var(--upd-c) 9%, transparent), transparent 60%), var(--s2); }
+  .upd-hero[data-st="ok"] { --upd-c:var(--ok); }
+  .upd-hero[data-st="fail"] { --upd-c:var(--wr); }
+  .upd-ic { flex:none; width:52px; height:52px; border-radius:16px; display:grid; place-items:center; color:var(--upd-c);
+    background:color-mix(in srgb, var(--upd-c) 14%, transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--upd-c) 30%, transparent); }
+  .upd-ic svg { width:26px; height:26px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .upd-cur { min-width:0; }
+  .upd-hero .ver-big { line-height:1.1; margin-top:2px; overflow-wrap:anywhere; }
+  .upd-to { display:flex; align-items:center; gap:16px; }
+  .upd-pill { padding:5px 12px 5px 10px; border-radius:999px; border:1px solid var(--ln); background:var(--s2); }
+  .upd-pill.ok { color:var(--ok); background:var(--ok-soft); border-color:var(--ok-b40); }
+  .upd-pill.warn { color:var(--wr); background:var(--wr-soft); border-color:var(--wr-b40); }
+  .upd-pill.warn .dot { background:var(--wr); }
+  .upd-stats { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px; margin-top:12px; }
+  @media (max-width:640px) { #updPeerRow { grid-column:1 / -1; } .upd-hero { padding:14px; } .upd-hero .ver-big { font-size:24px; } }
+  .upd-stat { display:flex; flex-direction:column; align-items:flex-start; gap:6px; min-width:0; padding:12px 14px;
+    border:1px solid var(--ln); border-radius:var(--r-md); background:var(--s2); }
+  .upd-stat[hidden] { display:none; }
+  .upd-stat .k { display:flex; align-items:center; gap:6px; font-size:12px; font-weight:500; color:var(--mu); }
+  .upd-stat .k svg { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  .upd-stat .v { font-size:15px; font-weight:600; color:var(--tx); font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+  .upd-stat .v.dim { font-size:13px; font-weight:500; color:var(--mu); }
+  .upd-stat .badge { font-size:12px; }
+  .upd-stat.warn { border-color:var(--wr-b40); background:linear-gradient(180deg, var(--wr-soft), transparent 70%), var(--s2); }
+  .upd-stat.ok { border-color:var(--ok-b40); }
+  fieldset.upd-ch { border:0; margin:0; padding:0; min-width:0; }
+  .upd-ch legend { padding:0; margin-bottom:8px; font-size:var(--fs-small); font-weight:600; color:var(--tx2); }
+  .upd-ch-opts { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; }
+  .upd-opt { position:relative; display:block; cursor:pointer; }
+  .upd-opt input { position:absolute; opacity:0; width:1px; height:1px; pointer-events:none; }
+  .upd-opt-box { display:flex; align-items:center; gap:12px; padding:12px 14px; border:1px solid var(--ln); border-radius:var(--r-md);
+    background:var(--s2); transition:border-color .15s, background .15s, box-shadow .15s; }
+  .upd-opt:hover .upd-opt-box { border-color:var(--ac-b35-ln2); }
+  .upd-opt-ic { flex:none; width:36px; height:36px; border-radius:11px; display:grid; place-items:center; color:var(--mu); background:var(--sunk); }
+  .upd-opt-ic svg { width:19px; height:19px; fill:none; stroke:currentColor; stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; }
+  .upd-opt-t { display:flex; flex-direction:column; gap:2px; min-width:0; }
+  .upd-opt-t b { font-size:var(--fs-body); font-weight:600; color:var(--tx); }
+  .upd-opt-t small { font-size:12px; color:var(--mu); }
+  .upd-opt input:checked + .upd-opt-box { border-color:var(--ac); background:linear-gradient(135deg, var(--ac-soft), transparent 70%), var(--s2); box-shadow:0 0 0 3px var(--ac-soft); }
+  .upd-opt input:checked + .upd-opt-box .upd-opt-ic { color:var(--ac); background:var(--ac-soft); }
+  .upd-opt.dev input:checked + .upd-opt-box { border-color:var(--wr); background:linear-gradient(135deg, var(--wr-soft), transparent 70%), var(--s2); box-shadow:0 0 0 3px var(--wr-soft); }
+  .upd-opt.dev input:checked + .upd-opt-box .upd-opt-ic { color:var(--wr); background:var(--wr-soft); }
+  .upd-opt input:focus-visible + .upd-opt-box { outline:2px solid var(--ac); outline-offset:2px; }
+  .upd-opt input:disabled + .upd-opt-box { opacity:.6; cursor:not-allowed; }
+  #updChannelWarn { margin-top:10px; }
+  details.upd-adv summary { list-style:none; display:flex; align-items:center; gap:10px; }
+  details.upd-adv summary::-webkit-details-marker { display:none; }
+  details.upd-adv summary::before { content:""; flex:none; width:7px; height:7px; border:solid currentColor; border-width:0 2px 2px 0;
+    transform:rotate(-45deg); transition:transform .2s; margin-inline:2px 2px; }
+  [dir="rtl"] details.upd-adv summary::before { transform:rotate(135deg); }
+  details.upd-adv[open] summary::before { transform:rotate(45deg); }
   .upd-to[hidden] { display:none; }
   .upd-arrow svg { width:22px; height:22px; fill:none; stroke:var(--dim); stroke-width:2; stroke-linecap:round; stroke-linejoin:round; margin-bottom:8px; }
   [dir="rtl"] .upd-arrow svg { transform:scaleX(-1); }
@@ -3327,16 +3376,17 @@
       </section>
       <section id="tab-update" role="tabpanel" hidden>
         <div class="tunnel-card">
-          <div class="tc-header"><p class="tc-title">Panel Update <span class="badge info hidden" id="updDevBadge" data-i18n="upd_dev_badge">DEV</span></p><span class="status-indicator" id="updDot"><span class="dot"></span><span id="updDotTxt">—</span></span></div>
-          <div class="upd-hero">
-            <div><div class="qs-hint">Installed version</div><div class="ver-big" id="verCurrent" data-no-i18n>—</div></div>
+          <div class="tc-header"><p class="tc-title">Panel Update <span class="badge info hidden" id="updDevBadge" data-i18n="upd_dev_badge">DEV</span></p><span class="status-indicator upd-pill" id="updDot"><span class="dot"></span><span id="updDotTxt">—</span></span></div>
+          <div class="upd-hero" id="updHero">
+            <span class="upd-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 7.5 12 3 3 7.5 12 12z"/><path d="M3 7.5v9L12 21l9-4.5v-9"/><path d="M12 12v9"/></svg></span>
+            <div class="upd-cur"><div class="qs-hint">Installed version</div><div class="ver-big" id="verCurrent" data-no-i18n>—</div></div>
             <div class="upd-to" id="updTo" hidden>
               <span class="upd-arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
               <div><div class="qs-hint">Available</div><div class="ver-big upd-new" id="verLatest" data-no-i18n>—</div></div>
             </div>
           </div>
           <div class="warnbox u-mt-8" id="updRollback" hidden></div>
-          <div id="verRowsUpd" class="u-grid-gap-0 u-mt-8"></div>
+          <div id="verRowsUpd" class="upd-stats"></div>
           <div class="qs-actions u-mt-12">
             <button class="hashem-btn hashem-btn-primary" id="updateBtn" hidden>Update</button>
             <button class="hashem-btn hashem-btn-secondary" id="updCheckBtn">Check Now</button>
@@ -3356,11 +3406,15 @@
 
         <div class="tunnel-card">
           <div class="tc-header"><p class="tc-title">Channel &amp; Versions</p></div>
-          <div class="fg"><label for="updChannel" data-i18n="upd_channel">Update channel</label>
-            <select class="hashem-input u-max-w-260" id="updChannel"><option value="stable" data-i18n="upd_channel_stable">Stable</option><option value="dev" data-i18n="upd_channel_dev">Dev</option></select>
-          </div>
+          <fieldset class="upd-ch" id="updChannel">
+            <legend data-i18n="upd_channel">Update channel</legend>
+            <div class="upd-ch-opts">
+              <label class="upd-opt"><input type="radio" name="updCh" value="stable"><span class="upd-opt-box"><span class="upd-opt-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg></span><span class="upd-opt-t"><b data-i18n="upd_channel_stable">Stable</b><small>Tested releases, for running tunnels</small></span></span></label>
+              <label class="upd-opt dev"><input type="radio" name="updCh" value="dev"><span class="upd-opt-box"><span class="upd-opt-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4.5 18.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3"/><path d="M7 15h10"/></svg></span><span class="upd-opt-t"><b data-i18n="upd_channel_dev">Dev</b><small>Every new build, first</small></span></span></label>
+            </div>
+          </fieldset>
           <div class="warnbox hidden" id="updChannelWarn" data-i18n="upd_dev_warn">Dev channel: test builds, may break. Not for production tunnels.</div>
-          <details class="qs-adv u-mt-12">
+          <details class="qs-adv upd-adv u-mt-12">
             <summary>Install a specific version</summary>
             <div class="qs-hint u-my-8">For going back to an older release. Install the same version on the other server too.</div>
             <div class="u-flex-center-wrap10">
