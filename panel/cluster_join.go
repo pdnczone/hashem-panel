@@ -10,10 +10,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -119,6 +121,39 @@ func joinedHubsView() []joinedHub {
 	}
 	joinedCache = out
 	return out
+}
+
+// hubFrpcGlued is the line join-hub of 3.0.x and 3.1 wrote into frpc-hN.toml:
+// the tcpMux line ran into the next one ("transport.tcpMux = falsetransport.
+// heartbeatInterval = 15"), so frpc refused the file and never started.
+var hubFrpcGlued = regexp.MustCompile(`(?m)^(transport\.tcpMux(?:KeepaliveInterval)? = (?:true|false|\d+))(transport\.)`)
+
+// fixHubFrpc splits the glued line; false when there is none.
+func fixHubFrpc(b []byte) ([]byte, bool) {
+	if !hubFrpcGlued.Match(b) {
+		return b, false
+	}
+	return hubFrpcGlued.ReplaceAll(b, []byte("$1\n$2")), true
+}
+
+// repairHubFrpc fixes the frpc config of every extra FRP hub on start and
+// restarts its client (issue 14).
+func repairHubFrpc() {
+	for _, h := range readJoinedHubs() {
+		if h.Engine != "frp" || h.Conf == "" || !strings.HasPrefix(h.Svc, "frpc-h") {
+			continue
+		}
+		b, err := os.ReadFile(h.Conf)
+		if err != nil {
+			continue
+		}
+		fixed, ok := fixHubFrpc(b)
+		if !ok || os.WriteFile(h.Conf, fixed, 0600) != nil {
+			continue
+		}
+		log.Printf("[cluster] %s: fixed a broken line in %s, restarting it", h.Svc, h.Conf)
+		_, _ = runCmdTimeout(30*time.Second, "systemctl", "restart", h.Svc)
+	}
 }
 
 // runHashemCluster runs a hashem.sh subcommand for the cluster (join-hub,

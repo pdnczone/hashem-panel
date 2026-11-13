@@ -12278,7 +12278,7 @@ hub_write_frpc() {
     {
         printf 'serverAddr = "%s"\nserverPort = %s\nauth.method = "token"\nauth.token = "%s"\nloginFailExit = false\n' "$addr" "$port" "$tok"
         printf 'transport.protocol = "%s"\n' "$tr"
-        perf_tcpmux_lines
+        perf_tcpmux_lines; echo  # it ends without a newline
         printf 'transport.heartbeatInterval = 15\ntransport.heartbeatTimeout = 45\ntransport.dialServerTimeout = 10\ntransport.dialServerKeepalive = 15\ntransport.poolCount = %s\n\n' "$pool"
         for p in $ports; do
             printf '[[proxies]]\nname = "tcp_%s"\ntype = "tcp"\nlocalIP = "%s"\nlocalPort = %s\nremotePort = %s\n' "$p" "$relay" "$p" "$p"
