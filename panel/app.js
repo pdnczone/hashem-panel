@@ -9342,7 +9342,7 @@ async function loadBenchmark(forceRun = false) {
   if (!isProLicensed('benchmark')) return;
   let benchErr = null;
   const _tb = $('benchTableBody');
-  if (_tb && !(benchData && benchData.metrics && benchData.metrics.length)) _tb.innerHTML = '<tr><td colspan="10">' + skel(3) + '</td></tr>';
+  if (_tb && !(benchData && benchData.metrics && benchData.metrics.length)) _tb.innerHTML = '<div class="bench-empty">' + skel(3) + '</div>';
   try {
     if (forceRun) {
       const targetHost = ($('benchTargetHost') ? $('benchTargetHost').value.trim() : '');
@@ -9394,7 +9394,7 @@ async function loadBenchmark(forceRun = false) {
 
   renderBenchmark(benchData, peerData);
   if (benchErr && !(benchData && benchData.metrics && benchData.metrics.length) && _tb) {
-    _tb.innerHTML = '<tr><td colspan="10" class="u-text-center">' + stateError(benchErr.message, 'benchmark', true) + '</td></tr>';
+    _tb.innerHTML = '<div class="bench-empty">' + stateError(benchErr.message, 'benchmark', true) + '</div>';
   }
 }
 
@@ -9429,19 +9429,22 @@ function renderBenchmark(bench, peer) {
     const runB = $('benchRunBtn');
     if (runB) { runB.classList.toggle('hashem-btn-primary', !usable); runB.classList.toggle('hashem-btn-secondary', usable); }
     if ($('benchRecBadge')) $('benchRecBadge').classList.toggle('hidden', !usable);
-    if (winnerBanner) { winnerBanner.classList.toggle('u-bd-ok', usable); winnerBanner.classList.toggle('u-bd-ln', !usable); }
-    if ($('benchWinnerScore')) { $('benchWinnerScore').classList.toggle('u-c-ok', usable); $('benchWinnerScore').classList.toggle('u-c-mu', !usable); }
+    if (winnerBanner) {
+      winnerBanner.dataset.st = !usable ? 'off' : (winner.score >= 70 ? 'ok' : winner.score >= 40 ? 'warn' : 'err');
+      winnerBanner.style.setProperty('--pc', !usable ? 'var(--mu)' : (winner.score >= 70 ? 'var(--ok)' : winner.score >= 40 ? 'var(--wr)' : 'var(--er)'));
+    }
+    if ($('benchWinnerRing')) $('benchWinnerRing').style.setProperty('--v', usable ? Math.max(0, Math.min(100, winner.score)) : 0);
     if ($('benchApplyWinnerBtn')) $('benchApplyWinnerBtn').classList.toggle('hidden', !usable);
     if (winner && !usable && winnerBanner) {
       winnerBanner.classList.remove('hidden');
       $('benchWinnerTitle').textContent = tr('bench_none_t', 'No Carrier Answered');
-      $('benchWinnerScore').textContent = '— / 100';
+      $('benchWinnerScore').textContent = '—';
       $('benchWinnerBadge').className = 'badge dim'; $('benchWinnerBadge').textContent = tr('bench_none_b', 'No Result');
       $('benchWinnerDesc').textContent = tr('bench_none_d', 'Every probe was lost. Check the destination address and that the other server is online, then run the benchmark again.');
     } else if (winner && winnerBanner) {
       winnerBanner.classList.remove('hidden');
       if ($('benchWinnerTitle')) $('benchWinnerTitle').textContent = winner.name || winner.id;
-      if ($('benchWinnerScore')) $('benchWinnerScore').textContent = `${winner.score} / 100`;
+      if ($('benchWinnerScore')) $('benchWinnerScore').textContent = String(winner.score);
       if ($('benchWinnerBadge')) {
         const wb = $('benchWinnerBadge');
         wb.className = 'badge ' + (winner.status === 'healthy' ? 'ok' : (winner.status === 'good' ? 'info' : 'warn'));
@@ -9467,6 +9470,10 @@ function renderBenchmark(bench, peer) {
     if ($('benchStatMinRttSub')) $('benchStatMinRttSub').textContent = 'Minimum Round Trip Time';
     if ($('benchStatLoss')) $('benchStatLoss').textContent = winner ? `${winner.packet_loss}%` : '0%';
     if ($('benchStatLossSub')) $('benchStatLossSub').textContent = (winner && winner.packet_loss === 0) ? 'No Packet Loss' : 'Best Carrier Packet Loss';
+    const tileSt = (id, st) => { const t = $(id); if (t) { if (st) t.dataset.st = st; else delete t.dataset.st; } };
+    tileSt('benchTileWinner', usable ? 'ok' : 'off');
+    tileSt('benchTileRtt', minRtt > 0 ? '' : 'off');
+    tileSt('benchTileLoss', !winner ? 'off' : winner.packet_loss === 0 ? 'ok' : winner.packet_loss <= 15 ? 'warn' : 'err');
 
     if ($('benchMetaSub')) {
       const tgt = bench.target_host ? `to ${bench.target_host}` : '';
@@ -9479,7 +9486,7 @@ function renderBenchmark(bench, peer) {
   if (!tbody) return;
 
   if (!bench || !bench.metrics || bench.metrics.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="10" class="u-text-center">${stateEmpty({ title: 'No benchmark run yet', msg: 'Enter foreign server address and click Run Smart Benchmark.', actionKey: 'runbench', actionLabel: 'Run Smart Benchmark', compact: true })}</td></tr>`;
+    tbody.innerHTML = `<div class="bench-empty">${stateEmpty({ title: 'No benchmark run yet', msg: 'Enter foreign server address and click Run Smart Benchmark.', actionKey: 'runbench', actionLabel: 'Run Smart Benchmark', compact: true })}</div>`;
     return;
   }
 
@@ -9507,17 +9514,13 @@ function renderBenchmark(bench, peer) {
       statusLabel = 'Not measured';
     }
 
-    let lossClass = 'ok';
-    if (m.packet_loss > 0 && m.packet_loss <= 15) lossClass = 'warn';
-    else if (m.packet_loss > 15) lossClass = 'err';
+    const down = m.packet_loss >= 100 || (m.score <= 0 && !(m.avg_rtt_ms > 0));
+    const lossClass = m.packet_loss <= 0 ? 'ok' : m.packet_loss <= 15 ? 'warn' : 'err';
 
     const rank = idx + 1;
-    const rankBadge = `<span class="bench-rank-num ${rank === 1 ? 'bench-rank-1' : ''}">${rank}</span>`;
-
     const cleanName = (m.name || m.id).replace(/\s*\(.*?\)/, '');
     const cleanSub = m.name && m.name.includes('(') ? m.name.match(/\((.*?)\)/)[1] : '';
-
-    const portStr = m.port > 0 ? m.port : 'Raw 47';
+    const portStr = m.port > 0 ? String(m.port) : 'Raw 47';
 
     // Protocol pill: one neutral style, the label carries the meaning (status colors stay for status).
     const tLower = (m.type || '').toLowerCase();
@@ -9526,41 +9529,38 @@ function renderBenchmark(bench, peer) {
       : (tLower === 'frp_ws' || tLower === 'websocket') ? 'WEBSOCKET' : (tLower === 'frp_wss' || tLower === 'wss') ? 'WSS'
       : tLower.includes('backhaul') ? 'BACKHAUL' : (tLower.includes('ssh') || tLower.includes('bagher')) ? 'BAGHER SSH'
       : (m.type || '').toUpperCase();
-    const protoPill = `<span class="bench-proto-pill">${esc(protoLabel)}</span>`;
 
-    const rowBg = isActive
-      ? 'background:color-mix(in srgb, var(--info) 6%, transparent);'
-      : (isWinner ? 'background:color-mix(in srgb, var(--ok) 4%, transparent);' : '');
+    const score = Math.max(0, Math.min(100, Number(m.score) || 0));
+    const barColor = score >= 70 ? 'var(--ok)' : score >= 40 ? 'var(--wr)' : 'var(--er)';
+    const num = (v, unit) => v > 0 ? `<span class="bench-m-v">${esc(String(v))}<small>${unit}</small></span>` : '<span class="bench-m-v dim">—</span>';
 
-    html += `<tr class="${isActive ? 'row-active' : ''}" style="${rowBg}">
-      <td class="u-text-center u-w-44">${rankBadge}</td>
-      <td>
-        <div class="u-flex-center-gap8">
-          <strong class="u-c-tx u-fs-14">${esc(cleanName)}</strong>
+    html += `<div class="bench-row" role="row" data-st="${statusClass}"${isWinner ? ' data-win' : ''}${isActive ? ' data-active' : ''}>
+      <span class="bench-rank${rank === 1 && !down ? ' top' : ''}" role="cell">${rank}</span>
+      <div class="bench-name" role="cell">
+        <div class="bench-name-t">
+          <b>${esc(cleanName)}</b>
           ${isActive ? `<span class="badge ok">Active</span>` : ''}
           ${isWinner ? `<span class="badge info">Recommended</span>` : ''}
         </div>
-        ${cleanSub ? `<div class="u-fs-12 u-c-mu u-mt-2">${esc(cleanSub)}</div>` : ''}
-      </td>
-      <td>${protoPill}</td>
-      <td><code class="mono u-fs-12 u-bg-sunk u-p-4x8 u-r-4 u-bd-ln">${portStr}</code></td>
-      <td><span class="u-fw-700 u-mono u-fs-13 u-c-tx">${m.avg_rtt_ms > 0 ? m.avg_rtt_ms + ' ms' : '—'}</span></td>
-      <td><span class="badge ${lossClass} u-fs-12 u-fw-700">${m.packet_loss}%</span></td>
-      <td><span class="u-c-mu u-fs-12 u-mono">${m.jitter_ms > 0 ? m.jitter_ms + ' ms' : '—'}</span></td>
-      <td>
-        <div class="bench-score-bar-wrap">
-          <div class="bench-score-track">
-            <div class="bench-score-fill" style="width:${Math.max(4, m.score)}%;background:${m.score >= 70 ? 'linear-gradient(90deg, #10b981, #34d399)' : (m.score >= 40 ? 'linear-gradient(90deg, #f59e0b, #fbbf24)' : 'linear-gradient(90deg, #ef4444, #f87171)')};box-shadow:0 0 8px ${m.score >= 70 ? 'rgba(16,185,129,0.35)' : 'rgba(239,68,68,0.35)'};"></div>
-          </div>
-          <strong class="u-fs-12 u-mono u-minw-26 u-c-tx">${m.score}</strong>
+        <div class="bench-name-s">
+          ${protoLabel ? `<span class="bench-proto-pill" data-no-i18n>${esc(protoLabel)}</span>` : ''}
+          ${cleanSub.includes(portStr.replace('Raw ', '')) ? '' : `<span class="bench-port">${esc(portStr)}</span>`}
+          ${cleanSub ? `<span>${esc(cleanSub)}</span>` : ''}
         </div>
-      </td>
-      <td><span class="badge ${statusClass} u-fs-12">${esc(statusLabel)}</span></td>
-      <td>
-        ${isActive ? `<button class="hashem-btn hashem-btn-ghost u-btn-xs u-btn-30 u-o-65" disabled>Current Carrier</button>` :
+      </div>
+      <div class="bench-m bench-rtt" role="cell"><span class="bench-m-k">Latency</span>${num(m.avg_rtt_ms, 'ms')}</div>
+      <div class="bench-m bench-loss" role="cell"><span class="bench-m-k">Packet Loss</span><span class="bench-m-v ${lossClass}">${esc(String(m.packet_loss))}%</span></div>
+      <div class="bench-m bench-jit" role="cell"><span class="bench-m-k">Jitter</span>${num(m.jitter_ms, 'ms')}</div>
+      <div class="bench-score" role="cell" title="Quality Score">
+        <span class="bench-bar"><i style="--w:${score}%;--bc:${barColor}"></i></span>
+        <b>${score}</b>
+      </div>
+      <span class="badge ${statusClass} bench-st" role="cell">${esc(statusLabel)}</span>
+      <div class="bench-act" role="cell">
+        ${isActive ? `<button class="hashem-btn hashem-btn-ghost u-btn-xs u-btn-30" disabled>Current Carrier</button>` :
           `<button class="hashem-btn ${isWinner ? 'hashem-btn-primary' : 'hashem-btn-secondary'} u-btn-xs u-btn-30" onclick="smartApplyOrSetupCarrier(${jsArg(m.id)}, ${jsArg(m.name || m.id)})">${isWinner ? 'Top Pick' : 'Switch'}</button>`}
-      </td>
-    </tr>`;
+      </div>
+    </div>`;
   });
 
   tbody.innerHTML = html;
@@ -9766,13 +9766,10 @@ async function savePeerConfigClick() {
   // Advanced options accordion
   const advToggle = $('benchAdvToggle');
   const advWrap = $('benchAdvWrap');
-  const advChevron = $('benchAdvChevron');
   if (advToggle && advWrap) {
     advToggle.addEventListener('click', () => {
       advWrap.classList.toggle('hidden');
-      if (advChevron) {
-        advChevron.textContent = advWrap.classList.contains('hidden') ? '▼ Expand' : '▲ Collapse';
-      }
+      advToggle.setAttribute('aria-expanded', advWrap.classList.contains('hidden') ? 'false' : 'true');
     });
   }
 })();
