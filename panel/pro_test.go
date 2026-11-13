@@ -100,6 +100,16 @@ func TestProGatesAPIs(t *testing.T) {
 			handleDoctorGet(rr, httptest.NewRequest("GET", "/api/doctor", nil))
 			return rr
 		}},
+		{"diagnostics extras", func() *httptest.ResponseRecorder {
+			rr := httptest.NewRecorder()
+			handleDoctorExtraGet(rr, httptest.NewRequest("GET", "/api/doctor/extra", nil))
+			return rr
+		}},
+		{"diagnostics schedule", func() *httptest.ResponseRecorder {
+			rr := httptest.NewRecorder()
+			handleDoctorPost(rr, httptest.NewRequest("POST", "/api/doctor", strings.NewReader(`{"action":"schedule","every_hours":6}`)))
+			return rr
+		}},
 		{"diagnostics run", func() *httptest.ResponseRecorder {
 			rr := httptest.NewRecorder()
 			handleDoctorPost(rr, httptest.NewRequest("POST", "/api/doctor", strings.NewReader(`{"action":"nope"}`)))

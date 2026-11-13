@@ -61,7 +61,7 @@ func TestDoctorEndpoints(t *testing.T) {
 }
 
 func TestScoreAndRating(t *testing.T) {
-	rep := runFullDiagnostics()
+	rep := runFullDiagnostics(false)
 	if rep.Timestamp == "" {
 		t.Errorf("expected timestamp in doctor report")
 	}

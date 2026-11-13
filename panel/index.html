@@ -962,6 +962,77 @@
      global plaintext rule would turn them LTR; values inside are <bdi>. */
   html[dir="rtl"] #tab-doctor :is(.doc-summary, .doc-find-title, .doc-find-fix, .doc-notes span, .doc-stat-sub, .doc-tun-reason, .trow .k, .doc-box-foot .qs-hint) { unicode-bidi:isolate; }
   .doc-meta b { unicode-bidi:isolate; }
+  /* second half: reachability, clocks, route, stability, ports, history */
+  .doc-reach-verdict { font-size:var(--fs-h4); font-weight:600; color:var(--tx); line-height:1.4; }
+  .doc-reach-verdict.ok { color:var(--ok); } .doc-reach-verdict.warn { color:var(--wr); } .doc-reach-verdict.err { color:var(--er); }
+  .doc-ctl { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; margin-top:4px; }
+  .doc-ctl .fg { flex:1 1 200px; min-width:0; }
+  .doc-ctl > .hashem-btn { flex:none; }
+  .doc-seg button { padding:7px 10px; }
+  .doc-job:empty { display:none; }
+  .doc-job { margin-top:14px; display:flex; flex-direction:column; gap:12px; }
+  .doc-progress { height:6px; border-radius:999px; background:var(--sunk); overflow:hidden; }
+  .doc-progress i { display:block; height:100%; width:var(--p,0%); background:var(--ac-fill); border-radius:inherit; transition:width .4s ease; }
+  .doc-verdict { display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border-radius:var(--r-sm); border:1px solid var(--ln); background:var(--sunk); color:var(--tx); font-size:var(--fs-body); line-height:1.5; }
+  .doc-verdict.ok { border-color:color-mix(in srgb, var(--ok) 35%, var(--ln)); }
+  .doc-verdict.warn { border-color:color-mix(in srgb, var(--wr) 45%, var(--ln)); }
+  .doc-verdict.err { border-color:color-mix(in srgb, var(--er) 45%, var(--ln)); }
+  .doc-verdict .badge { flex:none; }
+  .doc-hops { width:100%; border-collapse:collapse; font-size:var(--fs-small); font-variant-numeric:tabular-nums; }
+  .doc-hops th { text-align:start; font-weight:600; color:var(--mu); padding:6px 8px; border-bottom:1px solid var(--ln); white-space:nowrap; }
+  .doc-hops td { padding:7px 8px; border-bottom:1px solid var(--ln); color:var(--tx2); white-space:nowrap; }
+  .doc-hops tr:last-child td { border-bottom:0; }
+  .doc-hops td.addr { color:var(--tx); font-family:var(--font-mono); width:100%; white-space:normal; overflow-wrap:anywhere; }
+  .doc-hops tr.lossy td { background:color-mix(in srgb, var(--er) 7%, transparent); }
+  .doc-hops tr.silent td { color:var(--mu); }
+  .doc-hops .doc-noans { font-family:var(--font-sans); }
+  .doc-hops .tag { margin-inline-start:6px; font-family:var(--font-sans, inherit); }
+  .doc-loss { display:inline-flex; align-items:center; gap:6px; }
+  .doc-loss b { font-weight:600; }
+  .doc-loss.bad b { color:var(--er); } .doc-loss.some b { color:var(--wr); }
+  .doc-hops-wrap { overflow-x:auto; border:1px solid var(--ln); border-radius:var(--r-sm); }
+  .doc-stats { display:grid; grid-template-columns:repeat(auto-fit, minmax(110px, 1fr)); gap:8px; }
+  .doc-stat { background:var(--sunk); border:1px solid var(--ln); border-radius:var(--r-sm); padding:8px 10px; display:flex; flex-direction:column; gap:2px; min-width:0; }
+  .doc-stat span { font-size:var(--fs-caption); color:var(--mu); }
+  .doc-stat b { font-size:var(--fs-h4); color:var(--tx); font-family:var(--font-mono); font-weight:600; }
+  .doc-stat.bad b { color:var(--er); } .doc-stat.warn b { color:var(--wr); }
+  .doc-chart { width:100%; height:120px; display:block; border:1px solid var(--ln); border-radius:var(--r-sm); background:var(--sunk); }
+  .doc-chart .ln { fill:none; stroke:var(--ac); stroke-width:1.5; vector-effect:non-scaling-stroke; }
+  .doc-chart .lost { fill:var(--er); opacity:.55; stroke:none; }
+  .doc-chart .grid { stroke:var(--ln); stroke-width:1; vector-effect:non-scaling-stroke; stroke-dasharray:3 4; }
+  .doc-chart-axis { display:flex; justify-content:space-between; gap:8px; direction:ltr; font-size:var(--fs-caption); color:var(--mu); font-variant-numeric:tabular-nums; }
+  .doc-chart-axis span { unicode-bidi:plaintext; } /* the chart runs left to right in both languages */
+  .doc-ports { display:flex; flex-direction:column; margin-top:8px; }
+  .doc-pgroup { padding:10px 0; border-bottom:1px solid var(--ln); display:flex; flex-direction:column; gap:8px; }
+  .doc-pgroup:last-child { border-bottom:0; }
+  .doc-pgroup-head { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; font-weight:600; color:var(--tx); }
+  .doc-pgroup-head small { color:var(--mu); font-weight:400; font-size:var(--fs-small); }
+  .doc-prow { display:grid; grid-template-columns:72px auto minmax(0,1fr) auto; gap:4px 10px; align-items:center; font-size:var(--fs-small); }
+  .doc-prow .pn { font-family:var(--font-mono); color:var(--tx); font-weight:600; }
+  .doc-prow .pd { color:var(--tx2); overflow-wrap:anywhere; }
+  .doc-prow .pm { color:var(--tx2); font-variant-numeric:tabular-nums; }
+  .doc-hist-chart { display:block; width:100%; height:96px; }
+  .doc-hist-chart rect { stroke:none; }
+  .doc-hist-chart .r-excellent { fill:var(--ok); } .doc-hist-chart .r-good { fill:var(--ac); }
+  .doc-hist-chart .r-warning { fill:var(--wr); } .doc-hist-chart .r-critical { fill:var(--er); }
+  .doc-hist-list { display:flex; flex-direction:column; margin-top:10px; }
+  .doc-hrow { display:grid; grid-template-columns:minmax(110px,auto) 52px minmax(0,1fr) auto; gap:4px 12px; align-items:center; padding:8px 0; border-bottom:1px solid var(--ln); font-size:var(--fs-small); color:var(--tx2); }
+  .doc-hrow:last-child { border-bottom:0; }
+  .doc-hrow .hs { font-family:var(--font-mono); font-weight:700; }
+  .doc-hrow .hs.excellent { color:var(--ok); } .doc-hrow .hs.good { color:var(--ac); } .doc-hrow .hs.warning { color:var(--wr); } .doc-hrow .hs.critical { color:var(--er); }
+  .doc-hrow .ht { overflow-wrap:anywhere; }
+  .doc-hrow .hm { color:var(--mu); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .doc-sched { display:flex; flex-wrap:wrap; gap:6px 18px; align-items:flex-end; margin-top:14px; padding-top:14px; border-top:1px solid var(--ln); }
+  .doc-sched .fg { flex:0 1 240px; }
+  .doc-sched .set-sw { flex:1 1 260px; }
+  .doc-sched .qs-hint { flex-basis:100%; }
+  @media (max-width:640px) {
+    .doc-prow { grid-template-columns:64px auto minmax(0,1fr); }
+    .doc-prow .pm { grid-column:3; }
+    .doc-hrow { grid-template-columns:auto 44px minmax(0,1fr); }
+    .doc-hrow .hm { grid-column:1 / -1; }
+  }
+  html[dir="rtl"] #tab-doctor :is(.doc-reach-verdict, .doc-verdict, .doc-hrow .ht, .doc-prow .pd) { unicode-bidi:isolate; }
   .doc-pulse { animation:docPulseAnim 1.4s infinite ease-in-out; }
   @keyframes docPulseAnim { 0%, 100% { opacity:1; } 50% { opacity:0.5; } }
   @media (max-width:768px) {
@@ -2961,6 +3032,121 @@
               <div class="trow"><span class="k">Listen backlog</span><span class="v mono" id="docSomaxVal">—</span></div>
               <div class="trow"><span class="k">Engine open-files limit</span><span class="v mono" id="docNofileVal">—</span></div>
             </div>
+          </div>
+
+          <!-- Reachability: TCP to the other server's ports -->
+          <div class="doc-card">
+            <div class="doc-card-head">
+              <span class="doc-card-title">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0z"/><path d="M12 16v5"/></svg>
+                Reachability
+              </span>
+              <span class="badge dim" id="docReachBadge">—</span>
+            </div>
+            <div class="doc-reach-verdict" id="docReachVal">—</div>
+            <div class="doc-stat-sub" id="docReachSub">TCP from this server to the other server's ports</div>
+            <div id="docReachBox"></div>
+          </div>
+
+          <!-- Clocks -->
+          <div class="doc-card">
+            <div class="doc-card-head">
+              <span class="doc-card-title">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg>
+                Clocks
+              </span>
+              <span class="badge dim" id="docClockBadge">—</span>
+            </div>
+            <div class="doc-stat-val" id="docClockVal">—</div>
+            <div class="doc-stat-sub" id="docClockSub">The other server's clock, compared with this one</div>
+            <div>
+              <div class="trow"><span class="k">Time sync (NTP) here</span><span class="v" id="docNtpVal">—</span></div>
+              <div class="trow"><span class="k">Measured within</span><span class="v mono" id="docClockErrVal">—</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Route, hop by hop (mtr) -->
+        <div class="tunnel-card u-mt-14" id="docTraceCard">
+          <div class="tc-header">
+            <p class="tc-title u-flex-center-gap8">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="6" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M7.5 6H15a3.5 3.5 0 0 1 0 7H9a3.5 3.5 0 0 0 0 7h7.5"/></svg>
+              <span>Route, hop by hop</span>
+            </p>
+            <span class="qs-hint" id="docTraceMeta">Where on the way packets are lost</span>
+          </div>
+          <div class="doc-ctl">
+            <div class="fg"><label for="docTraceTarget">Server</label><select class="hashem-input" id="docTraceTarget"></select></div>
+            <div class="fg"><label for="docTraceMode">Probe with</label>
+              <select class="hashem-input" id="docTraceMode">
+                <option value="icmp">Ping (ICMP)</option>
+                <option value="tcp">TCP, to the port that should answer</option>
+              </select>
+            </div>
+            <button type="button" class="hashem-btn hashem-btn-primary" id="docTraceBtn"><span>Trace Route</span></button>
+          </div>
+          <div class="doc-job" id="docTraceBox" aria-live="polite"></div>
+        </div>
+
+        <!-- Stability: a long ping -->
+        <div class="tunnel-card u-mt-14" id="docStabCard">
+          <div class="tc-header">
+            <p class="tc-title u-flex-center-gap8">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h4l2-5 4 10 2-5h8"/></svg>
+              <span>Stability Test</span>
+            </p>
+            <span class="qs-hint">Short drops and spikes a quick ping misses</span>
+          </div>
+          <div class="doc-ctl">
+            <div class="fg"><label for="docStabTarget">Server</label><select class="hashem-input" id="docStabTarget"></select></div>
+            <div class="fg"><span id="docStabLenLbl">Duration</span>
+              <div class="qs-seg doc-seg" role="group" aria-labelledby="docStabLenLbl" id="docStabLen">
+                <button type="button" data-s="60" aria-pressed="true">1 min</button>
+                <button type="button" data-s="180" aria-pressed="false">3 min</button>
+                <button type="button" data-s="300" aria-pressed="false">5 min</button>
+              </div>
+            </div>
+            <button type="button" class="hashem-btn hashem-btn-primary" id="docStabBtn"><span>Start Test</span></button>
+          </div>
+          <div class="doc-job" id="docStabBox" aria-live="polite"></div>
+        </div>
+
+        <!-- Every forwarded port, end to end -->
+        <div class="tunnel-card u-mt-14 hidden" id="docPortsCard">
+          <div class="tc-header">
+            <p class="tc-title u-flex-center-gap8">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h2M7 13h2M7 17h2M12 9h5M12 13h5M12 17h5"/></svg>
+              <span>Forwarded Ports</span>
+            </p>
+            <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" id="docPortsBtn"><span>Test All Ports</span></button>
+          </div>
+          <div class="qs-hint">Connects to each port the way a user does, and checks the service behind it answers.</div>
+          <div class="doc-ports" id="docPortsBox"></div>
+        </div>
+
+        <!-- History and schedule -->
+        <div class="tunnel-card u-mt-14" id="docHistCard">
+          <div class="tc-header">
+            <p class="tc-title u-flex-center-gap8">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-6"/></svg>
+              <span>History</span>
+            </p>
+            <span class="qs-hint" id="docHistMeta"></span>
+          </div>
+          <div id="docHistBox"></div>
+          <div class="doc-sched">
+            <div class="fg"><label for="docSchedSel">Run automatically</label>
+              <select class="hashem-input" id="docSchedSel">
+                <option value="0">Off</option>
+                <option value="1">Every hour</option>
+                <option value="3">Every 3 hours</option>
+                <option value="6">Every 6 hours</option>
+                <option value="12">Every 12 hours</option>
+                <option value="24">Once a day</option>
+              </select>
+            </div>
+            <label class="set-sw" for="docSchedAlert"><input type="checkbox" id="docSchedAlert"><span>Alert me when the rating changes</span></label>
+            <div class="qs-hint" id="docSchedHint">Scheduled runs skip iPerf3. Alerts go to the Telegram bot and webhook set in Settings, Alerts.</div>
           </div>
         </div>
       </section>

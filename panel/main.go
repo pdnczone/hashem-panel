@@ -737,6 +737,7 @@ func main() {
 	mux.HandleFunc("POST "+base+"/api/support", requireAuth(requireCSRF(handleSupport)))
 	mux.HandleFunc("GET "+base+"/api/doctor", requireAuth(handleDoctorGet))
 	mux.HandleFunc("POST "+base+"/api/doctor", requireAuth(requireCSRF(handleDoctorPost)))
+	mux.HandleFunc("GET "+base+"/api/doctor/extra", requireAuth(handleDoctorExtraGet))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
@@ -827,6 +828,7 @@ func main() {
 	go startNodeMigrateWatch()
 	go startNodeBackups()
 	go startLimitsLoop()
+	go startDoctorScheduler()
 	go func() {
 		cc := loadCarrierConfig()
 		if strings.HasPrefix(cc.ActiveCarrier, "wss") {
