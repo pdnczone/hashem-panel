@@ -723,6 +723,75 @@
   .upd-stat .v { font-size:15px; font-weight:600; color:var(--tx); font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
   .upd-stat .v.dim { font-size:13px; font-weight:500; color:var(--mu); }
   .upd-stat .badge { font-size:12px; }
+  /* Settings tab: the cards in labelled groups (two columns where there is
+     room), each card with an icon, and chips above that jump to a group. */
+  #tab-settings:not([hidden]) { display:flex; flex-direction:column; gap:28px; }
+  .set-nav { display:flex; flex-wrap:wrap; gap:6px; padding:6px; border:1px solid var(--ln); border-radius:var(--r-lg); background:var(--s1); box-shadow:var(--lift-sm); }
+  .set-nav button { display:inline-flex; align-items:center; gap:8px; min-height:38px; padding:0 14px; border:1px solid transparent; border-radius:10px;
+    background:transparent; color:var(--tx2); font:inherit; font-size:13px; font-weight:600; cursor:pointer; transition:background .15s ease, color .15s ease, border-color .15s ease; }
+  .set-nav button:hover { background:var(--s2); border-color:var(--ln); color:var(--tx); }
+  .set-nav button:focus-visible { outline:2px solid var(--ac); outline-offset:2px; }
+  .set-nav svg { width:16px; height:16px; flex:none; fill:none; stroke:var(--ac); stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  .set-group { display:flex; flex-direction:column; gap:14px; scroll-margin-top:120px; } /* clears the sticky topbar, 99px on phones */
+  .set-gh { display:flex; flex-direction:column; gap:4px; padding-inline:2px; }
+  .set-gt { display:flex; align-items:center; gap:12px; margin:0; font-size:12px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--tx2); }
+  .set-gt::after { content:""; flex:1; height:1px; background:linear-gradient(90deg, color-mix(in srgb, var(--ac) 45%, var(--ln2)), transparent 85%); }
+  [dir="rtl"] .set-gt::after { background:linear-gradient(270deg, color-mix(in srgb, var(--ac) 45%, var(--ln2)), transparent 85%); }
+  html[lang="fa"] .set-gt { font-size:14px; letter-spacing:0; }
+  .set-gd { margin:0; font-size:13px; color:var(--mu); }
+  .set-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap:16px; align-items:stretch; }
+  .set-grid > .set-wide { grid-column:1 / -1; }
+  .set-grid > .tunnel-card { padding:20px; gap:14px; }
+  .tc-header > .set-h { display:flex; flex-wrap:nowrap; align-items:center; gap:12px; min-width:0; }
+  .set-h .tc-title { min-width:0; font-size:15px; font-weight:650; line-height:1.35; }
+  .set-ic { --ic:var(--ac); flex:none; width:38px; height:38px; border-radius:12px; display:grid; place-items:center; color:var(--ic);
+    background:linear-gradient(145deg, color-mix(in srgb, var(--ic) 20%, transparent), color-mix(in srgb, var(--ic) 7%, transparent));
+    box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--ic) 28%, transparent); }
+  .set-ic.gold { --ic:var(--gold); }
+  .set-ic svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .set-acts { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:auto; padding-top:14px; border-top:1px solid var(--ln); }
+  .set-fields { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap:0 12px; }
+  .set-now { padding:10px 12px; border-radius:var(--r-md); background:var(--sunk); border:1px solid var(--ln); color:var(--tx2); line-height:1.6; overflow-wrap:anywhere; }
+  .set-pill { padding:5px 12px 5px 10px; border-radius:999px; border:1px solid var(--ln); background:var(--s2); color:var(--mu); }
+  .set-pill.active { color:var(--ok); background:var(--ok-soft); border-color:var(--ok-b40); }
+  .set-pill.active .dot { background:var(--ok); box-shadow:0 0 8px color-mix(in srgb, var(--ok) 60%, transparent); }
+  .set-pill:not(.active):not(.offline) .dot { background:var(--mu); }
+  .set-pill.offline { color:var(--wr); background:var(--wr-soft); border-color:var(--wr-b40); }
+  .set-pill.offline .dot { background:var(--wr); }
+  .set-lic-on { display:grid; gap:4px; padding:12px 14px; border-radius:var(--r-md); background:var(--ok-soft); border:1px solid var(--ok-b40); }
+  .set-pro { background:linear-gradient(145deg, color-mix(in srgb, var(--gold) 9%, var(--s1)), var(--s1) 70%) !important; border-color:color-mix(in srgb, var(--gold) 30%, var(--ln)) !important; }
+  #passStrengthMeter:empty { display:none; }
+  #twofaSetupBox, #twofaDisableBox { display:flex; flex-direction:column; gap:12px; }
+  .set-chart { padding:10px 12px; border:1px solid var(--ln); border-radius:var(--r-md); background:var(--sunk); color:var(--ac); }
+  #histSvg rect { stroke:none; }
+  #tab-settings textarea.hashem-input { height:auto; min-height:84px; padding-block:10px; line-height:1.5; }
+  .set-subs { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap:14px; margin-top:4px; }
+  .set-term { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap:14px; }
+  .set-sub { display:flex; flex-direction:column; gap:10px; min-width:0; padding:16px; border:1px solid var(--ln); border-radius:var(--r-md); background:var(--s2); }
+  .set-sub .qs-actions { margin-top:auto; }
+  .set-subh { display:flex; align-items:center; gap:8px; color:var(--tx); font-size:14px; }
+  .set-subh svg { width:18px; height:18px; flex:none; fill:none; stroke:var(--ac); stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .set-files { display:flex; flex-wrap:wrap; gap:8px; }
+  .set-files input { min-width:0; max-width:100%; font-size:13px; color:var(--mu); }
+  .set-files input::file-selector-button { margin-inline-end:10px; padding:7px 12px; border:1px solid var(--ln2); border-radius:8px;
+    background:var(--s3); color:var(--tx); font:inherit; font-weight:600; cursor:pointer; }
+  .set-files input::file-selector-button:hover { border-color:var(--ac); }
+  .set-sws { display:flex; flex-direction:column; padding:2px 14px; border:1px solid var(--ln); border-radius:var(--r-md); background:var(--sunk); }
+  .set-sw { display:flex; align-items:center; gap:12px; min-height:46px; font-size:14px; color:var(--tx2); cursor:pointer; }
+  .set-sw + .set-sw { border-top:1px solid var(--ln); }
+  .set-sw input { appearance:none; -webkit-appearance:none; position:relative; flex:none; width:40px; min-width:40px; height:24px; min-height:24px; margin:0;
+    border-radius:999px; border:1px solid var(--ln2); background:var(--s3); cursor:pointer; transition:background .2s ease, border-color .2s ease; }
+  .set-sw input::before { content:""; position:absolute; top:2px; inset-inline-start:2px; width:18px; height:18px; border-radius:50%;
+    background:var(--mu); transition:transform .2s var(--spring), background .2s ease; }
+  .set-sw input:checked { background:var(--ac-fill); border-color:var(--ac-fill); }
+  .set-sw input:checked::before { transform:translateX(16px); background:var(--ac-on); }
+  [dir="rtl"] .set-sw input:checked::before { transform:translateX(-16px); }
+  .set-sw input:focus-visible { outline:2px solid var(--ac); outline-offset:2px; }
+  .set-sw:has(#alTgNote:not(:empty)) { flex-wrap:wrap; row-gap:2px; padding-block:10px; }
+  #alTgNote { font-size:12px; color:var(--mu); }
+  #alTgNote:not(:empty) { flex-basis:100%; padding-inline-start:52px; }
+  @media (prefers-reduced-motion: reduce) { .set-sw input, .set-sw input::before { transition:none; } }
+  @media (max-width:640px) { #tab-settings:not([hidden]) { gap:22px; } .set-grid > .tunnel-card { padding:16px; } .set-sub { padding:14px; } }
   .upd-stat.warn { border-color:var(--wr-b40); background:linear-gradient(180deg, var(--wr-soft), transparent 70%), var(--s2); }
   .upd-stat.ok { border-color:var(--ok-b40); }
   fieldset.upd-ch { border:0; margin:0; padding:0; min-width:0; }
@@ -3425,210 +3494,264 @@
         </div>
       </section>
       <section id="tab-settings" role="tabpanel" hidden>
-        <div class="warnbox u-mb-12" id="settingsNodeNote" hidden data-i18n="settings_node_note">This node's login, HTTPS, 2FA and terminal settings are on its own panel, not here. Its license and Telegram alerts are shown here.</div>
-        <div class="tunnel-card" id="licenseCard">
-          <div class="tc-header u-flex u-jc-sb u-ai-c">
-            <p class="tc-title">License &amp; Premium Features</p>
-            <span id="licBadge" class="badge dim">FREE EDITION</span>
-          </div>
-          <div class="fg">
-            <label for="licMachineHash">Server Hardware Fingerprint (Machine Hash)</label>
-            <div class="u-flex u-gap-8">
-              <input class="hashem-input u-mono u-fs-13 u-w-full" id="licMachineHash" readonly placeholder="Calculating…">
-              <button class="hashem-btn" id="licCopyMachineBtn" onclick="copyMachineHashClick()">Copy</button>
+        <div class="warnbox" id="settingsNodeNote" hidden data-i18n="settings_node_note">This node's login, HTTPS, 2FA and terminal settings are on its own panel, not here. Its license and Telegram alerts are shown here.</div>
+        <nav class="set-nav" id="setNav" aria-label="Settings sections">
+          <button type="button" data-set="setLic"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M17 6l3 3M14 9l2 2"/></svg>License</button>
+          <button type="button" data-set="setSec" class="nv-off"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>Security</button>
+          <button type="button" data-set="setWeb" class="nv-off"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>HTTPS &amp; terminal</button>
+          <button type="button" data-set="setMon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>Monitoring</button>
+          <button type="button" data-set="setLook" class="nv-off"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 0 0 0 18c.9 0 1.5-.7 1.5-1.5 0-.4-.15-.75-.4-1-.25-.3-.4-.65-.4-1 0-.85.7-1.5 1.5-1.5H16a5 5 0 0 0 5-5c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11.5" r="1"/><circle cx="10" cy="7.5" r="1"/><circle cx="14.5" cy="7.5" r="1"/></svg>Appearance</button>
+        </nav>
+
+        <div class="set-group" id="setLic">
+          <div class="set-gh"><h2 class="set-gt">License &amp; add-ons</h2><p class="set-gd">Your Pro license, this server's fingerprint and the Sentinel monitor.</p></div>
+          <div class="set-grid">
+            <div class="tunnel-card set-wide" id="licenseCard">
+              <div class="tc-header">
+                <div class="set-h"><span class="set-ic gold" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M17 6l3 3M14 9l2 2"/></svg></span><p class="tc-title">License &amp; Premium Features</p></div>
+                <span id="licBadge" class="badge dim">FREE EDITION</span>
+              </div>
+              <div class="fg">
+                <label for="licMachineHash">Server Hardware Fingerprint (Machine Hash)</label>
+                <div class="u-flex u-gap-8">
+                  <input class="hashem-input u-mono u-fs-13 u-w-full" id="licMachineHash" readonly placeholder="Calculating…">
+                  <button class="hashem-btn" id="licCopyMachineBtn" onclick="copyMachineHashClick()">Copy</button>
+                </div>
+                <div class="ent-help">Provide this fingerprint to your provider to issue or renew a hardware-locked license.</div>
+              </div>
+              <div id="licActiveDetails" class="hidden set-lic-on">
+                <div class="u-fs-13 u-fw-600 u-c-ok u-mb-4">Active Premium License</div>
+                <div class="u-fs-12" id="licCustomerRow">Customer: -</div>
+                <div class="u-fs-12" id="licExpiresRow">Expires: -</div>
+                <div class="u-fs-12" id="licFeaturesRow">Unlocked Features: -</div>
+              </div>
+              <div class="fg">
+                <label for="licKeyInput">License Key</label>
+                <textarea class="hashem-input u-mono u-fs-12 u-resize-none" id="licKeyInput" rows="3" placeholder="Paste your license token here (payload.signature)…"></textarea>
+              </div>
+              <div class="set-acts">
+                <button class="hashem-btn hashem-btn-primary" id="licActivateBtn" onclick="activateLicenseClick()">Activate License</button>
+                <button class="hashem-btn hashem-btn-secondary hidden" id="licDeactivateBtn" onclick="deactivateLicenseClick()">Deactivate</button>
+                <a class="hashem-btn hashem-btn-secondary" id="licBuyBtn" href="https://pdnczone.com" target="_blank" rel="noopener noreferrer">Buy License</a>
+              </div>
             </div>
-            <div class="ent-help">Provide this fingerprint to your provider to issue or renew a hardware-locked license.</div>
-          </div>
-          <div id="licActiveDetails" class="hidden u-tint-ok u-bd-ok u-p-12 u-r-8 u-mb-12">
-            <div class="u-fs-13 u-fw-600 u-c-ok u-mb-4">Active Premium License</div>
-            <div class="u-fs-12" id="licCustomerRow">Customer: -</div>
-            <div class="u-fs-12" id="licExpiresRow">Expires: -</div>
-            <div class="u-fs-12" id="licFeaturesRow">Unlocked Features: -</div>
-          </div>
-          <div class="fg">
-            <label for="licKeyInput">License Key</label>
-            <textarea class="hashem-input u-mono u-fs-12 u-resize-none" id="licKeyInput" rows="3" placeholder="Paste your license token here (payload.signature)…"></textarea>
-          </div>
-          <div class="u-flex u-gap-8">
-            <button class="hashem-btn hashem-btn-primary" id="licActivateBtn" onclick="activateLicenseClick()">Activate License</button>
-            <button class="hashem-btn hashem-btn-secondary hidden" id="licDeactivateBtn" onclick="deactivateLicenseClick()">Deactivate</button>
-            <a class="hashem-btn hashem-btn-secondary" id="licBuyBtn" href="https://pdnczone.com" target="_blank" rel="noopener noreferrer">Buy License</a>
-          </div>
-        </div>
-        <div class="tunnel-card u-mt-16" id="sentinelAddonCard">
-          <div class="tc-header u-flex u-jc-sb u-ai-c">
-            <div class="u-flex u-ai-c u-gap-8">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                <path d="m9 12 2 2 4-4"/>
-              </svg>
-              <p class="tc-title u-m-0">Sentinel — Infrastructure &amp; Node Health Monitor</p>
+            <div class="tunnel-card" id="sentinelAddonCard">
+              <div class="tc-header">
+                <div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg></span><p class="tc-title">Sentinel — Infrastructure &amp; Node Health Monitor</p></div>
+                <div class="u-flex u-gap-8" id="sentinelHeaderBadges">
+                  <span id="sentinelLicBadge" class="badge dim">CHECKING</span>
+                  <span id="sentinelRegionBadge" class="badge dim">REGION</span>
+                </div>
+              </div>
+              <div class="ent-help">Multi-protocol health monitor, dynamic subscription feeds, and 24h SLA tracker. Restricted to verified Iran servers with a licensed key.</div>
+              <div id="sentinelBodySection">
+                <div class="u-c-mu u-fs-12">Loading Sentinel state…</div>
+              </div>
             </div>
-            <div class="u-flex u-gap-8" id="sentinelHeaderBadges">
-              <span id="sentinelLicBadge" class="badge dim">CHECKING</span>
-              <span id="sentinelRegionBadge" class="badge dim">REGION</span>
-            </div>
-          </div>
-          <div class="ent-help u-mb-12">Multi-protocol health monitor, dynamic subscription feeds, and 24h SLA tracker. Restricted to verified Iran servers with a licensed key.</div>
-          <div id="sentinelBodySection">
-            <div class="u-c-mu u-fs-12">Loading Sentinel state…</div>
-          </div>
-        </div>
-        <div class="tunnel-card">
-          <div class="tc-header"><p class="tc-title">Settings</p></div>
-          <div class="fg"><label for="curPass">Current panel password</label><input class="hashem-input" id="curPass" type="password" autocomplete="current-password" placeholder="••••••••••••"></div>
-          <div class="fg"><label for="newPass">New panel password</label><input class="hashem-input" id="newPass" type="password" autocomplete="new-password" minlength="12" placeholder="••••••••••••"></div>
-          <div class="ent-help">Minimum 12 characters, uppercase, lowercase, numbers, and symbols (NIST 800-63B). Changing it invalidates all other sessions.</div>
-          <div id="passStrengthMeter" class="u-fs-12 u-mt-8 u-mb-8 u-c-mu"></div>
-          <div><button class="hashem-btn hashem-btn-primary" id="savePass">Change Password</button></div>
-        </div>
-        <div class="tunnel-card" id="advisorCard">
-          <div class="tc-header"><p class="tc-title">Carrier advisor</p></div>
-          <div class="ent-help" id="advMsg">Collecting data…</div>
-          <div class="ent-help" id="advStats"></div>
-          <div class="ent-help">Advice only. The Autopilot tab switches by itself when a tunnel stays down. Suggestions for a new port / SNI:</div>
-          <div class="ent-help" id="advSuggest"></div>
-          <div><button class="hashem-btn hashem-btn-secondary" id="advRefresh">Refresh</button></div>
-        </div>
-        <div class="tunnel-card" id="historyCard">
-          <div class="tc-header"><p class="tc-title">Link history (last hours)</p></div>
-          <div class="fg"><label for="histLink">Link</label><select class="hashem-input" id="histLink"></select></div>
-          <div class="fg"><label for="histHours">Window</label><select class="hashem-input" id="histHours"><option value="1">1 hour</option><option value="6">6 hours</option><option value="24">24 hours</option></select></div>
-          <svg id="histSvg" viewBox="0 0 300 60" preserveAspectRatio="none" class="u-w-full u-h-80 u-bg-none u-r-8" role="img" aria-label="Latency history"></svg>
-          <div class="ent-help" id="histSum">Sampled every 30 s, kept in memory for 24 h (cleared on panel restart).</div>
-        </div>
-        <div class="tunnel-card" id="metricsCard">
-          <div class="tc-header"><p class="tc-title">Prometheus metrics</p></div>
-          <div class="ent-help" id="metricsState">Disabled. Rotate a token to enable <code>GET …/metrics</code> for your scraper (header <code>Authorization: Bearer &lt;token&gt;</code>). The token is shown once.</div>
-          <pre class="ent-help hidden u-select-all" id="metricsTok"></pre>
-          <div>
-            <button class="hashem-btn hashem-btn-primary" id="metricsRotate">Generate / Rotate Token</button>
-            <button class="hashem-btn hashem-btn-secondary" id="metricsOff">Disable</button>
-          </div>
-        </div>
-        <div class="tunnel-card" id="alertsCard">
-          <div class="tc-header"><p class="tc-title">External alerts</p></div>
-          <div class="ent-help">Get a message when a tunnel goes down or recovers. Only state changes are sent (never every refresh), with a minimum gap per link so a flapping tunnel cannot spam you. The first reading after a restart is only a baseline.</div>
-          <label class="ent-help"><input type="checkbox" id="alEnabled"> Enable alerts</label>
-          <div class="fg"><label for="alWebhook">Webhook URL (Slack/Discord/ntfy/any JSON endpoint)</label><input class="hashem-input" id="alWebhook" placeholder="https://hooks.example.com/…" autocomplete="off"></div>
-          <label class="ent-help"><input type="checkbox" id="alTelegram"> Also send to Telegram <span id="alTgNote"></span></label>
-          <label class="ent-help"><input type="checkbox" id="alDegraded"> Also alert on degraded ⇄ healthy</label>
-          <div class="fg"><label for="alGap">Minimum seconds between alerts per link</label><input class="hashem-input" id="alGap" type="number" min="10" max="86400" value="120"></div>
-          <div>
-            <button class="hashem-btn hashem-btn-primary" id="alSave">Save</button>
-            <button class="hashem-btn hashem-btn-secondary" id="alTest">Send Test</button>
-          </div>
-        </div>
-        <div class="tunnel-card" id="accessCard">
-          <div class="tc-header"><p class="tc-title" data-i18n="acc_title">Panel access (port / login / address)</p></div>
-          <div class="ent-help" data-i18n="acc_hint">Changing any of these restarts only the panel web service — tunnels keep running. After saving, reopen the panel at the new address shown.</div>
-          <div class="fg"><label for="accUser" data-i18n="acc_user">Login username</label><input class="hashem-input" id="accUser" autocomplete="off" spellcheck="false" placeholder="admin"></div>
-          <div class="fg"><label for="accPort" data-i18n="acc_port">HTTP port (1–65535)</label><input class="hashem-input" id="accPort" type="number" min="1" max="65535" placeholder="7777"></div>
-          <div class="fg"><label for="accBase" data-i18n="acc_base">Address path (after IP:port/…)</label><input class="hashem-input" id="accBase" autocomplete="off" spellcheck="false" placeholder="a1b2c3d4e5f6"></div>
-          <div class="ent-help" id="accCurrent">—</div>
-          <div class="fg"><label for="accPass" data-i18n="acc_pass">Current password (confirm)</label><input class="hashem-input" id="accPass" type="password" autocomplete="current-password" placeholder="••••••••••••"></div>
-          <div><button class="hashem-btn hashem-btn-primary" id="accSave" data-i18n="acc_save">Save & Restart Panel</button></div>
-        </div>
-        <div class="tunnel-card" id="idleCard">
-          <div class="tc-header"><p class="tc-title">Session idle timeout</p></div>
-          <div class="ent-help">Sign out automatically after this many minutes without clicks or key presses. Background refresh does not count as activity. 0 = off.</div>
-          <div class="fg"><label for="idleMin">Minutes (0, or 5–1440)</label><input class="hashem-input" id="idleMin" type="number" min="0" max="1440" value="0"></div>
-          <div><button class="hashem-btn hashem-btn-primary" id="idleSave">Save</button></div>
-        </div>
-        <div class="tunnel-card" id="twofaCard">
-          <div class="tc-header"><p class="tc-title">Two-factor authentication (TOTP)</p></div>
-          <div class="ent-help" id="twofaState">Loading…</div>
-          <div id="twofaSetupBox" class="hidden">
-            <div class="ent-help">Add this secret to your authenticator app (or open the link on your phone), then enter the 6-digit code to confirm.</div>
-            <div class="fg"><label for="twofaSecret">Secret</label><input class="hashem-input" id="twofaSecret" readonly></div>
-            <div class="fg"><label for="twofaUri">otpauth link</label><input class="hashem-input" id="twofaUri" readonly></div>
-            <div class="fg"><label for="twofaConfirm">Code</label><input class="hashem-input" id="twofaConfirm" inputmode="numeric" maxlength="6" placeholder="123456"></div>
-          </div>
-          <div id="twofaDisableBox" class="hidden">
-            <div class="fg"><label for="twofaPass">Password</label><input class="hashem-input" id="twofaPass" type="password" autocomplete="current-password"></div>
-            <div class="fg"><label for="twofaDisCode">Code or recovery code</label><input class="hashem-input" id="twofaDisCode" maxlength="16"></div>
-          </div>
-          <pre class="ent-help hidden u-select-all" id="twofaCodes"></pre>
-          <div>
-            <button class="hashem-btn hashem-btn-primary" id="twofaBtn">Enable 2FA</button>
-            <button class="hashem-btn hashem-btn-secondary hidden" id="twofaCancel">Cancel</button>
-          </div>
-        </div>
-        <div class="tunnel-card" id="appearanceCard">
-          <div class="tc-header"><p class="tc-title" data-i18n="appear_title">Appearance</p></div>
-          <div class="qs-hint" data-i18n="appear_hint">Pick an accent colour. Every preset is contrast-checked for both dark and light themes.</div>
-          <div class="acc-grid" id="accGrid" role="radiogroup" aria-label="Accent colour" data-i18n-aria="appear_aria"></div>
-          <div class="ent-sec-label u-mt-6" data-i18n="dens_title">Table density</div>
-          <div class="qs-seg" role="group" aria-label="Table density" data-i18n-aria="dens_title" id="densSeg">
-            <button type="button" data-dens="comfortable" aria-pressed="true" data-i18n="dens_comfy">Comfortable</button>
-            <button type="button" data-dens="compact" aria-pressed="false" data-i18n="dens_compact">Compact</button>
-          </div>
-        </div>
-        <div class="tunnel-card">
-          <div class="tc-header"><p class="tc-title" data-i18n="sup_card_title">Hashem Pro License</p></div>
-          <div class="qs-hint" data-i18n="sup_card_hint">One license unlocks every Pro feature: Bagher, Backhaul, Performance, Watchdog, Benchmark, Diagnostics and the path test.</div>
-          <div class="qs-actions"><a class="hashem-btn hashem-btn-secondary" id="supSettingsLink" href="https://pdnczone.com" target="_blank" rel="noopener noreferrer" data-i18n="sup_buy">Buy License</a></div>
-        </div>
-        <div class="tunnel-card">
-          <div class="tc-header"><p class="tc-title">Interactive terminal</p><span class="status-indicator" id="termFlagDot"><span class="dot"></span><span id="termFlagTxt">—</span></span></div>
-          <div class="qs-hint">Root shell in the browser over WebSocket + PTY — same login session, single shell at a time, auto-killed after 10 idle minutes (30 min cap). Enable only after testing; toggle is the rollback switch.</div>
-          <div class="qs-actions"><button class="hashem-btn hashem-btn-secondary" id="termToggleBtn">Enable Terminal</button></div>
-          <div class="qs-hint" id="termFlagMsg">Terminal tab is hidden until enabled.</div>
-          <div class="fg"><label for="termAllow">Allowed IPs / CIDRs (one per line, empty = any)</label><textarea class="hashem-input" id="termAllow" rows="3" placeholder="203.0.113.7&#10;198.51.100.0/24"></textarea></div>
-          <div class="qs-actions"><button class="hashem-btn hashem-btn-secondary" id="termAllowSave">Save Allowlist</button></div>
-          <div class="qs-hint" id="termAllowMsg"></div>
-        </div>
-        <div class="tunnel-card">
-          <div class="tc-header">
-            <p class="tc-title">Domain & HTTPS (Decoupled Web Layer)</p>
-            <span class="status-indicator" id="tlsDot"><span class="dot"></span><span id="tlsDotTxt">—</span></span>
-          </div>
-          <div class="qs-hint">Configure a custom domain for Web Panel access. <b>Tunnel infrastructure (FRP / Backhaul / GRE) is 100% independent and will never be restarted or disconnected.</b></div>
-          <div class="fg"><label for="tlsDomain">Panel domain</label><input class="hashem-input" id="tlsDomain" placeholder="panel.example.com" autocomplete="off" spellcheck="false"></div>
-          <div class="fg"><label for="tlsEmail">Email for expiry notices (optional)</label><input class="hashem-input" id="tlsEmail" placeholder="you@example.com" autocomplete="off" spellcheck="false"></div>
-          <div id="tlsInfo" class="qs-hint">Not checked yet.</div>
-          <div class="qs-actions u-flex u-wrap u-gap-8">
-            <button class="hashem-btn hashem-btn-primary" id="tlsIssueBtn">Get Certificate</button>
-            <button class="hashem-btn hashem-btn-secondary" id="tlsRenewBtn">Renew Now</button>
-            <button class="hashem-btn hashem-btn-danger u-none" id="tlsRemoveBtn">Remove Domain</button>
-            <button class="hashem-btn hashem-btn-secondary" id="tlsProxyConfBtn">Reverse Proxy Config</button>
-          </div>
-          <div class="qs-hint" id="tlsMsg">HTTPS serves on dedicated port 7443 alongside HTTP on port 7777.</div>
-          <div class="u-mt-12 u-pt-12 u-bt-ln">
-            <b data-i18n="tls_ip_title">HTTPS on this server's IP (self-signed)</b>
-            <div class="qs-hint" data-i18n="tls_ip_hint">No domain needed. The panel creates its own authority, signs a certificate for the IP (825 days), and serves HTTPS. Install the CA file below in your browser/OS once — afterwards the IP page shows no warning. Regenerate rotates only the server certificate; the CA stays trusted.</div>
-            <div class="fg"><label for="tlsIP">Server IP</label><input class="hashem-input" id="tlsIP" placeholder="1.2.3.4" autocomplete="off" spellcheck="false"></div>
-            <div class="qs-actions u-flex u-wrap u-gap-8">
-              <button class="hashem-btn hashem-btn-secondary" id="tlsIPBtn">Issue IP Certificate</button>
-              <button class="hashem-btn hashem-btn-secondary" id="tlsIPRegenBtn">Regenerate</button>
-              <button class="hashem-btn hashem-btn-secondary" id="tlsCABtn">Download CA (Install Once)</button>
+            <div class="tunnel-card set-pro">
+              <div class="tc-header"><div class="set-h"><span class="set-ic gold" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m3 7 4.5 4L12 4l4.5 7L21 7l-2 12H5z"/></svg></span><p class="tc-title" data-i18n="sup_card_title">Hashem Pro License</p></div></div>
+              <div class="qs-hint" data-i18n="sup_card_hint">One license unlocks every Pro feature: Bagher, Backhaul, Performance, Watchdog, Benchmark, Diagnostics and the path test.</div>
+              <div class="set-acts"><a class="hashem-btn hashem-btn-secondary" id="supSettingsLink" href="https://pdnczone.com" target="_blank" rel="noopener noreferrer" data-i18n="sup_buy">Buy License</a></div>
             </div>
           </div>
-          <div class="u-mt-12 u-pt-12 u-bt-ln">
-            <b data-i18n="tls_custom_title">Use your own certificate</b>
-            <div class="qs-hint" data-i18n="tls_custom_hint">Paste a matching certificate + key, upload both files, or point at files already on this server. Validated before install; the previous certificate is kept as backup.</div>
-            <div class="fg"><label for="tlsCustomCert">Certificate (PEM)</label><textarea class="hashem-input" id="tlsCustomCert" rows="4" placeholder="-----BEGIN CERTIFICATE-----" autocomplete="off" spellcheck="false"></textarea></div>
-            <div class="fg"><label for="tlsCustomKey">Private key (PEM)</label><textarea class="hashem-input" id="tlsCustomKey" rows="4" placeholder="-----BEGIN PRIVATE KEY-----" autocomplete="off" spellcheck="false"></textarea></div>
-            <div class="fg"><label for="tlsCustomCertFile">…or upload files</label><input type="file" id="tlsCustomCertFile" accept=".crt,.pem,.cert" aria-label="Certificate file"> <input type="file" id="tlsCustomKeyFile" accept=".key,.pem" aria-label="Private key file"></div>
-            <div class="fg"><label for="tlsCustomCertPath">…or server paths</label><input class="hashem-input" id="tlsCustomCertPath" placeholder="/etc/ssl/my.crt" autocomplete="off" spellcheck="false"></div>
-            <div class="fg"><label for="tlsCustomKeyPath">Key path</label><input class="hashem-input" id="tlsCustomKeyPath" placeholder="/etc/ssl/my.key" autocomplete="off" spellcheck="false"></div>
-            <div class="qs-actions u-flex u-wrap u-gap-8">
-              <button class="hashem-btn hashem-btn-secondary" id="tlsCustomBtn">Install Custom Certificate</button>
+        </div>
+
+        <div class="set-group nv-off" id="setSec">
+          <div class="set-gh"><h2 class="set-gt">Sign-in &amp; security</h2><p class="set-gd">Password, two-step sign-in, idle sign-out and the panel's address.</p></div>
+          <div class="set-grid">
+            <div class="tunnel-card">
+              <div class="tc-header"><div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14.5v2"/></svg></span><p class="tc-title">Panel password</p></div></div>
+              <div class="fg"><label for="curPass">Current panel password</label><input class="hashem-input" id="curPass" type="password" autocomplete="current-password" placeholder="••••••••••••"></div>
+              <div class="fg"><label for="newPass">New panel password</label><input class="hashem-input" id="newPass" type="password" autocomplete="new-password" minlength="12" placeholder="••••••••••••"></div>
+              <div class="ent-help">Minimum 12 characters, uppercase, lowercase, numbers, and symbols (NIST 800-63B). Changing it invalidates all other sessions.</div>
+              <div id="passStrengthMeter" class="u-fs-12 u-c-mu"></div>
+              <div class="set-acts"><button class="hashem-btn hashem-btn-primary" id="savePass">Change Password</button></div>
+            </div>
+            <div class="tunnel-card" id="twofaCard">
+              <div class="tc-header"><div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="m9.5 12 2 2 3.5-3.5M11 18.5h2"/></svg></span><p class="tc-title">Two-factor authentication (TOTP)</p></div></div>
+              <div class="ent-help set-now" id="twofaState">Loading…</div>
+              <div id="twofaSetupBox" class="hidden">
+                <div class="ent-help">Add this secret to your authenticator app (or open the link on your phone), then enter the 6-digit code to confirm.</div>
+                <div class="fg"><label for="twofaSecret">Secret</label><input class="hashem-input" id="twofaSecret" readonly></div>
+                <div class="fg"><label for="twofaUri">otpauth link</label><input class="hashem-input" id="twofaUri" readonly></div>
+                <div class="fg"><label for="twofaConfirm">Code</label><input class="hashem-input" id="twofaConfirm" inputmode="numeric" maxlength="6" placeholder="123456"></div>
+              </div>
+              <div id="twofaDisableBox" class="hidden">
+                <div class="fg"><label for="twofaPass">Password</label><input class="hashem-input" id="twofaPass" type="password" autocomplete="current-password"></div>
+                <div class="fg"><label for="twofaDisCode">Code or recovery code</label><input class="hashem-input" id="twofaDisCode" maxlength="16"></div>
+              </div>
+              <pre class="ent-help hidden u-select-all" id="twofaCodes"></pre>
+              <div class="set-acts">
+                <button class="hashem-btn hashem-btn-primary" id="twofaBtn">Enable 2FA</button>
+                <button class="hashem-btn hashem-btn-secondary hidden" id="twofaCancel">Cancel</button>
+              </div>
+            </div>
+            <div class="tunnel-card" id="accessCard">
+              <div class="tc-header"><div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5M10 17l5-5-5-5M15 12H3"/></svg></span><p class="tc-title" data-i18n="acc_title">Panel access (port / login / address)</p></div></div>
+              <div class="ent-help" data-i18n="acc_hint">Changing any of these restarts only the panel web service — tunnels keep running. After saving, reopen the panel at the new address shown.</div>
+              <div class="set-fields">
+                <div class="fg"><label for="accUser" data-i18n="acc_user">Login username</label><input class="hashem-input" id="accUser" autocomplete="off" spellcheck="false" placeholder="admin"></div>
+                <div class="fg"><label for="accPort" data-i18n="acc_port">HTTP port (1–65535)</label><input class="hashem-input" id="accPort" type="number" min="1" max="65535" placeholder="7777"></div>
+              </div>
+              <div class="fg"><label for="accBase" data-i18n="acc_base">Address path (after IP:port/…)</label><input class="hashem-input" id="accBase" autocomplete="off" spellcheck="false" placeholder="a1b2c3d4e5f6"></div>
+              <div class="ent-help set-now" id="accCurrent">—</div>
+              <div class="fg"><label for="accPass" data-i18n="acc_pass">Current password (confirm)</label><input class="hashem-input" id="accPass" type="password" autocomplete="current-password" placeholder="••••••••••••"></div>
+              <div class="set-acts"><button class="hashem-btn hashem-btn-primary" id="accSave" data-i18n="acc_save">Save & Restart Panel</button></div>
+            </div>
+            <div class="tunnel-card" id="idleCard">
+              <div class="tc-header"><div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9.5 2.5h5"/></svg></span><p class="tc-title">Session idle timeout</p></div></div>
+              <div class="ent-help">Sign out automatically after this many minutes without clicks or key presses. Background refresh does not count as activity. 0 = off.</div>
+              <div class="fg"><label for="idleMin">Minutes (0, or 5–1440)</label><input class="hashem-input" id="idleMin" type="number" min="0" max="1440" value="0"></div>
+              <div class="set-acts"><button class="hashem-btn hashem-btn-primary" id="idleSave">Save</button></div>
             </div>
           </div>
-          <div id="tlsProxyBox" class="u-none u-mt-12 u-p-12 u-bd-ln u-r-8 u-bg-field">
-            <div class="u-flex u-jc-sb u-ai-c u-mb-8">
-              <b>Reverse Proxy Configuration (Nginx & Caddy)</b>
-              <button class="hashem-btn hashem-btn-ghost u-btn-30" id="tlsProxyCloseBtn" aria-label="Close proxy configuration" data-i18n-aria="aria_close_proxy">×</button>
+        </div>
+
+        <div class="set-group nv-off" id="setWeb">
+          <div class="set-gh"><h2 class="set-gt">Domain, HTTPS &amp; terminal</h2><p class="set-gd">How the panel is reached over HTTPS, and the root shell in the browser.</p></div>
+          <div class="set-grid">
+            <div class="tunnel-card set-wide">
+              <div class="tc-header">
+                <div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></span><p class="tc-title">Domain & HTTPS (Decoupled Web Layer)</p></div>
+                <span class="status-indicator set-pill" id="tlsDot"><span class="dot"></span><span id="tlsDotTxt">—</span></span>
+              </div>
+              <div class="qs-hint">Configure a custom domain for Web Panel access. <b>Tunnel infrastructure (FRP / Backhaul / GRE) is 100% independent and will never be restarted or disconnected.</b></div>
+              <div class="set-fields">
+                <div class="fg"><label for="tlsDomain">Panel domain</label><input class="hashem-input" id="tlsDomain" placeholder="panel.example.com" autocomplete="off" spellcheck="false"></div>
+                <div class="fg"><label for="tlsEmail">Email for expiry notices (optional)</label><input class="hashem-input" id="tlsEmail" placeholder="you@example.com" autocomplete="off" spellcheck="false"></div>
+              </div>
+              <div id="tlsInfo" class="qs-hint set-now">Not checked yet.</div>
+              <div class="qs-actions u-flex u-wrap u-gap-8">
+                <button class="hashem-btn hashem-btn-primary" id="tlsIssueBtn">Get Certificate</button>
+                <button class="hashem-btn hashem-btn-secondary" id="tlsRenewBtn">Renew Now</button>
+                <button class="hashem-btn hashem-btn-danger u-none" id="tlsRemoveBtn">Remove Domain</button>
+                <button class="hashem-btn hashem-btn-secondary" id="tlsProxyConfBtn">Reverse Proxy Config</button>
+              </div>
+              <div class="qs-hint" id="tlsMsg">HTTPS serves on dedicated port 7443 alongside HTTP on port 7777.</div>
+              <div id="tlsProxyBox" class="u-none u-p-12 u-bd-ln u-r-8 u-bg-field">
+                <div class="u-flex u-jc-sb u-ai-c u-mb-8">
+                  <b>Reverse Proxy Configuration (Nginx & Caddy)</b>
+                  <button class="hashem-btn hashem-btn-ghost u-btn-30" id="tlsProxyCloseBtn" aria-label="Close proxy configuration" data-i18n-aria="aria_close_proxy">×</button>
+                </div>
+                <div class="qs-hint u-mb-8">Copy and paste into your Nginx or Caddy server on this machine. Real client IPs and WebSocket upgrades are automatically supported.</div>
+                <div class="u-mb-8">
+                  <b>Nginx:</b>
+                  <pre id="tlsNginxCode" class="u-fs-12 u-maxh-160 u-scroll-y u-bg-s1 u-p-8 u-r-4 u-select-all"></pre>
+                </div>
+                <div>
+                  <b>Caddy:</b>
+                  <pre id="tlsCaddyCode" class="u-fs-12 u-maxh-100 u-scroll-y u-bg-s1 u-p-8 u-r-4 u-select-all"></pre>
+                </div>
+              </div>
+              <div class="set-subs">
+                <div class="set-sub">
+                  <div class="set-subh"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><b data-i18n="tls_ip_title">HTTPS on this server's IP (self-signed)</b></div>
+                  <div class="qs-hint" data-i18n="tls_ip_hint">No domain needed. The panel creates its own authority, signs a certificate for the IP (825 days), and serves HTTPS. Install the CA file below in your browser/OS once — afterwards the IP page shows no warning. Regenerate rotates only the server certificate; the CA stays trusted.</div>
+                  <div class="fg"><label for="tlsIP">Server IP</label><input class="hashem-input" id="tlsIP" placeholder="1.2.3.4" autocomplete="off" spellcheck="false"></div>
+                  <div class="qs-actions u-flex u-wrap u-gap-8">
+                    <button class="hashem-btn hashem-btn-secondary" id="tlsIPBtn">Issue IP Certificate</button>
+                    <button class="hashem-btn hashem-btn-secondary" id="tlsIPRegenBtn">Regenerate</button>
+                    <button class="hashem-btn hashem-btn-secondary" id="tlsCABtn">Download CA (Install Once)</button>
+                  </div>
+                </div>
+                <div class="set-sub">
+                  <div class="set-subh"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9.5 14.5l2 2 3.5-3.5"/></svg><b data-i18n="tls_custom_title">Use your own certificate</b></div>
+                  <div class="qs-hint" data-i18n="tls_custom_hint">Paste a matching certificate + key, upload both files, or point at files already on this server. Validated before install; the previous certificate is kept as backup.</div>
+                  <div class="set-fields">
+                    <div class="fg"><label for="tlsCustomCert">Certificate (PEM)</label><textarea class="hashem-input" id="tlsCustomCert" rows="4" placeholder="-----BEGIN CERTIFICATE-----" autocomplete="off" spellcheck="false"></textarea></div>
+                    <div class="fg"><label for="tlsCustomKey">Private key (PEM)</label><textarea class="hashem-input" id="tlsCustomKey" rows="4" placeholder="-----BEGIN PRIVATE KEY-----" autocomplete="off" spellcheck="false"></textarea></div>
+                  </div>
+                  <div class="fg"><label for="tlsCustomCertFile">…or upload files</label><div class="set-files"><input type="file" id="tlsCustomCertFile" accept=".crt,.pem,.cert" aria-label="Certificate file"><input type="file" id="tlsCustomKeyFile" accept=".key,.pem" aria-label="Private key file"></div></div>
+                  <div class="set-fields">
+                    <div class="fg"><label for="tlsCustomCertPath">…or server paths</label><input class="hashem-input" id="tlsCustomCertPath" placeholder="/etc/ssl/my.crt" autocomplete="off" spellcheck="false"></div>
+                    <div class="fg"><label for="tlsCustomKeyPath">Key path</label><input class="hashem-input" id="tlsCustomKeyPath" placeholder="/etc/ssl/my.key" autocomplete="off" spellcheck="false"></div>
+                  </div>
+                  <div class="qs-actions u-flex u-wrap u-gap-8">
+                    <button class="hashem-btn hashem-btn-secondary" id="tlsCustomBtn">Install Custom Certificate</button>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div class="qs-hint u-mb-8">Copy and paste into your Nginx or Caddy server on this machine. Real client IPs and WebSocket upgrades are automatically supported.</div>
-            <div class="u-mb-8">
-              <b>Nginx:</b>
-              <pre id="tlsNginxCode" class="u-fs-12 u-maxh-160 u-scroll-y u-bg-s1 u-p-8 u-r-4 u-select-all"></pre>
+            <div class="tunnel-card set-wide">
+              <div class="tc-header">
+                <div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7 9 3 3-3 3M13 15h4"/></svg></span><p class="tc-title">Interactive terminal</p></div>
+                <span class="status-indicator set-pill" id="termFlagDot"><span class="dot"></span><span id="termFlagTxt">—</span></span>
+              </div>
+              <div class="qs-hint">Root shell in the browser over WebSocket + PTY — same login session, single shell at a time, auto-killed after 10 idle minutes (30 min cap). Enable only after testing; toggle is the rollback switch.</div>
+              <div class="set-term">
+                <div class="set-sub">
+                  <div class="qs-hint" id="termFlagMsg">Terminal tab is hidden until enabled.</div>
+                  <div class="qs-actions"><button class="hashem-btn hashem-btn-secondary" id="termToggleBtn">Enable Terminal</button></div>
+                </div>
+                <div class="set-sub">
+                  <div class="fg"><label for="termAllow">Allowed IPs / CIDRs (one per line, empty = any)</label><textarea class="hashem-input" id="termAllow" rows="3" placeholder="203.0.113.7&#10;198.51.100.0/24"></textarea></div>
+                  <div class="qs-actions"><button class="hashem-btn hashem-btn-secondary" id="termAllowSave">Save Allowlist</button></div>
+                  <div class="qs-hint" id="termAllowMsg"></div>
+                </div>
+              </div>
             </div>
-            <div>
-              <b>Caddy:</b>
-              <pre id="tlsCaddyCode" class="u-fs-12 u-maxh-100 u-scroll-y u-bg-s1 u-p-8 u-r-4 u-select-all"></pre>
+          </div>
+        </div>
+
+        <div class="set-group" id="setMon">
+          <div class="set-gh"><h2 class="set-gt">Alerts &amp; monitoring</h2><p class="set-gd">A message when a tunnel goes down, each link's history, and metrics for your scraper.</p></div>
+          <div class="set-grid">
+            <div class="tunnel-card" id="alertsCard">
+              <div class="tc-header"><div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span><p class="tc-title">External alerts</p></div></div>
+              <div class="ent-help">Get a message when a tunnel goes down or recovers. Only state changes are sent (never every refresh), with a minimum gap per link so a flapping tunnel cannot spam you. The first reading after a restart is only a baseline.</div>
+              <div class="set-sws">
+                <label class="set-sw"><input type="checkbox" id="alEnabled"> Enable alerts</label>
+                <label class="set-sw"><input type="checkbox" id="alTelegram"> Also send to Telegram <span id="alTgNote"></span></label>
+                <label class="set-sw"><input type="checkbox" id="alDegraded"> Also alert on degraded ⇄ healthy</label>
+              </div>
+              <div class="fg"><label for="alWebhook">Webhook URL (Slack/Discord/ntfy/any JSON endpoint)</label><input class="hashem-input" id="alWebhook" placeholder="https://hooks.example.com/…" autocomplete="off"></div>
+              <div class="fg"><label for="alGap">Minimum seconds between alerts per link</label><input class="hashem-input" id="alGap" type="number" min="10" max="86400" value="120"></div>
+              <div class="set-acts">
+                <button class="hashem-btn hashem-btn-primary" id="alSave">Save</button>
+                <button class="hashem-btn hashem-btn-secondary" id="alTest">Send Test</button>
+              </div>
+            </div>
+            <div class="tunnel-card" id="historyCard">
+              <div class="tc-header"><div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span><p class="tc-title">Link history (last hours)</p></div></div>
+              <div class="set-fields">
+                <div class="fg"><label for="histLink">Link</label><select class="hashem-input" id="histLink"></select></div>
+                <div class="fg"><label for="histHours">Window</label><select class="hashem-input" id="histHours"><option value="1">1 hour</option><option value="6">6 hours</option><option value="24">24 hours</option></select></div>
+              </div>
+              <div class="set-chart"><svg id="histSvg" viewBox="0 0 300 60" preserveAspectRatio="none" class="u-w-full u-h-80 u-bg-none" role="img" aria-label="Latency history"></svg></div>
+              <div class="ent-help" id="histSum">Sampled every 30 s, kept in memory for 24 h (cleared on panel restart).</div>
+            </div>
+            <div class="tunnel-card" id="advisorCard">
+              <div class="tc-header"><div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V17h6v-.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/></svg></span><p class="tc-title">Carrier advisor</p></div></div>
+              <div class="ent-help set-now" id="advMsg">Collecting data…</div>
+              <div class="ent-help" id="advStats"></div>
+              <div class="ent-help">Advice only. The Autopilot tab switches by itself when a tunnel stays down. Suggestions for a new port / SNI:</div>
+              <div class="ent-help u-mono" id="advSuggest"></div>
+              <div class="set-acts"><button class="hashem-btn hashem-btn-secondary" id="advRefresh">Refresh</button></div>
+            </div>
+            <div class="tunnel-card" id="metricsCard">
+              <div class="tc-header"><div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></span><p class="tc-title">Prometheus metrics</p></div></div>
+              <div class="ent-help" id="metricsState">Disabled. Rotate a token to enable <code>GET …/metrics</code> for your scraper (header <code>Authorization: Bearer &lt;token&gt;</code>). The token is shown once.</div>
+              <pre class="ent-help hidden u-select-all" id="metricsTok"></pre>
+              <div class="set-acts">
+                <button class="hashem-btn hashem-btn-primary" id="metricsRotate">Generate / Rotate Token</button>
+                <button class="hashem-btn hashem-btn-secondary" id="metricsOff">Disable</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="set-group nv-off" id="setLook">
+          <div class="set-gh"><h2 class="set-gt">Appearance</h2><p class="set-gd">The accent colour and the table density of this browser.</p></div>
+          <div class="set-grid">
+            <div class="tunnel-card set-wide" id="appearanceCard">
+              <div class="tc-header"><div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18c.9 0 1.5-.7 1.5-1.5 0-.4-.15-.75-.4-1-.25-.3-.4-.65-.4-1 0-.85.7-1.5 1.5-1.5H16a5 5 0 0 0 5-5c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11.5" r="1"/><circle cx="10" cy="7.5" r="1"/><circle cx="14.5" cy="7.5" r="1"/></svg></span><p class="tc-title" data-i18n="appear_title">Appearance</p></div></div>
+              <div class="qs-hint" data-i18n="appear_hint">Pick an accent colour. Every preset is contrast-checked for both dark and light themes.</div>
+              <div class="acc-grid" id="accGrid" role="radiogroup" aria-label="Accent colour" data-i18n-aria="appear_aria"></div>
+              <div class="ent-sec-label u-mt-6" data-i18n="dens_title">Table density</div>
+              <div class="qs-seg" role="group" aria-label="Table density" data-i18n-aria="dens_title" id="densSeg">
+                <button type="button" data-dens="comfortable" aria-pressed="true" data-i18n="dens_comfy">Comfortable</button>
+                <button type="button" data-dens="compact" aria-pressed="false" data-i18n="dens_compact">Compact</button>
+              </div>
             </div>
           </div>
         </div>

@@ -4336,6 +4336,18 @@ async function advisorRefresh() {
   } catch(e) {}
 }
 $('advRefresh').onclick = advisorRefresh;
+// Settings: the chips above the groups scroll to one of them.
+(function initSetNav() {
+  const nav = $('setNav');
+  if (!nav) return;
+  nav.onclick = e => {
+    const b = e.target.closest('button[data-set]');
+    const g = b && $(b.dataset.set);
+    if (!g) return;
+    const still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    g.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' });
+  };
+})();
 // ---- Autopilot tab (autopilot.go): a down tunnel is moved to a carrier that gets through ----
 let _apData = null, _apDirty = false, _apQ = {from: 0, to: 0}, _apPick = -1, _apCars = null, _apTimer = null, _apBusy = false;
 const AP_GROUPS = [
@@ -4727,7 +4739,7 @@ async function termFlagRefresh() {
     if (nav) nav.classList.toggle('hidden', !s.enabled);
     if (typeof drawerSync === 'function') drawerSync();
     const dot = $('termFlagDot');
-    if (dot) { dot.className = 'status-indicator ' + (s.enabled ? 'active' : ''); $('termFlagTxt').textContent = s.enabled ? 'enabled' : 'disabled'; }
+    if (dot) { dot.className = 'status-indicator set-pill ' + (s.enabled ? 'active' : ''); $('termFlagTxt').textContent = s.enabled ? 'enabled' : 'disabled'; }
     const tb = $('termToggleBtn'); if (tb) tb.textContent = s.enabled ? 'Disable terminal' : 'Enable terminal';
     const fm = $('termFlagMsg');
     if (fm) fm.textContent = s.enabled ? (s.busy ? 'Terminal tab is visible. A shell is currently active.' : 'Terminal tab is visible. No active shell.') : 'Terminal tab is hidden until enabled.';
@@ -7160,7 +7172,7 @@ async function tlsRefresh() {
     const s = await api('/api/tls');
     const dot = $('tlsDot');
     if (dot) {
-      dot.className = 'status-indicator ' + (!s.enabled ? '' : (s.days_left != null && s.days_left < 15 ? 'offline' : 'active'));
+      dot.className = 'status-indicator set-pill ' + (!s.enabled ? '' : (s.days_left != null && s.days_left < 15 ? 'offline' : 'active'));
       $('tlsDotTxt').textContent = s.enabled ? (s.days_left != null ? s.days_left + ' days left' : 'enabled') : 'no certificate';
     }
     const info = $('tlsInfo');
@@ -9870,8 +9882,7 @@ function renderLicense(d) {
     setBrandTier(true);
     if (badge) {
       badge.textContent = 'PREMIUM (Active)';
-      badge.style.background = 'var(--ok-fill)';
-      badge.style.color = '#fff';
+      badge.className = 'badge ok';
     }
     if (details) details.classList.remove('hidden');
     if (deactBtn) deactBtn.classList.remove('hidden');
@@ -9890,8 +9901,7 @@ function renderLicense(d) {
     setBrandTier(false);
     if (badge) {
       badge.textContent = 'FREE EDITION';
-      badge.style.background = 'rgba(255,255,255,0.1)';
-      badge.style.color = '';
+      badge.className = 'badge dim';
     }
     if (details) details.classList.add('hidden');
     if (deactBtn) deactBtn.classList.add('hidden');
