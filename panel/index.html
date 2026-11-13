@@ -1320,121 +1320,130 @@
     justify-content: flex-start;
   }
 
-  /* Benchmark Tab & Table Spacing Enhancements */
-  .bench-hero-card {
-    padding: 24px !important;
-    border-radius: 16px !important;
-    min-width: 0;
-    max-width: 100%;
+  /* Benchmark tab: the look of the Performance page. Cards with an icon
+     header, four state tiles, the winner with its score as a ring, and the
+     carriers as rows that wrap their numbers under the name on a phone. */
+  #tab-benchmark { min-width:0; max-width:100%; }
+  #tab-benchmark:not([hidden]) { display:flex; flex-direction:column; gap:16px; }
+  .bench-card { display:flex; flex-direction:column; gap:16px; min-width:0; padding:20px; }
+  .bench-card > .tc-header { margin:0; align-items:flex-start; flex-wrap:wrap; gap:12px; }
+  .bench-card > .tc-header > .set-h { flex:1 1 320px; align-items:flex-start; }
+  .bench-h-t { display:flex; flex-direction:column; gap:4px; min-width:0; }
+  .bench-h-t .tc-title { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+  .bench-h-t .qs-hint { margin:0; }
+  .bench-target { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap:14px 16px; padding:16px;
+    border:1px solid var(--ln); border-radius:var(--r-md); background:var(--sunk); }
+  .bench-field { display:flex; flex-direction:column; gap:8px; min-width:0; }
+  .bench-field .qs-label, .bench-ports .qs-label { margin:0; }
+  .bench-field .qs-hint { margin:0; }
+  .bench-field .qs-seg { margin:0; }
+  .bench-field .hashem-input { width:100%; max-width:none; }
+  .bench-lbl { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .bench-adv { grid-column:1 / -1; border-top:1px solid var(--ln); padding-top:12px; }
+  .bench-adv-t { display:flex; align-items:center; gap:8px; width:100%; padding:4px 0; border:0; background:none; color:var(--ac); font:inherit; font-size:13px; font-weight:600; cursor:pointer; text-align:start; }
+  .bench-adv-t svg { width:16px; height:16px; flex:none; fill:none; stroke:currentColor; stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; }
+  .bench-adv-t .bench-chev { margin-inline-start:auto; color:var(--mu); transition:transform .2s ease; }
+  .bench-adv-t[aria-expanded="true"] .bench-chev { transform:rotate(180deg); }
+  .bench-adv-t:focus-visible { outline:2px solid var(--ac); outline-offset:2px; border-radius:6px; }
+  .bench-ports { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap:12px; margin-top:10px; }
+  .bench-ports > div { display:flex; flex-direction:column; gap:6px; }
+  .bench-win { --pc:var(--ok); display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:18px; padding:18px;
+    border:1px solid color-mix(in srgb, var(--pc) 35%, var(--ln)); border-radius:var(--r-md);
+    background:linear-gradient(120deg, color-mix(in srgb, var(--pc) 12%, transparent), transparent 60%), var(--s2); }
+  .bench-win[data-st="off"] { --pc:var(--mu); border-color:var(--ln); }
+  .bench-win-t { display:flex; flex-direction:column; gap:6px; min-width:0; }
+  .bench-win-t h3 { margin:0; font-size:20px; font-weight:700; line-height:1.3; color:var(--tx); overflow-wrap:anywhere; }
+  .bench-win-t .qs-hint { margin:0; }
+  .bench-ring { --v:0; flex:none; width:84px; height:84px; border-radius:50%; display:grid; place-items:center;
+    background:conic-gradient(var(--pc) calc(var(--v) * 1%), color-mix(in srgb, var(--pc) 14%, var(--sunk)) 0); }
+  .bench-ring > div { width:68px; height:68px; border-radius:50%; background:var(--s2); display:flex; flex-direction:column; align-items:center; justify-content:center; line-height:1.1; }
+  .bench-ring b { font-size:24px; font-weight:750; color:var(--tx); font-variant-numeric:tabular-nums; }
+  .bench-ring small { font-size:12px; color:var(--mu); direction:ltr; }
+  .perf-tile[data-st="info"] { --pc:var(--info); }
+  .perf-tile[data-st="err"] { --pc:var(--er); border-color:var(--er-badge-b); }
+  .bench-list { container-type:inline-size; border:1px solid var(--ln); border-radius:var(--r-md); overflow:hidden; background:var(--sunk); }
+  .bench-head, .bench-row { display:grid; grid-template-columns:30px minmax(200px,1.7fr) 104px 96px 80px minmax(120px,1fr) 104px 116px; align-items:center; gap:12px; padding:0 16px; }
+  .bench-head { min-height:40px; font-size:12px; font-weight:700; color:var(--mu); letter-spacing:.06em; text-transform:uppercase; border-bottom:1px solid var(--ln); background:var(--s2); }
+  html[lang="fa"] .bench-head { letter-spacing:0; }
+  .bench-head > span { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .bench-head > span:first-child { text-align:center; }
+  .bench-row { --sc:var(--dim); position:relative; padding-block:14px; border-top:1px solid var(--ln); background:var(--s2); transition:background .15s ease; }
+  #benchTableBody > .bench-row:first-child { border-top:0; }
+  .bench-row::before { content:""; position:absolute; inset-block:10px; inset-inline-start:0; width:3px; border-radius:0 3px 3px 0; background:var(--sc); opacity:.85; }
+  [dir="rtl"] .bench-row::before { border-radius:3px 0 0 3px; }
+  .bench-row[data-st="ok"] { --sc:var(--ok); }
+  .bench-row[data-st="info"] { --sc:var(--info); }
+  .bench-row[data-st="warn"] { --sc:var(--wr); }
+  .bench-row[data-st="err"] { --sc:var(--er); }
+  .bench-row:hover { background:color-mix(in srgb, var(--tx) 3%, var(--s2)); }
+  .bench-row[data-win] { background:linear-gradient(90deg, color-mix(in srgb, var(--ok) 9%, transparent), transparent 55%), var(--s2); }
+  .bench-row[data-active] { background:linear-gradient(90deg, color-mix(in srgb, var(--info) 10%, transparent), transparent 55%), var(--s2); }
+  [dir="rtl"] .bench-row[data-win] { background:linear-gradient(270deg, color-mix(in srgb, var(--ok) 9%, transparent), transparent 55%), var(--s2); }
+  [dir="rtl"] .bench-row[data-active] { background:linear-gradient(270deg, color-mix(in srgb, var(--info) 10%, transparent), transparent 55%), var(--s2); }
+  .bench-rank { width:28px; height:28px; border-radius:8px; display:grid; place-items:center; font-family:var(--font-mono); font-size:12px; font-weight:700;
+    color:var(--mu); background:var(--sunk); box-shadow:inset 0 0 0 1px var(--ln); }
+  .bench-rank.top { color:var(--gold, var(--wr)); background:color-mix(in srgb, var(--gold, var(--wr)) 14%, transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--gold, var(--wr)) 35%, transparent); }
+  .bench-name { display:flex; flex-direction:column; gap:6px; min-width:0; }
+  .bench-name-t { display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; }
+  .bench-name-t b { font-size:14px; font-weight:650; color:var(--tx); }
+  .bench-name-s { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:12px; color:var(--mu); }
+  .bench-proto-pill, .bench-port { display:inline-flex; align-items:center; padding:2px 7px; border-radius:6px; font-family:var(--font-mono); font-size:12px; font-weight:600;
+    letter-spacing:.03em; background:var(--sunk); border:1px solid var(--ln); color:var(--tx2); direction:ltr; unicode-bidi:isolate; }
+  .bench-port { font-weight:500; color:var(--mu); }
+  .bench-m { display:flex; flex-direction:column; gap:2px; min-width:0; }
+  .bench-m-k { display:none; font-size:12px; color:var(--mu); }
+  .bench-m-v { font-family:var(--font-mono); font-size:13px; font-weight:650; color:var(--tx); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .bench-m-v small { font-size:12px; font-weight:500; color:var(--mu); margin-inline-start:2px; }
+  .bench-m-v.dim { color:var(--dim); font-weight:500; }
+  .bench-m-v.ok { color:var(--ok); } .bench-m-v.warn { color:var(--wr); } .bench-m-v.err { color:var(--er); }
+  .bench-score { display:flex; align-items:center; gap:10px; min-width:0; }
+  .bench-bar { flex:1; height:8px; border-radius:999px; background:var(--sunk); box-shadow:inset 0 0 0 1px var(--ln); overflow:hidden; }
+  .bench-bar i { display:block; height:100%; width:var(--w, 0%); border-radius:inherit; background:var(--bc, var(--ok)); transition:width .5s ease; }
+  .bench-score b { min-width:24px; font-family:var(--font-mono); font-size:13px; color:var(--tx); text-align:end; font-variant-numeric:tabular-nums; }
+  .bench-act { display:flex; justify-content:flex-end; }
+  .bench-act .hashem-btn { white-space:nowrap; }
+  .bench-row[data-st="err"] .bench-name-t b { color:var(--tx2); }
+  .bench-empty { padding:20px 16px; background:var(--s2); text-align:center; }
+  @container (max-width: 820px) {
+    .bench-head { display:none; }
+    .bench-row { grid-template-columns:28px repeat(3, minmax(0,1fr)); grid-template-areas:"rk nm nm st" ". rt ls jt" ". sc sc ac"; gap:12px 10px; padding-inline:14px 12px; }
+    .bench-row > .bench-rank { grid-area:rk; align-self:start; }
+    .bench-row > .bench-name { grid-area:nm; }
+    .bench-row > .bench-rtt { grid-area:rt; }
+    .bench-row > .bench-loss { grid-area:ls; }
+    .bench-row > .bench-jit { grid-area:jt; }
+    .bench-row > .bench-score { grid-area:sc; }
+    .bench-row > .bench-st { grid-area:st; align-self:start; justify-self:end; }
+    .bench-row > .bench-act { grid-area:ac; }
+    .bench-row > .bench-score { padding-inline-end:4px; }
+    .bench-m { padding:8px 10px; border-radius:8px; background:var(--sunk); box-shadow:inset 0 0 0 1px var(--ln); }
+    .bench-m-k { display:block; }
   }
-  #tab-benchmark { min-width: 0; max-width: 100%; }
-  .bench-table-wrap { max-width: 100%; }
-  @media (max-width: 480px) { .bench-hero-card { padding: 16px !important; } }
-  .bench-stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 14px;
-    margin-bottom: 22px;
+  @media (max-width:640px) {
+    .bench-card .perf-tiles { grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px; }
+    .bench-card .perf-tile { flex-direction:column; gap:8px; padding:12px; }
+    .bench-card .perf-tile-ic { width:32px; height:32px; border-radius:10px; }
+    .bench-card .perf-tile-ic svg { width:17px; height:17px; }
+    .bench-card .perf-tile-v { font-size:16px; }
   }
-  .bench-stat-card {
-    background: var(--sunk);
-    border: 1px solid color-mix(in srgb, var(--tx) 7%, transparent);
-    border-radius: 12px;
-    padding: 16px 18px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
-  }
-  .bench-stat-card:hover {
-    border-color: color-mix(in srgb, var(--info) 30%, transparent);
-    background: var(--sunk);
-  }
-  .bench-table-wrap {
-    border-radius: 12px;
-    border: 1px solid color-mix(in srgb, var(--tx) 8%, transparent);
-    background: color-mix(in srgb, var(--bg) 60%, transparent);
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  #benchTable {
-    width: 100%;
-    min-width: 860px;
-    border-collapse: separate;
-    border-spacing: 0;
-    margin: 0;
-  }
-  #benchTable th, #ptTable th {
-    padding: 14px 18px;
-    font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--mu);
-    background: var(--sunk);
-    border-bottom: 1px solid color-mix(in srgb, var(--tx) 8%, transparent);
-    white-space: nowrap;
-    text-align: left;
-  }
-  html[dir="rtl"] #benchTable th, html[dir="rtl"] #ptTable th {
-    text-align: right;
-  }
-  #benchTable td, #ptTable td {
-    padding: 16px 18px;
-    vertical-align: middle;
-    border-bottom: 1px solid color-mix(in srgb, var(--tx) 5%, transparent);
-    white-space: nowrap;
-    font-size: 13px;
-  }
-  #benchTable tr:last-child td, #ptTable tr:last-child td {
-    border-bottom: none;
-  }
-  #benchTable tbody tr, #ptTable tbody tr {
-    transition: background 0.15s ease;
-  }
-  #benchTable tbody tr:hover, #ptTable tbody tr:hover {
-    background: var(--sunk) !important;
-  }
-  #ptTable { width: 100%; min-width: 640px; border-collapse: separate; border-spacing: 0; margin: 0; }
-  #ptTable td { padding: 12px 16px; }
-  #ptTable td .qs-hint { white-space: normal; max-width: 280px; }
+  @media (max-width:640px) { .bench-card { padding:16px; } .bench-win { grid-template-columns:auto minmax(0,1fr); padding:14px; gap:14px; } .bench-win > .hashem-btn { grid-column:1 / -1; } .bench-ring { width:72px; height:72px; } .bench-ring > div { width:58px; height:58px; } .bench-ring b { font-size:20px; } .bench-win-t h3 { font-size:17px; } }
+  @media (prefers-reduced-motion: reduce) { .bench-bar i, .bench-adv-t .bench-chev { transition:none; } }
+  /* Path test table */
+  .bench-table-wrap { max-width:100%; border-radius:var(--r-md); border:1px solid var(--ln); background:var(--s2); overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  #ptTable { width:100%; min-width:640px; border-collapse:separate; border-spacing:0; margin:0; }
+  #ptTable th { padding:12px 16px; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--mu); background:var(--sunk);
+    border-bottom:1px solid var(--ln); white-space:nowrap; text-align:start; }
+  html[lang="fa"] #ptTable th { letter-spacing:0; }
+  #ptTable td { padding:12px 16px; vertical-align:middle; border-bottom:1px solid color-mix(in srgb, var(--tx) 5%, transparent); white-space:nowrap; font-size:13px; }
+  #ptTable tr:last-child td { border-bottom:none; }
+  #ptTable tbody tr { transition:background 0.15s ease; }
+  #ptTable tbody tr:hover { background:var(--sunk) !important; }
+  #ptTable td .qs-hint { white-space:normal; max-width:280px; }
   @media (max-width: 640px) {
-    #ptTable { min-width: 0; }
-    #ptTable th, #ptTable td { padding: 10px 8px; white-space: normal; }
-    #ptTable td:nth-child(-n+2) { white-space: nowrap; }
-    #ptTable th:last-child, #ptTable td:last-child { display: none; } /* port */
-  }
-  .bench-rank-num {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 26px;
-    height: 26px;
-    border-radius: 6px;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--mu);
-    background: var(--sunk);
-    border: 1px solid color-mix(in srgb, var(--tx) 7%, transparent);
-  }
-  .bench-rank-1 {
-    color: var(--info);
-    background: color-mix(in srgb, var(--info) 12%, transparent);
-    border-color: color-mix(in srgb, var(--info) 35%, transparent);
-  }
-  .bench-proto-pill {
-    display: inline-flex;
-    align-items: center;
-    padding: 3px 8px;
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    font-family: var(--font-mono);
-    background: var(--sunk);
-    border: 1px solid var(--ln2);
-    color: var(--tx2);
+    #ptTable { min-width:0; }
+    #ptTable th, #ptTable td { padding:10px 8px; white-space:normal; }
+    #ptTable td:nth-child(-n+2) { white-space:nowrap; }
+    #ptTable th:last-child, #ptTable td:last-child { display:none; } /* port */
   }
   /* Utilities: one declaration each, values on the design scale (spacing 4/8, type ramp,
      radius scale, tokens). Declared last so they win ties; !important except on properties
@@ -3218,11 +3227,14 @@
       <!-- Tab: Carrier Benchmark -->
       <section id="tab-benchmark" role="tabpanel" hidden>
         <!-- Path test: which transports cross between the two servers, before any tunnel -->
-        <div class="tunnel-card u-mb-20" id="ptCard">
-          <div class="tc-header u-bb-ln u-pb-16 u-mb-16">
-            <div>
-              <span class="tc-title u-fs-18 u-fw-700" data-i18n="pt_title">Path Test Before Any Tunnel</span> <span class="eng-pro hidden" id="ptPro" data-no-i18n>PRO</span>
-              <div class="qs-hint u-mt-4" data-i18n="pt_sub">Finds which transports get through between your Iran and foreign servers, with the real FRP and Backhaul cores. Nothing is set up for good: temporary servers run for a few minutes and are removed. Safe next to a running tunnel: the test uses its own free ports and its own GRE interface and never touches the tunnel.</div>
+        <div class="tunnel-card bench-card" id="ptCard">
+          <div class="tc-header">
+            <div class="set-h">
+              <span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M6 16.5V11a4 4 0 0 1 4-4h5.5"/><path d="m13 4.5 2.5 2.5L13 9.5"/></svg></span>
+              <div class="bench-h-t">
+              <p class="tc-title"><span data-i18n="pt_title">Path Test Before Any Tunnel</span> <span class="eng-pro hidden" id="ptPro" data-no-i18n>PRO</span></p>
+              <div class="qs-hint" data-i18n="pt_sub">Finds which transports get through between your Iran and foreign servers, with the real FRP and Backhaul cores. Nothing is set up for good: temporary servers run for a few minutes and are removed. Safe next to a running tunnel: the test uses its own free ports and its own GRE interface and never touches the tunnel.</div>
+              </div>
             </div>
             <span class="badge dim" id="ptBadge" data-i18n="pt_idle">Not running</span>
           </div>
@@ -3301,169 +3313,147 @@
             </div>
           </div>
         </div>
-        <!-- Pre-connection Target & Role Configuration Card -->
-        <div class="tunnel-card u-bd-info u-bg-s1 u-lift u-mb-20" style="backdrop-filter:blur(16px);">
-          <div class="tc-header u-bb-ln u-pb-16 u-mb-16">
-            <div>
-              <div class="u-flex-center-gap10">
-                <span class="tc-title u-fs-18 u-fw-700 u-flex u-ai-c u-gap-8" data-i18n="bench_leaderboard_title">
-                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#38bdf8" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                  Smart Multi-Protocol Carrier Benchmark
-                </span>
-                <span class="badge ok" id="benchStatusPill">Ready</span>
+        <!-- Carrier benchmark: where to test, the winner, four tiles and the ranked carriers -->
+        <div class="tunnel-card bench-card">
+          <div class="tc-header">
+            <div class="set-h">
+              <span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 2 4.5 13.5H12L11 22l8.5-11.5H12z"/></svg></span>
+              <div class="bench-h-t">
+                <p class="tc-title"><span data-i18n="bench_leaderboard_title">Smart Multi-Protocol Carrier Benchmark</span> <span class="badge ok" id="benchStatusPill">Ready</span></p>
+                <div class="qs-hint" id="benchMetaSub">Independent end-to-end benchmark across all 7 Hashem protocols before establishing tunnel</div>
               </div>
-              <div class="qs-hint u-mt-4" id="benchMetaSub">Independent end-to-end benchmark across all 7 Hashem protocols before establishing tunnel</div>
             </div>
-            <div class="qs-actions">
-              <button class="hashem-btn hashem-btn-primary u-flex u-ai-c u-gap-8" id="benchRunBtn">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                <span id="benchRunBtnTxt" data-i18n="bench_run_btn">Run Smart Benchmark</span>
-              </button>
-            </div>
+            <button class="hashem-btn hashem-btn-primary u-flex u-ai-c u-gap-8" id="benchRunBtn">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <span id="benchRunBtnTxt" data-i18n="bench_run_btn">Run Smart Benchmark</span>
+            </button>
           </div>
 
-          <!-- Pre-connection Target Configuration Form -->
-          <div class="u-grid-2 u-gap-16 u-mb-16 u-bg-sunk u-p-16 u-r-10 u-bd-ln">
-            <div>
-              <label class="qs-label u-mb-8 u-fs-13 u-fw-600 u-flex u-ai-c u-gap-8">
-                <span>Current Server Role</span>
-                <span class="badge info">Role</span>
-              </label>
-              <div class="qs-seg u-mb-8" role="group" aria-label="Server Role Selection">
-                <button type="button" id="benchRoleIranBtn" class="active u-fw-600" aria-pressed="true">Iran Server</button>
-                <button type="button" id="benchRoleForeignBtn" aria-pressed="false" class="u-fw-600">Foreign Server</button>
+          <!-- Where to test -->
+          <div class="bench-target">
+            <div class="bench-field">
+              <span class="qs-label">Current Server Role</span>
+              <div class="qs-seg" role="group" aria-label="Server Role Selection">
+                <button type="button" id="benchRoleIranBtn" class="active" aria-pressed="true">Iran Server</button>
+                <button type="button" id="benchRoleForeignBtn" aria-pressed="false">Foreign Server</button>
               </div>
               <input type="hidden" id="benchTargetRole" value="iran">
               <div class="qs-hint" id="benchRoleHint">On Iran server, enter foreign server address to probe all 7 protocols outwards.</div>
             </div>
-
-            <div>
-              <label class="qs-label u-mb-8 u-fs-13 u-fw-600 u-flex u-ai-c u-jc-sb" for="benchTargetHost">
+            <div class="bench-field">
+              <label class="qs-label bench-lbl" for="benchTargetHost">
                 <span>Foreign Server Public IP or Domain (Destination)</span>
                 <span class="badge dim u-none" id="benchAutoDetectBadge">Auto Detect</span>
               </label>
-              <input class="hashem-input u-ltr u-text-start u-mono u-fs-14 u-p-8x12" id="benchTargetHost" placeholder="e.g. 198.51.100.10 or foreign.mydomain.com" inputmode="decimal">
-              <div class="qs-hint u-mt-4" id="benchTargetHint">Enter destination host to benchmark and discover the best protocol for lowest packet loss.</div>
+              <input class="hashem-input u-ltr u-text-start u-mono" id="benchTargetHost" placeholder="e.g. 198.51.100.10 or foreign.mydomain.com" inputmode="decimal">
+              <div class="qs-hint" id="benchTargetHint">Enter destination host to benchmark and discover the best protocol for lowest packet loss.</div>
             </div>
-          </div>
-
-          <!-- Advanced Custom Ports Accordion (Optional) -->
-          <div class="u-mb-16">
-            <div class="u-flex u-ai-c u-jc-sb u-cursor-pointer u-p-8x4" id="benchAdvToggle">
-              <span class="u-fs-13 u-c-ac u-fw-600 u-flex u-ai-c u-gap-8">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <div class="bench-adv">
+              <button type="button" class="bench-adv-t" id="benchAdvToggle" aria-expanded="false" aria-controls="benchAdvWrap">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
                 <span>Custom Benchmark Ports (Optional)</span>
-              </span>
-              <span class="u-fs-12 u-c-mu" id="benchAdvChevron">▼ Expand</span>
-            </div>
-            <div id="benchAdvWrap" class="hidden u-grid-4 u-gap-12 u-mt-8 u-bg-inset u-p-12 u-r-8 u-bd-ln">
-              <div>
-                <label for="benchFrpPort" class="u-fs-12 u-c-mu u-block u-mb-4">FRP Port (TCP/KCP/QUIC)</label>
-                <input class="hashem-input u-p-8x12 u-fs-12 u-mono" id="benchFrpPort" type="number" value="7000">
-              </div>
-              <div>
-                <label for="benchWssPort" class="u-fs-12 u-c-mu u-block u-mb-4">WSS TLS Port</label>
-                <input class="hashem-input u-p-8x12 u-fs-12 u-mono" id="benchWssPort" type="number" value="8443">
-              </div>
-              <div>
-                <label for="benchBackhaulPort" class="u-fs-12 u-c-mu u-block u-mb-4">Backhaul Port</label>
-                <input class="hashem-input u-p-8x12 u-fs-12 u-mono" id="benchBackhaulPort" type="number" value="3080">
-              </div>
-              <div>
-                <label for="benchBagherPort" class="u-fs-12 u-c-mu u-block u-mb-4">Bagher SSH Port</label>
-                <input class="hashem-input u-p-8x12 u-fs-12 u-mono" id="benchBagherPort" type="number" value="22">
-              </div>
-            </div>
-          </div>
-
-          <!-- Top Winner Recommendation Showcase Banner -->
-          <div id="benchWinnerBanner" class="hidden u-bd-ok u-bg-s1 u-r-12 u-p-20x20 u-mb-20 u-noglow">
-            <div class="u-flex u-ai-c u-jc-sb u-wrap u-gap-16">
-              <div>
-                <div class="u-flex u-ai-c u-gap-8">
-                  <span class="badge ok" id="benchRecBadge">Recommended Protocol</span>
-                  <span class="badge info" id="benchWinnerBadge">Highest Stability</span>
+                <svg class="bench-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <div id="benchAdvWrap" class="hidden bench-ports">
+                <div>
+                  <label for="benchFrpPort" class="qs-label">FRP Port (TCP/KCP/QUIC)</label>
+                  <input class="hashem-input u-mono" id="benchFrpPort" type="number" value="7000">
                 </div>
-                <h3 id="benchWinnerTitle" class="u-m-8x0x4x0 u-fs-20 u-fw-700 u-c-tx u-flex u-ai-c u-gap-8">—</h3>
-                <div id="benchWinnerDesc" class="u-fs-13 u-c-mu">Based on live probe metrics, this carrier offers maximum throughput with lowest drop rate.</div>
-              </div>
-              <div class="u-flex u-ai-c u-gap-12">
-                <div class="u-text-end u-bg-inset u-p-8x16 u-r-8 u-bd-ln">
-                  <div class="u-fs-12 u-c-mu">Quality Score</div>
-                  <div id="benchWinnerScore" class="u-fs-18 u-fw-700 u-c-ok u-mono">— / 100</div>
+                <div>
+                  <label for="benchWssPort" class="qs-label">WSS TLS Port</label>
+                  <input class="hashem-input u-mono" id="benchWssPort" type="number" value="8443">
                 </div>
-                <button class="hashem-btn hashem-btn-primary" id="benchApplyWinnerBtn">
-                  Apply This Protocol
-                </button>
+                <div>
+                  <label for="benchBackhaulPort" class="qs-label">Backhaul Port</label>
+                  <input class="hashem-input u-mono" id="benchBackhaulPort" type="number" value="3080">
+                </div>
+                <div>
+                  <label for="benchBagherPort" class="qs-label">Bagher SSH Port</label>
+                  <input class="hashem-input u-mono" id="benchBagherPort" type="number" value="22">
+                </div>
               </div>
             </div>
           </div>
 
-          <!-- Quick Telemetry Stats Grid -->
-          <div class="bench-stats-grid">
-            <div class="bench-stat-card">
-              <span class="wd-stat-label u-stat-label">
-                Best Protocol
-              </span>
-              <div class="wd-stat-val u-stat-val-ok" id="benchStatWinner">—</div>
-              <span class="wd-stat-sub u-hint-12" id="benchStatWinnerSub">Top Recommendation</span>
+          <!-- The winner, with its score as a ring -->
+          <div id="benchWinnerBanner" class="hidden bench-win" data-st="ok">
+            <div class="bench-ring" id="benchWinnerRing" aria-hidden="true">
+              <div><b id="benchWinnerScore">—</b><small>/ 100</small></div>
             </div>
-            <div class="bench-stat-card">
-              <span class="wd-stat-label u-stat-label">
-                Active Tunnel Carrier
-              </span>
-              <div class="wd-stat-val u-fs-18 u-fw-700 u-c-info u-m-8x0x4x0" id="benchStatActive">—</div>
-              <span class="wd-stat-sub u-hint-12" id="benchStatActiveSub">Running Carrier</span>
+            <div class="bench-win-t">
+              <div class="u-flex u-ai-c u-gap-8 u-wrap">
+                <span class="badge ok" id="benchRecBadge">Recommended Protocol</span>
+                <span class="badge info" id="benchWinnerBadge">Highest Stability</span>
+              </div>
+              <h3 id="benchWinnerTitle">—</h3>
+              <div id="benchWinnerDesc" class="qs-hint">Based on live probe metrics, this carrier offers maximum throughput with lowest drop rate.</div>
             </div>
-            <div class="bench-stat-card">
-              <span class="wd-stat-label u-stat-label">
-                Lowest RTT Latency
-              </span>
-              <div class="wd-stat-val u-fs-18 u-fw-700 u-c-tx u-m-8x0x4x0" id="benchStatMinRtt">—</div>
-              <span class="wd-stat-sub u-hint-12" id="benchStatMinRttSub">Round-Trip Time</span>
+            <button class="hashem-btn hashem-btn-primary" id="benchApplyWinnerBtn">Apply This Protocol</button>
+          </div>
+
+          <!-- Four tiles -->
+          <div class="perf-tiles">
+            <div class="perf-tile" id="benchTileWinner">
+              <span class="perf-tile-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></svg></span>
+              <div class="perf-tile-t">
+                <span class="perf-tile-k">Best Protocol</span>
+                <div class="perf-tile-v" id="benchStatWinner">—</div>
+                <span class="perf-tile-s" id="benchStatWinnerSub">Top Recommendation</span>
+              </div>
             </div>
-            <div class="bench-stat-card">
-              <span class="wd-stat-label u-stat-label">
-                Packet Loss Rate
-              </span>
-              <div class="wd-stat-val u-stat-val-ok" id="benchStatLoss">0%</div>
-              <span class="wd-stat-sub u-hint-12" id="benchStatLossSub">Dropped Packets</span>
+            <div class="perf-tile" id="benchTileActive" data-st="info">
+              <span class="perf-tile-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="6" r="2.5"/><path d="M8.5 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.5"/></svg></span>
+              <div class="perf-tile-t">
+                <span class="perf-tile-k">Active Tunnel Carrier</span>
+                <div class="perf-tile-v" id="benchStatActive">—</div>
+                <span class="perf-tile-s" id="benchStatActiveSub">Running Carrier</span>
+              </div>
+            </div>
+            <div class="perf-tile" id="benchTileRtt">
+              <span class="perf-tile-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M10 2h4"/></svg></span>
+              <div class="perf-tile-t">
+                <span class="perf-tile-k">Lowest RTT Latency</span>
+                <div class="perf-tile-v" id="benchStatMinRtt">—</div>
+                <span class="perf-tile-s" id="benchStatMinRttSub">Round-Trip Time</span>
+              </div>
+            </div>
+            <div class="perf-tile" id="benchTileLoss">
+              <span class="perf-tile-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></span>
+              <div class="perf-tile-t">
+                <span class="perf-tile-k">Packet Loss Rate</span>
+                <div class="perf-tile-v" id="benchStatLoss">—</div>
+                <span class="perf-tile-s" id="benchStatLossSub">Dropped Packets</span>
+              </div>
             </div>
           </div>
 
-          <!-- Leaderboard Table Wrap -->
-          <div class="bench-table-wrap">
-            <table class="hashem-table" id="benchTable">
-              <thead>
-                <tr>
-                  <th class="u-w-44 u-text-center">#</th>
-                  <th data-i18n="bench_tbl_rank">Protocol & Carrier</th>
-                  <th data-i18n="bench_tbl_trans">Transport Core</th>
-                  <th data-i18n="bench_tbl_port">Destination Port</th>
-                  <th data-i18n="bench_tbl_rtt">RTT Latency</th>
-                  <th data-i18n="bench_tbl_loss">Packet Loss</th>
-                  <th data-i18n="bench_tbl_jitter">Jitter</th>
-                  <th data-i18n="bench_tbl_score">Quality Score</th>
-                  <th data-i18n="bench_tbl_status">Status</th>
-                  <th data-i18n="bench_tbl_action">Actions</th>
-                </tr>
-              </thead>
-              <tbody id="benchTableBody">
-                <tr><td colspan="10"><div class="ent-skel u-h-14"></div></td></tr>
-              </tbody>
-            </table>
+          <!-- Ranked carriers: a row each; on a narrow screen the numbers wrap under the name -->
+          <div class="bench-list" role="table" aria-label="Carrier benchmark results">
+            <div class="bench-head" role="row">
+              <span role="columnheader">#</span>
+              <span role="columnheader" data-i18n="bench_tbl_rank">Protocol & Carrier</span>
+              <span role="columnheader" data-i18n="bench_tbl_rtt">RTT Latency</span>
+              <span role="columnheader" data-i18n="bench_tbl_loss">Packet Loss</span>
+              <span role="columnheader" data-i18n="bench_tbl_jitter">Jitter</span>
+              <span role="columnheader" data-i18n="bench_tbl_score">Quality Score</span>
+              <span role="columnheader" data-i18n="bench_tbl_status">Status</span>
+              <span role="columnheader" data-i18n="bench_tbl_action">Actions</span>
+            </div>
+            <div role="rowgroup" id="benchTableBody">
+              <div class="bench-empty"><div class="ent-skel u-h-14"></div></div>
+            </div>
           </div>
         </div>
 
         <!-- Peer Link -->
-        <div class="u-mt-16">
+        <div>
           <!-- Card 1: Peer Link Status -->
-          <div class="tunnel-card u-card-tint">
+          <div class="tunnel-card bench-card">
             <div class="tc-header">
-              <span class="tc-title u-flex-center-gap8">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                <span data-i18n="bench_peer_link_title">Inter-Panel Link</span>
-              </span>
+              <div class="set-h">
+                <span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>
+                <p class="tc-title" data-i18n="bench_peer_link_title">Inter-Panel Link</p>
+              </div>
               <span class="badge dim" id="peerLinkBadge">Probing...</span>
             </div>
             <div class="qs-hint" id="peerLinkSub" data-i18n="bench_peer_link_sub">Real-time telemetry and state synchronization with peer panel.</div>
