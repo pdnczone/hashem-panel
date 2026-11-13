@@ -33,6 +33,15 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	if m := snap.Main; m != nil {
 		lv.HealthState, lv.ICMPFiltered, lv.LatencyMs, lv.LatencyKind, lv.Reasons = m.HealthState, m.ICMPFiltered, m.LatencyMs, m.LatencyKind, m.Reasons
 		lv.Rx, lv.Tx = m.Rx, m.Tx
+	} else if st := snap.Local; st.Gre.Exists || st.FrpUp {
+		// a foreign server has no hub link: its health comes from its own
+		// session, as on the dashboard. A live session is not pinged
+		// (snapshot.go), so ping_ok alone would call a working tunnel weak.
+		h := ComputeHealth(LinkSignals{
+			ServiceActive: st.FrpUp, GreIfUp: st.Gre.Exists, Session: snap.LocalSession, TCPRTTms: snap.LocalRTT,
+			ICMPOK: st.PingOK, ICMPms: parsePingMs(st.PingMs), ICMPFresh: st.PingOK || snap.LocalSession,
+		})
+		lv.HealthState, lv.ICMPFiltered, lv.LatencyMs, lv.LatencyKind, lv.Reasons = h.State, h.ICMPFiltered, h.LatencyMs, h.LatencyKind, h.Reasons
 	}
 	lv.CarrierID = mainCarrierID(snap.Local)
 	lv.Name = linkLabel("main")
@@ -40,11 +49,18 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		lv.Rx, lv.Tx = snap.LocalRx, snap.LocalTx
 	}
 	resp := map[string]any{"local": lv, "peers": peers, "peer_count": len(peers), "peer_max": maxPeers(), "snapshot_age_ms": snap.AgeMs(),
-		"counters_at": countersAtMs(snap)}
+		"counters_at": countersAtMs(snap), "server": statusServer(snap)}
 	if c, err := r.Cookie("gre_session"); err == nil && c.Value != "" {
 		resp["csrf_token"] = GenerateCSRFToken(c.Value)
 	}
 	writeJSON(w, resp)
+}
+
+// statusServer names this machine for the topbar: its host name and public IP
+// (the snapshot's cached lookup, no request of its own).
+func statusServer(snap *HubSnapshot) map[string]string {
+	host, _ := os.Hostname()
+	return map[string]string{"hostname": host, "public_ip": snap.PublicIP}
 }
 
 // localView is the base tunnel status plus its multi-signal health (additive

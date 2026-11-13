@@ -3428,5 +3428,6 @@ window.FA_TEXT = {
 "How the panel is reached over HTTPS, and the root shell in the browser.": "دسترسی به پنل با HTTPS، و پوسته‌ی root در مرورگر.",
 "Alerts & monitoring": "هشدار و پایش",
 "A message when a tunnel goes down, each link's history, and metrics for your scraper.": "پیام هنگام قطع تونل، تاریخچه‌ی هر لینک و متریک برای Prometheus.",
-"The accent colour and the table density of this browser.": "رنگ اصلی و تراکم جدول‌ها در این مرورگر."
+"The accent colour and the table density of this browser.": "رنگ اصلی و تراکم جدول‌ها در این مرورگر.",
+"Copy this server's IP": "کپی IP این سرور"
 };
