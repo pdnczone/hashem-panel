@@ -4084,8 +4084,19 @@ function updAgo(ts) {
   if (d < 3600) return docTpl('{0} min ago', [Math.round(d / 60)]);
   return docTpl('{0} h ago', [Math.round(d / 3600)]);
 }
-function updRow(k, vHTML) { return '<div class="ver-row"><span class="k">' + esc(k) + '</span><span>' + vHTML + '</span></div>'; }
-function updDot(cls, txt) { $('updDot').className = 'status-indicator ' + cls; $('updDotTxt').textContent = txt; }
+// The facts under the installed version are tiles: an icon and a label over
+// the value, and a state (ok/warn) when the value is a verdict.
+const UPD_IC = {
+  tag: '<path d="M3 12V4h8l9 9-8 8z"/><circle cx="7.5" cy="7.5" r="1.3"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  server: '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
+};
+function updTileHTML(icon, k, vHTML) {
+  return '<span class="k"><svg viewBox="0 0 24 24" aria-hidden="true">' + UPD_IC[icon] + '</svg>' + esc(k) + '</span>' + vHTML;
+}
+function updRow(icon, k, vHTML) { return '<div class="upd-stat">' + updTileHTML(icon, k, vHTML) + '</div>'; }
+function updDot(cls, txt) { $('updDot').className = 'status-indicator upd-pill ' + cls; $('updDotTxt').textContent = txt; }
+function updChannelSet(ch) { document.querySelectorAll('#updChannel input[name="updCh"]').forEach(r => { r.checked = r.value === ch; }); }
 
 async function loadVersion(force) {
   const chk = $('updCheckBtn');
@@ -4095,7 +4106,7 @@ async function loadVersion(force) {
     updState.current = v.current || ''; updState.latest = v.latest || ''; updState.avail = !!v.update_available;
     $('verCurrent').textContent = v.current || '—';
     const isDev = v.channel === 'dev';
-    $('updChannel').value = isDev ? 'dev' : 'stable';
+    updChannelSet(isDev ? 'dev' : 'stable');
     $('updDevBadge').classList.toggle('hidden', !isDev);
     $('updChannelWarn').classList.toggle('hidden', !isDev);
     const badge = $('updBadge'); if (badge) badge.classList.toggle('hidden', !v.update_available);
@@ -4104,12 +4115,15 @@ async function loadVersion(force) {
     const failed = !v.latest || v.latest === 'unknown';
     $('updTo').hidden = !v.update_available;
     $('verLatest').textContent = v.latest || '—';
+    $('updHero').dataset.st = failed ? 'fail' : v.update_available ? 'new' : 'ok';
     if (failed) updDot('warn', tr('', 'Check failed'));
     else updDot(v.update_available ? 'warn' : 'ok', tr('', v.update_available ? 'Update available' : 'Up to date'));
 
-    let rows = updRow(tr('', 'Latest release'), failed ? esc(tr('', 'Unknown: GitHub could not be reached')) : '<bdi dir="ltr">' + esc(v.latest) + '</bdi>');
-    rows += updRow(tr('', 'Last checked'), esc(updAgo(v.checked_at)));
-    rows += '<div class="ver-row" id="updPeerRow" hidden></div>';
+    let rows = updRow('tag', tr('', 'Latest release'), failed
+      ? '<span class="v dim">' + esc(tr('', 'Unknown: GitHub could not be reached')) + '</span>'
+      : '<bdi class="v" dir="ltr">' + esc(v.latest) + '</bdi>');
+    rows += updRow('clock', tr('', 'Last checked'), '<span class="v">' + esc(updAgo(v.checked_at)) + '</span>');
+    rows += '<div class="upd-stat" id="updPeerRow" hidden></div>';
     $('verRowsUpd').innerHTML = rows;
 
     const rb = $('updRollback');
@@ -4145,12 +4159,14 @@ async function loadPeerVersion() {
   try { p = await api('/api/update/peer'); } catch (_) { return; }
   const row = $('updPeerRow');
   if (!row || !p.configured) return;
-  let v;
-  if (!p.reachable) v = '<span class="qs-hint">' + esc(tr('', 'Not reachable')) + '</span>';
+  let v, st = 'warn';
+  const ver = () => '<bdi class="v" dir="ltr">' + esc(p.version) + '</bdi>';
+  if (!p.reachable) { v = '<span class="v dim">' + esc(tr('', 'Not reachable')) + '</span>'; st = ''; }
   else if (!p.version) v = '<span class="badge warn">' + esc(tr('', 'Older version: update it too')) + '</span>';
-  else if (p.same) v = '<bdi dir="ltr">' + esc(p.version) + '</bdi> <span class="badge ok">' + esc(tr('', 'Same')) + '</span>';
-  else v = '<bdi dir="ltr">' + esc(p.version) + '</bdi> <span class="badge warn">' + esc(tr('', 'Different: update both servers')) + '</span>';
-  row.innerHTML = '<span class="k">' + esc(tr('', 'Other server')) + '</span><span>' + v + '</span>';
+  else if (p.same) { v = ver() + '<span class="badge ok">' + esc(tr('', 'Same')) + '</span>'; st = 'ok'; }
+  else v = ver() + '<span class="badge warn">' + esc(tr('', 'Different: update both servers')) + '</span>';
+  row.className = 'upd-stat' + (st ? ' ' + st : '');
+  row.innerHTML = updTileHTML('server', tr('', 'Other server'), v);
   row.hidden = false;
 }
 
@@ -4257,11 +4273,12 @@ $('rbBtn').onclick = async () => {
     tr('', 'Install'))) return;
   runUpdate(tag);
 };
-$('updChannel').onchange = async () => {
-  const sel = $('updChannel');
+$('updChannel').onchange = async e => {
+  const ch = e.target.value;
+  if (ch !== 'dev' && ch !== 'stable') return;
   try {
-    await api('/api/update/channel', {channel: sel.value});
-    toastOk(tr('upd_channel', 'Update channel'), sel.value === 'dev' ? tr('upd_channel_dev', 'Dev') : tr('upd_channel_stable', 'Stable'));
+    await api('/api/update/channel', {channel: ch});
+    toastOk(tr('upd_channel', 'Update channel'), ch === 'dev' ? tr('upd_channel_dev', 'Dev') : tr('upd_channel_stable', 'Stable'));
   } catch (e) { toastErr(tr('', 'Could not change the channel'), e.message); }
   loadVersion(true);
 };
