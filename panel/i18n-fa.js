@@ -3384,5 +3384,11 @@ window.FA_TEXT = {
 "Make the tunnel between them": "تانل بین آن‌ها را بسازید",
 "Pick the Iran server, the foreign server, the engine and the ports.": "سرور ایران، سرور خارج، موتور و پورت‌ها را انتخاب کنید.",
 "Add a server first: it shows up here when it joins.": "اول یک سرور اضافه کنید: وقتی وصل شد همین‌جا دیده می‌شود.",
-"Open the Nodes page": "باز کردن صفحه‌ی نودها"
+"Open the Nodes page": "باز کردن صفحه‌ی نودها",
+"Central": "مرکز",
+"Core": "هسته",
+"Iran servers": "سرورهای ایران",
+"No Iran server yet": "هنوز سرور ایران ندارید",
+"No foreign server yet": "هنوز سرور خارج ندارید",
+"Select a server to see its tunnels.": "روی یک سرور بزنید تا تونل‌هایش را ببینید."
 };

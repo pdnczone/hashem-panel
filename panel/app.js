@@ -12148,6 +12148,7 @@ function setupNodeRender(d) {
 function renderNodes(d) {
   _nodes = d;
   setupNodeRender(d);
+  nodeMapRender();
   renderNodeTunnels(d);
   const acts = $('nodeActs'), body = $('nodeBody'), err = $('nodeErr');
   if (err) { err.textContent = d.error || ''; err.classList.toggle('hidden', !d.error); }
@@ -12190,9 +12191,14 @@ async function loadNodes() {
   } catch (e) { reportErr('nodes', e); }
 }
 (function initNodes() {
+  let ticks = 0;
   if (!nodesTimer) nodesTimer = setInterval(() => {
     const t = $('tab-nodes');
-    if (t && !t.hidden && !document.hidden && !($('custModal') && !$('custModal').hidden)) loadNodes();
+    if (!(t && !t.hidden && !document.hidden && !($('custModal') && !$('custModal').hidden))) return;
+    loadNodes();
+    // every 30 s the servers' health and traffic and the tunnels' state again,
+    // for the map, All servers and Tunnels between servers
+    if (++ticks % 6 === 0 && _nodes && _nodes.role === 'central') { nodeFleetLoad(); loadNodeTunnels(); }
   }, 5000);
 })();
 const nodeFind = id => ((_nodes && _nodes.nodes) || []).find(n => n.id === id);
@@ -12354,8 +12360,13 @@ async function nodeFleetLoad() {
   const card = $('nodeFleetCard');
   if (!card || !_nodes || _nodes.role !== 'central') { if (card) card.hidden = true; return; }
   card.hidden = false;
-  try { _nodeFleet = await api('/api/nodes', { action: 'fleet' }); } catch (e) { _nodeFleet = { servers: [], totals: {}, errors: [e.message] }; }
+  // a GET: refreshed every 30 s, and reads write no audit line
+  try { _nodeFleet = await api('/api/nodes?view=fleet'); } catch (e) {
+    // keep what was read last: the map keeps its places, the error is shown
+    _nodeFleet = Object.assign({ servers: [], totals: {} }, _nodeFleet || {}, { errors: [e.message] });
+  }
   nodeFleetRender();
+  nodeMapRender();
 }
 function nodeFleetRender() {
   const body = $('nodeFleetBody'), f = _nodeFleet;
@@ -12434,6 +12445,222 @@ async function nodeFleetCustomersOpen() {
 function custModalClose() { const ov = $('custModal'); if (ov) modalHide(ov); }
 const displayVer = v => String(v || '').replace(/^v?/, 'v');
 
+// ---- the Nodes map: every server in its column (Iran | foreign), the tunnels
+// between them drawn as lines. It reads what the page already loads (_nodes
+// every 5 s, _nodeFleet and _ntLinks on demand) and is rebuilt only when what
+// it draws changes; the bars and rates are updated in place.
+let _nmSel = null, _nmSig = '', _nmRO = null, _nmRaf = 0;
+const NM_ICON_SERVER = '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>';
+const NM_ICON_CENTRAL = '<svg viewBox="0 0 24 24"><rect x="9" y="2.5" width="6" height="5" rx="1"/><rect x="2.5" y="16.5" width="6" height="5" rx="1"/><rect x="15.5" y="16.5" width="6" height="5" rx="1"/><path d="M12 7.5v4.5M5.5 16.5V12h13v4.5"/></svg>';
+function nmServers() {
+  const d = _nodes;
+  if (!d || d.role !== 'central') return [];
+  const fleet = {};
+  ((_nodeFleet && _nodeFleet.servers) || []).forEach(s => { fleet[Number(s.id)] = s; });
+  const links = _ntLinks || [];
+  // a server's side: what it reports, else the end it holds in a tunnel
+  const sideOf = (id, given) => (given === 'iran' || given === 'foreign') ? given
+    : links.some(l => Number(l.server) === id) ? 'iran' : links.some(l => Number(l.client) === id) ? 'foreign' : '';
+  const c = fleet[0] || {};
+  const out = [{ id: 0, central: true, name: tr('', 'This server'), ip: c.public || '', side: sideOf(0, c.role), online: true, held: false, core: false, f: fleet[0] || null, i: {} }];
+  (d.nodes || []).forEach(n => {
+    const id = Number(n.id), i = n.info || {};
+    out.push({ id, central: false, name: n.name, ip: i.public_ip || n.addr || '', side: sideOf(id, i.side), online: !!n.online,
+      held: !!n.held, core: i.kind === 'core', f: fleet[id] || null, i, lastSeen: n.last_seen });
+  });
+  return out;
+}
+function nmState(s) {
+  if (!s.online) return ['err', tr('', 'Offline')];
+  if (s.held) return ['warn', tr('', 'not approved')];
+  if (s.f && s.f.error) return ['err', tr('', 'Not read')];
+  const h = s.f && s.f.health;
+  if (h === 'down') return ['err', tr('', 'Down')];
+  if (h === 'degraded') return ['warn', tr('', 'Degraded')];
+  return ['ok', h === 'healthy' ? tr('', 'Healthy') : tr('', 'Online')];
+}
+function nmLinkState(l) {
+  if (l.working) return ['busy', tr('', 'Autopilot is working')];
+  if (l.state === 'healthy') return ['ok', tr('', 'Healthy')];
+  if (l.state === 'degraded') return ['warn', tr('', 'Degraded')];
+  if (l.state === 'down') return ['err', tr('', 'Down')];
+  return ['', tr('', 'Not read')];
+}
+function nmCard(s, rel) {
+  const st = nmState(s);
+  const tag = s.central ? `<span class="nm-tag">${esc(tr('', 'Central'))}</span>`
+    : s.held ? `<span class="nm-tag warn">${esc(tr('', 'not approved'))}</span>`
+    : s.core ? `<span class="nm-tag mu" title="${esc(tr('', 'Node core: no web panel on this server; this panel manages it'))}">${esc(tr('', 'Core'))}</span>` : '';
+  const btn = (label, fn) => `<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="${fn}">${esc(label)}</button>`;
+  const acts = s.central ? btn(tr('', 'Dashboard'), "goTab('dashboard')")
+    : (s.online && !s.held ? btn(tr('', 'Open'), `openNodeHere(${s.id})`) : '') + btn(tr('', 'Details'), `nodeMapDetails(${s.id})`);
+  return `<div class="nm-node${s.central ? ' central' : ''}${s.online ? '' : ' off'}${_nmSel === s.id ? ' sel' : ''}${rel ? ' rel' : ''}" data-nm="${s.id}">
+    <button type="button" class="nm-hit" onclick="nodeMapPick(${s.id})" aria-pressed="${_nmSel === s.id}" aria-label="${esc(s.name + ' · ' + st[1])}" title="${esc(st[1])}"></button>
+    <div class="nm-top"><span class="nm-ic" aria-hidden="true">${s.central ? NM_ICON_CENTRAL : NM_ICON_SERVER}<i class="nm-dot ${st[0]}"></i></span>
+      <span class="nm-name"><b data-no-i18n>${esc(s.name)}</b><small data-no-i18n>${esc(s.ip || '—')}</small></span>${tag}</div>
+    <div class="nm-bars" data-no-i18n>${['CPU', 'RAM', tr('', 'Disk')].map(k => `<span class="nm-bar"><span>${esc(k)}<b>—</b></span><i></i></span>`).join('')}</div>
+    <div class="nm-rate" data-no-i18n></div>
+    <div class="nm-acts">${acts}</div></div>`;
+}
+// the parts that change every refresh, written into the cards in place
+function nmUpdateLive(servers) {
+  const map = $('nodeMapGrid');
+  if (!map) return;
+  servers.forEach(s => {
+    const el = map.querySelector(`.nm-node[data-nm="${s.id}"]`);
+    if (!el) return;
+    const f = s.f || {}, i = s.i || {};
+    const pick = (a, b) => (typeof a === 'number' && a >= 0) ? a : (typeof b === 'number' && b >= 0) ? b : -1;
+    const vals = [pick(i.cpu_pct, f.cpu_pct), pick(i.mem_pct, f.mem_pct), pick(i.disk_pct, f.disk_pct)];
+    el.querySelectorAll('.nm-bar').forEach((b, k) => {
+      const v = s.online ? vals[k] : -1;
+      b.querySelector('b').textContent = v >= 0 ? v.toFixed(0) + '%' : '—';
+      b.querySelector('i').style.setProperty('--nm-v', String(v >= 0 ? Math.min(v, 100) / 100 : 0));
+      b.classList.toggle('hi', v >= 75 && v < 90);
+      b.classList.toggle('crit', v >= 90);
+    });
+    const t = f.traffic || {}, n = typeof f.tunnels === 'number' ? f.tunnels : i.tunnels;
+    const parts = [];
+    if (typeof n === 'number') parts.push(`<span>${esc(tr('', 'Tunnels'))} <b>${Number(n)}</b></span>`);
+    if (s.online && f.traffic) parts.push(`<bdi>↓ ${esc(fmtRate(Number(t.speed_down) || 0))}</bdi><bdi>↑ ${esc(fmtRate(Number(t.speed_up) || 0))}</bdi>`);
+    if (!s.online && !s.central) parts.push(`<span>${esc(tr('', 'Last seen'))} ${esc(nodeAgo(s.lastSeen))}</span>`);
+    const html = parts.join('');
+    const r = el.querySelector('.nm-rate');
+    if (r.innerHTML !== html) r.innerHTML = html;
+  });
+}
+function nodeMapRender() {
+  const wrap = $('nodeMap');
+  if (!wrap) return;
+  const servers = nmServers();
+  if (servers.length < 2) { // not a central, or no node yet: the list says so
+    wrap.hidden = true; wrap.innerHTML = ''; _nmSig = '';
+    return;
+  }
+  wrap.hidden = false;
+  if (_ntLinks === null && _nodeFleet === null) { // the sides are on their way: keep the place
+    if (!wrap.querySelector('.nm-map')) { wrap.innerHTML = '<div class="ent-skel u-h-14"></div>'; _nmSig = ''; }
+    return;
+  }
+  const ids = new Set(servers.map(s => s.id));
+  const links = (_ntLinks || []).filter(l => ids.has(Number(l.server)) && ids.has(Number(l.client)) && Number(l.server) !== Number(l.client));
+  if (_nmSel !== null && !ids.has(_nmSel)) _nmSel = null;
+  const sig = JSON.stringify([currentLang, _nmSel, servers.map(s => [s.id, s.name, s.ip, s.side, s.online, s.held, s.core, nmState(s)[0]]),
+    links.map(l => [l.server, l.client, l.peer_id, l.state, l.working, l.carrier || l.engine || ''])]);
+  if (sig !== _nmSig) {
+    _nmSig = sig;
+    const rel = new Set();
+    if (_nmSel !== null) links.forEach(l => { const a = Number(l.server), b = Number(l.client); if (a === _nmSel) rel.add(b); if (b === _nmSel) rel.add(a); });
+    const col = (side, label, empty) => {
+      const list = servers.filter(s => s.side === side);
+      return `<div class="nm-col"><div class="nm-col-h">${esc(label)} <b>${list.length}</b></div>
+        ${list.length ? list.map(s => nmCard(s, rel.has(s.id))).join('') : `<div class="nm-empty">${esc(empty)}</div>`}</div>`;
+    };
+    const rest = servers.filter(s => s.side !== 'iran' && s.side !== 'foreign');
+    const lg = (cls, label) => `<span><i class="${cls}"></i>${esc(label)}</span>`;
+    // many servers: the cards keep their name and state; the selected one shows the rest
+    wrap.innerHTML = `<div class="nm-map${_nmSel !== null ? ' has-sel' : ''}${servers.length > 8 ? ' compact' : ''}" id="nodeMapGrid">
+        <svg class="nm-svg" aria-hidden="true"></svg>
+        ${col('iran', tr('', 'Iran servers'), tr('', 'No Iran server yet'))}<div></div>${col('foreign', tr('', 'Foreign servers'), tr('', 'No foreign server yet'))}
+        ${rest.length ? `<div class="nm-rest"><div class="nm-col-h">${esc(tr('', 'No tunnel yet'))} <b>${rest.length}</b></div>${rest.map(s => nmCard(s, rel.has(s.id))).join('')}</div>` : ''}
+      </div>
+      <div class="nm-legend">${lg('ok', tr('', 'Healthy'))}${lg('warn', tr('', 'Degraded'))}${lg('err', tr('', 'Down'))}${lg('busy', tr('', 'Autopilot is working'))}
+        <span class="nm-hint">${esc(links.length ? tr('', 'Select a server to see its tunnels.') : tr('', 'No tunnel between these servers yet.'))}</span></div>`;
+    nmObserve();
+  }
+  nmUpdateLive(servers);
+  nmDrawSoon();
+}
+function nmObserve() {
+  if (typeof ResizeObserver === 'undefined') return;
+  if (!_nmRO) _nmRO = new ResizeObserver(nmDrawSoon);
+  _nmRO.disconnect();
+  const map = $('nodeMapGrid');
+  if (!map) return;
+  _nmRO.observe(map);
+  map.querySelectorAll('.nm-node').forEach(el => _nmRO.observe(el));
+}
+function nmDrawSoon() {
+  if (_nmRaf) return;
+  _nmRaf = requestAnimationFrame(() => { _nmRaf = 0; nmDraw(); });
+}
+// nmDraw draws the tunnels from where the cards really are, so the lines
+// follow the layout in either direction (RTL flips the columns) and at any width.
+function nmDraw() {
+  const map = $('nodeMapGrid');
+  if (!map) return;
+  const svg = map.querySelector('.nm-svg'), mb = map.getBoundingClientRect();
+  // the SVG fills the padding box: measure from inside the border
+  const box = { left: mb.left + map.clientLeft, top: mb.top + map.clientTop, width: map.clientWidth, height: map.clientHeight };
+  if (!svg || !box.width) return;
+  const pos = id => {
+    const el = map.querySelector(`.nm-node[data-nm="${Number(id)}"]`);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { l: r.left - box.left, r: r.right - box.left, cx: (r.left + r.right) / 2 - box.left, cy: (r.top + r.bottom) / 2 - box.top };
+  };
+  const ids = new Set([...map.querySelectorAll('.nm-node')].map(el => Number(el.dataset.nm)));
+  const links = (_ntLinks || []).filter(l => ids.has(Number(l.server)) && ids.has(Number(l.client)) && Number(l.server) !== Number(l.client));
+  const pairs = {};
+  links.forEach(l => { const k = Number(l.server) + '-' + Number(l.client); (pairs[k] = pairs[k] || []).push(l); });
+  const wide = box.width >= 560, labels = links.length <= 6 || _nmSel !== null;
+  const placed = []; // label boxes already drawn: a label that would cover one is left out
+  const bez = (t, p0, p1, p2, p3) => { const u = 1 - t; return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3; };
+  let out = '';
+  Object.values(pairs).forEach(group => group.forEach((l, k) => {
+    const a = pos(l.server), b = pos(l.client);
+    if (!a || !b) return;
+    const spread = (k - (group.length - 1) / 2) * 10;
+    const y1 = a.cy + spread, y2 = b.cy + spread;
+    let x1, x2, c1, c2;
+    if (Math.abs(a.cx - b.cx) > 24) { // across the map: from the facing edges
+      const right = a.cx < b.cx;
+      x1 = right ? a.r : a.l; x2 = right ? b.l : b.r;
+      const dx = (x2 - x1) / 2;
+      c1 = [x1 + dx, y1]; c2 = [x2 - dx, y2];
+    } else { // both in one column: a loop out into the middle of the map
+      const right = a.cx < box.width / 2;
+      x1 = right ? a.r : a.l; x2 = right ? b.r : b.l;
+      const off = (right ? 1 : -1) * Math.max(36, Math.min(90, Math.abs(y2 - y1) / 2));
+      c1 = [x1 + off, y1]; c2 = [x2 + off, y2];
+    }
+    const d = `M${x1.toFixed(1)} ${y1.toFixed(1)} C${c1[0].toFixed(1)} ${c1[1].toFixed(1)} ${c2[0].toFixed(1)} ${c2[1].toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+    const st = nmLinkState(l), s = Number(l.server), c = Number(l.client);
+    const isRel = _nmSel !== null && (s === _nmSel || c === _nmSel);
+    const carrier = String(l.carrier || l.engine || 'frp');
+    const title = `${ntName(s)} → ${ntName(c)} · ${carrier} · ${st[1]}${l.name ? ' · ' + l.name : ''}`;
+    // the carrier's label: on the curve where it covers no other label
+    let lbl = null;
+    if (wide && labels && (_nmSel === null || isRel)) {
+      const w = carrier.length * 7.5 + 10, h = 16;
+      for (const t of [0.5, 0.35, 0.65, 0.25, 0.75]) {
+        const x = bez(t, x1, c1[0], c2[0], x2), y = bez(t, y1, c1[1], c2[1], y2) - 8;
+        const r = { l: x - w / 2, r: x + w / 2, t: y - h + 4, b: y + 4 };
+        if (!placed.some(q => r.l < q.r && r.r > q.l && r.t < q.b && r.b > q.t)) { placed.push(r); lbl = [x, y]; break; }
+      }
+    }
+    out += `<g class="${isRel ? 'rel' : ''}"><title>${esc(title)}</title><path class="nm-lk-bg ${st[0]}" d="${d}"/><path class="nm-lk ${st[0]}" d="${d}"/>
+      <circle class="nm-end ${st[0]}" cx="${x1.toFixed(1)}" cy="${y1.toFixed(1)}" r="3.5"/><circle class="nm-end ${st[0]}" cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="3.5"/>
+      ${lbl ? `<text class="nm-lbl" x="${lbl[0].toFixed(1)}" y="${lbl[1].toFixed(1)}" text-anchor="middle">${esc(carrier)}</text>` : ''}</g>`;
+  }));
+  svg.setAttribute('viewBox', `0 0 ${box.width.toFixed(1)} ${box.height.toFixed(1)}`);
+  if (svg.innerHTML !== out) svg.innerHTML = out;
+}
+function nodeMapPick(id) {
+  _nmSel = _nmSel === Number(id) ? null : Number(id);
+  nodeMapRender();
+  const b = document.querySelector(`#nodeMapGrid .nm-node[data-nm="${Number(id)}"] .nm-hit`);
+  if (b) b.focus();
+}
+function nodeMapDetails(id) {
+  const row = $('node-' + Number(id));
+  if (!row) return;
+  row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  row.classList.add('nm-flash');
+  setTimeout(() => row.classList.remove('nm-flash'), 1600);
+}
+window.addEventListener('resize', () => { if ($('nodeMapGrid')) nmDrawSoon(); });
+
 // ---- tunnels between servers (node_tunnel.go): made and removed from here ----
 let _ntLinks = null, _ntLinkErrs = [], _ntOpen = {}, _ntJobsRunning = false;
 const ntName = id => id === 0 ? tr('', 'This server (the central)') : ((nodeFind(id) || {}).name || ('#' + id));
@@ -12494,11 +12721,12 @@ function renderNodeTunnels(d) {
 async function loadNodeTunnels() {
   if (!_nodes || _nodes.role !== 'central') return;
   try {
-    const r = await api('/api/nodes', { action: 'tunnel-list' });
+    const r = await api('/api/nodes?view=tunnels');
     _ntLinks = r.links || [];
     _ntLinkErrs = r.errors || [];
-  } catch (e) { _ntLinks = []; _ntLinkErrs = [e.message]; }
+  } catch (e) { _ntLinks = _ntLinks || []; _ntLinkErrs = [e.message]; }
   renderNodeTunnels(_nodes);
+  nodeMapRender();
 }
 function openNodeTunnel() {
   const nodes = ((_nodes && _nodes.nodes) || []).filter(n => n.online);

@@ -496,8 +496,19 @@ func TestNodeRolesAPI(t *testing.T) {
 	if w := post(`{"action":"remove","id":7}`); w.Code != http.StatusNotFound {
 		t.Fatalf("remove again: %d", w.Code)
 	}
+	// the read-only views the Nodes page refreshes with a GET
+	vw := httptest.NewRecorder()
+	handleNodesGet(vw, httptest.NewRequest("GET", "/api/nodes?view=nope", nil))
+	if vw.Code != http.StatusBadRequest {
+		t.Fatalf("unknown view: %d %s", vw.Code, vw.Body)
+	}
 	if w := post(`{"action":"leave"}`); w.Code != 200 {
 		t.Fatalf("leave: %d %s", w.Code, w.Body)
+	}
+	vw = httptest.NewRecorder()
+	handleNodesGet(vw, httptest.NewRequest("GET", "/api/nodes?view=fleet", nil))
+	if vw.Code != http.StatusConflict {
+		t.Fatalf("fleet view on a standalone panel: %d %s", vw.Code, vw.Body)
 	}
 	if s, _ := nodeSelfLoad(); s.Role != "" {
 		t.Fatalf("role after leave: %q", s.Role)
