@@ -817,6 +817,7 @@ func main() {
 	go startHTTPSListener()
 	startTLSRenewWatcher()
 	go startPeerSyncWorker()
+	startupHousekeeping()
 	go startTrafficRecorder()
 	go startFleetSampler()
 	go startRescueMonitor()

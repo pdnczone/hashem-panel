@@ -297,6 +297,13 @@ func doctorConfigFindings(st tunnelStatus) []doctorFinding {
 				filepath.Base(c.path), c.path, c.engine))
 		}
 	}
+	// frp on this server and on the other end of its tunnels (said over the Peer Link)
+	if drift := frpVersionDrift(localFrpVersion(), loadPeerConfig().PeerFrpVersion, loadTunnelLinks(), loadPeers()); len(drift) > 0 {
+		out = append(out, newFinding("minor", "config", 3, false,
+			"FRP versions differ: this server runs {0}, the other end runs {1}",
+			"The two work together, but options and fixes of the newer version are missing on the older side. Install the same FRP version on both servers",
+			localFrpVersion(), strings.Join(drift, ", ")))
+	}
 	// frpc EOF on login = hub/spoke tcpMux mismatch (hint only, never auto-changed)
 	if st.FrpSvc == "frpc" && frpcLoginEOF() {
 		f := newFinding("critical", "tunnel", 30, false, "frpc login fails with 'connect to server error: EOF'", "")
@@ -1038,7 +1045,10 @@ func interfaceFixes(st tunnelStatus, restartGre func() error) []string {
 func frpcLoginEOF() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "journalctl", "-u", "frpc", "-n", "50", "--no-pager").Output()
+	// The last 5 minutes only: at log.level warn frpc does not write the
+	// "login to server success" line, so an old EOF would never be answered.
+	// A mismatch repeats the EOF every few seconds; a recovered tunnel is quiet.
+	out, err := exec.CommandContext(ctx, "journalctl", "-u", "frpc", "--since", "-5min", "-n", "50", "--no-pager").Output()
 	if err != nil {
 		return false
 	}

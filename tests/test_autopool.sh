@@ -12,7 +12,7 @@ export AUTOPOOL_RAM_MB=2048   # cap = min(500, 2048*8/5) = 500 -> pool ceiling m
 
 # constants + the functions under test, lifted from hashem.sh
 grep -E '^AUTOPOOL_[A-Z_]+=' "$ROOT/hashem.sh" > "$T/fn.sh"
-for fn in perf_get_auto_pool perf_get_int pool_clamp pool_ram_cap autopool_state_get autopool_state_set \
+for fn in perf_get_auto_pool perf_get_int pool_clamp pool_ram_cap pool_max_cap autopool_state_get autopool_state_set \
           pool_effective_values autopool_set_toml_key autopool_live_toml_int autopool_count_errors \
           autopool_conn_counts autopool_free_mb autopool_cpu_hot autopool_tick; do
     awk -v f="$fn" '$0 ~ "^"f"\\(\\) \\{" {p=1} p {print} p && /^}/ {p=0}' "$ROOT/hashem.sh"

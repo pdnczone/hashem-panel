@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -34,6 +35,8 @@ type PeerConfig struct {
 	// different one), learned from the handshake or from a pasted panel URL.
 	// Only needed to reach peers that predate the fixed peerRoutePrefix.
 	PeerBasePath string `json:"peer_base_path,omitempty"`
+	// PeerFrpVersion is the frp the peer runs, as it last said (handshake or ping).
+	PeerFrpVersion string `json:"peer_frp_version,omitempty"`
 }
 
 type PeerHandshakeRequest struct {
@@ -42,6 +45,7 @@ type PeerHandshakeRequest struct {
 	PanelPort  int    `json:"panel_port"`
 	InternalIP string `json:"internal_ip"`
 	BasePath   string `json:"base_path,omitempty"`
+	FrpVersion string `json:"frp_version,omitempty"` // the sender's installed frp, for the version check in Diagnostics
 }
 
 // peerRoutePrefix serves the peer API at a fixed path, independent of each
@@ -311,6 +315,9 @@ func handlePeerHandshake(w http.ResponseWriter, r *http.Request) {
 		if bp := strings.Trim(req.BasePath, "/"); bp != "" {
 			c.PeerBasePath = bp
 		}
+		if v := cleanFrpVersion(req.FrpVersion); v != "" {
+			c.PeerFrpVersion = v
+		}
 		role = c.Role
 	})
 
@@ -322,8 +329,9 @@ func handlePeerHandshake(w http.ResponseWriter, r *http.Request) {
 		"version":        panelVersion,
 		"timestamp":      time.Now().Unix(),
 		// Lets the caller reach this panel directly next time.
-		"base_path":  strings.Trim(cfg.BasePath, "/"),
-		"panel_port": cfg.Port,
+		"base_path":   strings.Trim(cfg.BasePath, "/"),
+		"panel_port":  cfg.Port,
+		"frp_version": localFrpVersion(),
 	})
 }
 
@@ -336,13 +344,15 @@ func peerHandshake(role, internalIP string) error {
 		PanelPort:  cfg.Port,
 		InternalIP: internalIP,
 		BasePath:   strings.Trim(cfg.BasePath, "/"),
+		FrpVersion: localFrpVersion(),
 	})
 	if err != nil {
 		return err
 	}
 	var hs struct {
-		BasePath  string `json:"base_path"`
-		PanelPort int    `json:"panel_port"`
+		BasePath   string `json:"base_path"`
+		PanelPort  int    `json:"panel_port"`
+		FrpVersion string `json:"frp_version"`
 	}
 	if json.Unmarshal(resp, &hs) == nil {
 		_ = updatePeerConfig(func(c *PeerConfig) {
@@ -351,6 +361,9 @@ func peerHandshake(role, internalIP string) error {
 			}
 			if hs.PanelPort > 0 && hs.PanelPort <= 65535 {
 				c.InternalPort = hs.PanelPort
+			}
+			if v := cleanFrpVersion(hs.FrpVersion); v != "" {
+				c.PeerFrpVersion = v
 			}
 		})
 	}
@@ -441,12 +454,27 @@ func markPeerSeen() {
 
 // POST /api/peer/ping
 func handlePeerPing(w http.ResponseWriter, r *http.Request) {
+	// the caller's frp version rides along, so an upgrade on the other server is seen
+	var req struct {
+		FrpVersion string `json:"frp_version"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req)
+	if v := cleanFrpVersion(req.FrpVersion); v != "" {
+		if id, _ := r.Context().Value(tunnelCtxKey{}).(int); id > 0 {
+			if loadTunnelLinks()[id].FrpVersion != v {
+				updateTunnelLink(id, func(l *tunnelLink) { l.FrpVersion = v })
+			}
+		} else if loadPeerConfig().PeerFrpVersion != v {
+			_ = updatePeerConfig(func(c *PeerConfig) { c.PeerFrpVersion = v })
+		}
+	}
 	carrierCfg := loadCarrierConfig()
 	writeJSON(w, map[string]any{
 		"status":         "pong",
 		"active_carrier": carrierCfg.ActiveCarrier,
 		"version":        panelVersion,
 		"time":           time.Now().UnixNano(),
+		"frp_version":    localFrpVersion(),
 	})
 }
 
@@ -609,7 +637,8 @@ func sendToPeerTimeout(path string, method string, payload any, timeout time.Dur
 		lastErr = fmt.Errorf("peer returned HTTP %d over the node channel: %s", st, truncateForError(data))
 	}
 
-	targetURLs := peerTargetURLs(c, path)
+	// an address that did not connect lately goes last (peerreach.go)
+	targetURLs := peerOrderURLs(peerTargetURLs(c, path))
 	if len(targetURLs) == 0 {
 		if lastErr != nil {
 			return nil, lastErr
@@ -618,6 +647,7 @@ func sendToPeerTimeout(path string, method string, payload any, timeout time.Dur
 	}
 
 	tr := &http.Transport{
+		DialContext:     (&net.Dialer{Timeout: peerDialTimeout}).DialContext,
 		TLSClientConfig: peerTLSConfig(&c),
 	}
 	defer tr.CloseIdleConnections()
@@ -654,8 +684,12 @@ func sendToPeerTimeout(path string, method string, payload any, timeout time.Dur
 		if err != nil {
 			lastErr = err
 			deadHosts[hostKey] = true
+			if peerConnectFailed(err) {
+				peerMarkDown(peerHostKey(target))
+			}
 			continue
 		}
+		peerMarkUp(peerHostKey(target))
 
 		respBytes, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
@@ -676,6 +710,19 @@ func sendToPeerTimeout(path string, method string, payload any, timeout time.Dur
 
 	_ = updatePeerConfig(func(p *PeerConfig) { p.IsConnected = false })
 	return nil, lastErr
+}
+
+// forgetPeerLink ends the Peer Link after the last tunnel is removed: a new
+// secret (the old server's no longer opens this panel's peer API) and no
+// address to call, so this server stops asking a panel that now rejects it.
+func forgetPeerLink() {
+	_ = updatePeerConfig(func(c *PeerConfig) {
+		if c.PeerSecret != "" {
+			c.PeerSecret = randomToken(32)
+		}
+		c.PeerURL, c.PeerBasePath, c.TLSFingerprint, c.PeerFrpVersion = "", "", "", ""
+		c.IsConnected, c.LatencyMs, c.LastSync = false, 0, ""
+	})
 }
 
 // peerPublicIPs: the peer's public address, as the node channel knows servers.
@@ -762,8 +809,16 @@ func peerTargetURLs(c PeerConfig, path string) []string {
 // testPeerLink measures HTTP ping round-trip time to peer and updates status.
 func testPeerLink() (bool, float64, error) {
 	start := time.Now()
-	_, err := sendToPeer("/api/peer/ping", "POST", map[string]string{"action": "ping"})
+	resp, err := sendToPeer("/api/peer/ping", "POST", map[string]string{"action": "ping", "frp_version": localFrpVersion()})
 	latency := float64(time.Since(start).Microseconds()) / 1000.0
+	var pong struct {
+		FrpVersion string `json:"frp_version"`
+	}
+	if err == nil && json.Unmarshal(resp, &pong) == nil {
+		if v := cleanFrpVersion(pong.FrpVersion); v != "" && v != loadPeerConfig().PeerFrpVersion {
+			_ = updatePeerConfig(func(c *PeerConfig) { c.PeerFrpVersion = v })
+		}
+	}
 
 	if err != nil {
 		_ = updatePeerConfig(func(c *PeerConfig) {

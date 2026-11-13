@@ -1654,7 +1654,7 @@
             <div class="tun-out-head"><span id="actOutTitle">Output</span><button type="button" class="hashem-btn hashem-btn-ghost u-btn-xs" id="actOutClose">Close</button></div>
             <pre id="actOut" class="logs"></pre>
           </div>
-          <div class="qs-hint hidden" id="tuneHint">Optimize Network: FQ + BBR, 16 MB TCP buffers, GRE MTU 1380, MSS clamp 1340 and keepalive. The current settings are saved first, so Restore can bring them back.</div>
+          <div class="qs-hint hidden" id="tuneHint">Optimize Network: FQ + BBR, TCP buffers sized for the RAM (16 to 64 MB), packet steering over every CPU (RPS/RFS), GRE MTU 1380, MSS clamp 1340 and keepalive. The current settings are saved first, so Restore can bring them back.</div>
         </div>
 
         <div class="tunnel-card" id="usageCard">
@@ -2515,7 +2515,8 @@
             <p class="tc-title" data-i18n="wd_restart_title">Tunnel Auto-Restart Schedule</p>
             <span class="badge" id="wdRestartBadge">Disabled</span>
           </div>
-          <div class="qs-hint" data-i18n="wd_restart_hint">Periodically refreshes the tunnel interfaces and restarts FRP/Backhaul relay services gracefully without interrupting the web panel or losing configuration.</div>
+          <div class="qs-hint" data-i18n="wd_restart_hint">On a schedule, the Watchdog restarts what is not working. On the Iran server that is a tunnel interface that does not answer and carries no traffic, and an engine whose service failed; interfaces that carry traffic are not touched. On a foreign server the engine (frpc or Backhaul) is restarted every time.</div>
+          <div class="qs-hint u-hint-accent hidden" id="wdRestartWarn" role="alert" data-i18n="wd_restart_warn">This schedule is on. Every run on a foreign server restarts its engine, which drops the connections passing through that server for a few seconds. Turn it off unless a tunnel really needs a regular restart.</div>
           <div class="fg">
             <label for="wdRestartHoursSelect" data-i18n="wd_restart_interval">Restart Interval</label>
             <div class="u-flex-center-wrap10">

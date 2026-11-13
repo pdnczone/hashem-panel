@@ -76,6 +76,36 @@ func recordExec(name string, d time.Duration, err error, timedOut bool) {
 	b.n++
 }
 
+// absentIsAnswer: deleting, flushing or checking a firewall rule or chain
+// that is not there (iptables exit 1), and deleting a tc qdisc that is not
+// there (tc exit 2), is what the cleanup at start does on a server that never
+// had them. Every caller that needs the result reads the error itself; a
+// [CMD-ERROR] line for each one only buried the real failures.
+func absentIsAnswer(name string, args []string, code int) bool {
+	switch name {
+	case "iptables", "ip6tables":
+		if code != 1 {
+			return false
+		}
+		for _, a := range args {
+			switch a {
+			case "-D", "-F", "-X", "-C":
+				return true
+			}
+		}
+	case "tc":
+		if code != 2 {
+			return false
+		}
+		for _, a := range args {
+			if a == "del" || a == "delete" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func runCmdTimeoutCtx(ctx context.Context, timeout time.Duration, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -115,6 +145,9 @@ func runCmdTimeoutCtx(ctx context.Context, timeout time.Duration, name string, a
 func exitIsAnswer(name string, args []string, code int) bool {
 	if name == "ping" {
 		return code == 1
+	}
+	if absentIsAnswer(name, args, code) {
+		return true
 	}
 	if name != "systemctl" || len(args) == 0 {
 		return false

@@ -18,6 +18,18 @@ Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 - The one-line installer reads `hashem.sh` from the main branch: a server without Hashem gets the core only once this release is there, and a core/panel swap needs a release that carries `hashem-node`.
 - Releases carry `hashem-node-linux-amd64` and `hashem-node-linux-arm64`, in `checksums.txt`.
 
+**Fixes from a busy hub** (one Iran server, four foreign servers, 20k+ connections):
+
+- **Logs no longer fill the disk.** frps and frpc are written with `log.level = "warn"` (at `info` frps logged a line for every user connection); set `frp_log_level` in `perf.json` for another level. A config without a level gets one at the update and it applies when that service next restarts. The journal is capped at 500M (`/etc/systemd/journald.conf.d/99-hashem.conf`), and `panel-errors.log` rotates at 5 MB. `/var/log/syslog` is your syslog daemon's file: it stops growing once frps runs at `warn`.
+- **`StartLimitIntervalSec` is in `[Unit]`** in the panel, frps, frpc and Bagher units. Under `[Service]` systemd ignored it and logged `Unknown key name`. It is `0`: these services never give up restarting, as before.
+- **The Watchdog leaves working tunnels alone.** On a tunnel-down restart and on the restart schedule, a GRE interface that answers a ping or is receiving packets is not rebuilt; on the Iran server an engine is restarted only when its service has failed. A foreign server's engine is still restarted on the schedule, and the Watchdog tab now says so while the schedule is on. **Restart Tunnel Now** restarts everything, as before (and no longer restarts `gre-tunnel` twice).
+- **Optimize**: the settings are kept in `/etc/sysctl.d/99-zz-hashem-perf.conf`, which sorts after any other tool's file. Socket buffers follow the RAM (16 MB up to 4 GB, 32 MB up to 12 GB, 64 MB above) with a matching `tcp_mem`. Packet processing is spread over every CPU (RPS/RFS) and the default interface gets `txqueuelen 10000`, kept across reboots by `hashem-netq.service`. Run **Optimize** again to get these.
+- **frps and frpc get a Go memory limit** by RAM (`GOMEMLIMIT` 900MiB on 4 GB, 1400MiB on 6 GB, 2500MiB on 16 GB; `GOGC` 40 to 50), so the heap is collected before the kernel kills the process. Existing units get it at the update, from their next start; a value you wrote stays.
+- **One TCPMSS rule.** Copies of the MSS clamp are removed, and the cleanup at panel start no longer logs `[CMD-ERROR]` for chains and qdiscs that were never there.
+- **Peer Link with GRE blocked**: an address that does not connect is tried last from then on and looked at again once a minute, so a call no longer waits 4 seconds on the GRE address first. Removing a peer drops its record from `tunnel_links.json`; removing the last tunnel ends the Peer Link, so the old server stops being asked and its secret stops working.
+- **Auto Pool** takes `frp_max_pool` from `perf.json` as its ceiling when that is above the RAM cap (it was fixed at 500).
+- **Diagnostics** warns when the two ends of a tunnel run different FRP versions (both ends need this release to say theirs).
+
 ## v3.1.0 — 2026-11-12
 
 **Autopilot: a tunnel that stays down moves itself to a carrier that gets through.** A Hashem Pro feature; every Pro key includes it. Run `hashem update` on both servers, then turn it on in the new **Autopilot** tab on the Iran server (or `hashem autopilot on`). It is off until you do. [Guide](docs/AUTOPILOT.md)

@@ -32,6 +32,8 @@ type perfConfig struct {
 	ProxyProtocol string `json:"proxy_protocol,omitempty"`
 	BandwidthMB   int    `json:"bandwidth_limit_mb,omitempty"`
 	HealthCheck   bool   `json:"health_check,omitempty"`
+	// FRPLogLevel: "" = warn. Set by hand in perf.json (trace|debug|info|warn|error).
+	FRPLogLevel string `json:"frp_log_level,omitempty"`
 }
 
 // autoPoolState mirrors the auto_pool.json that hashem.sh autopool_tick maintains.
@@ -145,11 +147,13 @@ func loadPerfConfig() perfConfig {
 		ProxyProtocol    string `json:"proxy_protocol"`
 		BandwidthMB      int    `json:"bandwidth_limit_mb"`
 		HealthCheck      bool   `json:"health_check"`
+		FRPLogLevel      string `json:"frp_log_level"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return def
 	}
 	c := def
+	c.FRPLogLevel = raw.FRPLogLevel
 	if raw.ProxyEncryption != nil {
 		c.ProxyEncryption = *raw.ProxyEncryption
 	}
@@ -222,6 +226,10 @@ func effectivePoolValues() (int, int) {
 		}
 		if st.MaxPool > 0 {
 			maxPool = st.MaxPool
+		}
+		// a ceiling set by hand above what Auto Pool picked stays (hashem.sh pool_max_cap)
+		if c.FRPMaxPool > maxPool && c.FRPMaxPool <= perfMaxPoolMax {
+			maxPool = c.FRPMaxPool
 		}
 	}
 	if need := (pool*3 + 1) / 2; maxPool < need {
@@ -506,7 +514,7 @@ func readNetStack() netStackStatus {
 		WmemMax:   procInt("/proc/sys/net/core/wmem_max"),
 		GREMTU:    interfaceMTU("gre-tunnel"),
 		PathMTU:   savedPathMTU(),
-		Persisted: fileExists("/etc/sysctl.d/99-gre-tune.conf"),
+		Persisted: fileExists("/etc/sysctl.d/99-zz-hashem-perf.conf") || fileExists("/etc/sysctl.d/99-gre-tune.conf"),
 		Backup:    fileExists(filepath.Join(configDir, "tune.bak")),
 	}
 	ns.Known = ns.CC != ""

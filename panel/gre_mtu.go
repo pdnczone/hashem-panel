@@ -68,7 +68,8 @@ func greInterfaces() []string {
 // mssRewrite plans the mangle-table changes that bring every fixed TCPMSS
 // clamp down to mss, from `iptables -t mangle -S` output. A larger clamp
 // would win, so it is replaced; smaller ones and --clamp-mss-to-pmtu stay.
-// With no TCPMSS rule in POSTROUTING at all, one is added.
+// With no TCPMSS rule in POSTROUTING at all, one is added. A second copy of
+// the same clamp (a saved ruleset restored at boot next to ours) is deleted.
 func mssRewrite(rules string, mss int) (del, add [][]string) {
 	have := map[string]bool{}
 	post := false
@@ -77,6 +78,7 @@ func mssRewrite(rules string, mss int) (del, add [][]string) {
 		have[strings.TrimSpace(l)] = true
 	}
 	want := strconv.Itoa(mss)
+	seen := map[string]bool{}
 	for _, l := range lines {
 		f := strings.Fields(l)
 		if len(f) < 2 || f[0] != "-A" || !strings.Contains(l, "TCPMSS") {
@@ -84,6 +86,13 @@ func mssRewrite(rules string, mss int) (del, add [][]string) {
 		}
 		if f[1] == "POSTROUTING" {
 			post = true
+		}
+		if key := strings.Join(f, " "); (f[1] == "POSTROUTING" || f[1] == "FORWARD") && strings.Contains(l, "--set-mss") {
+			if seen[key] {
+				del = append(del, append([]string{"-t", "mangle", "-D"}, f[1:]...))
+				continue
+			}
+			seen[key] = true
 		}
 		for i, w := range f {
 			if w != "--set-mss" || i+1 >= len(f) {

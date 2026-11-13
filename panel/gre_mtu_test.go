@@ -39,8 +39,10 @@ func TestMSSRewrite(t *testing.T) {
 		t.Fatalf("deletes must mirror the rule: %s", joinArgs(del))
 	}
 
-	if del, add := mssRewrite(mangleWithClamp, 1340); len(del)+len(add) != 0 {
-		t.Fatalf("clamps already at 1340: nothing to do, got -%v +%v", del, add)
+	// clamps already at 1340: only the second copy of the POSTROUTING rule goes
+	del, add = mssRewrite(mangleWithClamp, 1340)
+	if len(add) != 0 || joinArgs(del) != "-t mangle -D POSTROUTING -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1340" {
+		t.Fatalf("clamps already at 1340: want one copy deleted, got -%v +%v", del, add)
 	}
 	_, add = mssRewrite("-P POSTROUTING ACCEPT\n-A POSTROUTING -p tcp -j TCPMSS --clamp-mss-to-pmtu", 1340)
 	if len(add) != 0 {

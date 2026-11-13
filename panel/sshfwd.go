@@ -316,13 +316,12 @@ func buildBagherCarrierUnit(cfg SSHFwdConfig, id int) string {
 Description=%s
 After=network-online.target hashem-bagher-frps.service
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 ExecStart=%s
 Restart=always
 RestartSec=15
-StartLimitIntervalSec=120
-StartLimitBurst=5
 LimitNOFILE=1048576
 
 [Install]
@@ -337,6 +336,7 @@ func buildFRPSConfig(cfg SSHFwdConfig) string {
 bindPort = %d
 proxyBindAddr = "0.0.0.0"
 auth.token = "hashem-bagher-sec"
+log.level = "warn"
 transport.tcpMux = false
 
 webServer.addr = "127.0.0.1"
@@ -352,14 +352,13 @@ func buildFRPSService() string {
 Description=Hashem Bagher Engine server (Iran)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/frps -c /etc/gre-panel/bagher/frps.toml
 Restart=always
 RestartSec=10
-StartLimitIntervalSec=60
-StartLimitBurst=5
 LimitNOFILE=1048576
 
 [Install]
@@ -401,6 +400,7 @@ remotePort = %d
 	return fmt.Sprintf(`serverAddr = "127.0.0.1"
 serverPort = %d
 auth.token = "hashem-bagher-sec"
+log.level = "warn"
 transport.tcpMux = false
 %s
 transport.poolCount = %d
@@ -430,14 +430,13 @@ cat > /etc/systemd/system/hashem-bagher-frpc.service <<'EOF'
 Description=Hashem Bagher Engine client (Foreign)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/frpc -c /etc/gre-panel/bagher/frpc.toml
 Restart=always
 RestartSec=10
-StartLimitIntervalSec=60
-StartLimitBurst=5
 LimitNOFILE=1048576
 
 [Install]
@@ -587,14 +586,13 @@ func applyBagherBundle(b *BagherBundle) error {
 Description=Hashem Bagher Engine client (Foreign)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/frpc -c /etc/gre-panel/bagher/frpc.toml
 Restart=always
 RestartSec=10
-StartLimitIntervalSec=60
-StartLimitBurst=5
 LimitNOFILE=1048576
 
 [Install]
