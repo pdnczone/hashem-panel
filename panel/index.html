@@ -97,17 +97,65 @@
   }
   .topbar h1 { font-size:var(--fs-h2); margin:0; }
   .topbar .sub { color:var(--mu); font-size:var(--fs-small); }
-  /* Signature: the link strip under the title. One quiet line, one live dot. */
-  .topbar #roleLine { display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; font-variant-numeric:tabular-nums; }
+  /* Signature: the title with the page shown, and under it the link itself:
+     this server, a live wire, the other side, then the engine and latency. */
+  .tb-id { display:grid; gap:5px; min-width:0; flex:1 1 auto; }
+  .topbar .acts { flex:none; }
+  .tb-title { display:flex; align-items:baseline; gap:10px; min-width:0; }
+  .tb-page { font-size:var(--fs-body); font-weight:600; color:var(--mu); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tb-page:not(:empty)::before { content:""; display:inline-block; width:1px; height:14px; margin-inline-end:10px; background:var(--ln2); vertical-align:-2px; }
+  .topbar #roleLine { display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-variant-numeric:tabular-nums; min-width:0; }
   #roleLine bdi { color:var(--tx2); font-weight:500; }
+  .ls-link { display:inline-flex; align-items:center; gap:8px; padding:3px 10px 3px 8px; border:1px solid var(--ln2); border-radius:999px; background:var(--sunk); min-width:0; max-width:100%; overflow:hidden; }
+  html[dir="rtl"] .ls-link { padding:3px 8px 3px 10px; }
+  .ls-end { display:inline-flex; align-items:center; gap:6px; min-width:0; white-space:nowrap; }
+  .ls-end svg { width:13px; height:13px; fill:none; stroke:var(--mu); stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; flex:none; }
+  .ls-end.there bdi { overflow:hidden; text-overflow:ellipsis; }
+  .ls-end.there.ip bdi { font-family:var(--font-mono); font-size:var(--fs-caption); }
+  .ls-end.there { flex:0 1 auto; }
   .ls-dot { width:7px; height:7px; border-radius:50%; background:var(--dim); flex:none; }
   .ls-dot.ok { background:var(--ok); animation:lsBeat 2.4s ease-in-out infinite; }
   .ls-dot.warn { background:var(--wr); }
   .ls-dot.err { background:var(--er); }
-  .ls-arrow { color:var(--ac); font-weight:600; }
-  .ls-sep { color:var(--dim); }
+  .ls-wire { position:relative; width:42px; height:2px; flex:none; border-radius:2px; background:repeating-linear-gradient(90deg, var(--dim) 0 4px, transparent 4px 8px); }
+  .ls-wire.ok { background:repeating-linear-gradient(90deg, var(--ok) 0 6px, transparent 6px 10px); animation:lsFlow 1.1s linear infinite; }
+  .ls-wire.warn { background:repeating-linear-gradient(90deg, var(--wr) 0 6px, transparent 6px 10px); }
+  .ls-wire.err { background:repeating-linear-gradient(90deg, var(--er) 0 2px, transparent 2px 7px); }
+  .ls-wire::before, .ls-wire::after { content:""; position:absolute; top:-2px; width:6px; height:6px; border-radius:50%; background:var(--s1); border:1.5px solid var(--dim); box-sizing:border-box; }
+  .ls-wire::before { inset-inline-start:-3px; } .ls-wire::after { inset-inline-end:-3px; }
+  .ls-wire.ok::before, .ls-wire.ok::after { border-color:var(--ok); }
+  .ls-wire.warn::before, .ls-wire.warn::after { border-color:var(--wr); }
+  .ls-wire.err::before, .ls-wire.err::after { border-color:var(--er); }
+  html[dir="rtl"] .ls-wire.ok { animation-direction:reverse; }
+  @keyframes lsFlow { to { background-position:20px 0; } }
+  .ls-chip { display:inline-flex; align-items:center; gap:5px; padding:2px 9px; border-radius:999px; border:1px solid var(--ac-b22); background:var(--ac-soft); color:var(--ac); font-size:var(--fs-caption); font-weight:600; white-space:nowrap; }
+  .ls-chip.ms { border-color:var(--ln2); background:var(--sunk); color:var(--tx2); font-family:var(--font-mono); }
+  .ls-chip.ms.slow { color:var(--wr); border-color:var(--wr-b40); }
+  .ls-chip svg { width:12px; height:12px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  .tb-pick { position:relative; display:inline-flex; align-items:center; }
+  .tb-pick[hidden] { display:none; }
+  .tb-pick svg { position:absolute; inset-inline-start:11px; width:15px; height:15px; fill:none; stroke:var(--mu); stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; pointer-events:none; }
+  .tb-pick .node-pick { padding-inline-start:33px; border-radius:999px; }
+  .tb-refresh { gap:7px; }
+  .tb-refresh svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; flex:none; }
+  .tb-refresh.spin svg { animation:tbSpin .8s linear infinite; }
+  @keyframes tbSpin { to { transform:rotate(360deg); } }
   @keyframes lsBeat { 0%,100% { box-shadow:0 0 0 0 color-mix(in srgb, var(--ok) 45%, transparent); } 50% { box-shadow:0 0 0 4px transparent; } }
-  @media (prefers-reduced-motion: reduce) { .ls-dot.ok { animation:none; } }
+  /* phones: title and buttons on the first row, the link line on its own row under them */
+  @media (max-width:640px) {
+    .topbar { display:grid; grid-template-columns:auto minmax(0,1fr) auto; row-gap:8px; }
+    .tb-id { display:contents; }
+    .topbar .tb-title { grid-column:2; grid-row:1; align-self:center; }
+    .topbar #roleLine { grid-column:1 / -1; grid-row:2; }
+    .topbar .acts { grid-column:3; grid-row:1; }
+    .tb-page { display:none; }
+    .tb-pick .node-pick { max-width:104px; }
+    .topbar .tb-title { overflow:hidden; } .topbar h1 { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .ls-end.there svg { display:none; } .ls-link { gap:6px; }
+    .tb-refresh { width:40px; padding:0; justify-content:center; } .tb-refresh-t { display:none; }
+    .ls-wire { width:30px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .ls-dot.ok, .ls-wire.ok, .tb-refresh.spin svg { animation:none; } }
   .topbar .acts { margin-inline-start:auto; display:flex; gap:8px; }
   .page { max-width:1120px; margin:0 auto; padding:20px; width:100%; display:grid; grid-template-columns:minmax(0,1fr); gap:16px; padding-bottom:72px; }
   .tunnel-card, .qs { background:var(--s1); border:1px solid var(--ln); border-radius:var(--r-lg);
@@ -1403,11 +1451,14 @@
   <div class="main">
     <header class="topbar">
       <button class="menu-btn" id="menuBtn" aria-label="Menu" data-i18n-aria="aria_menu">☰</button>
-      <div><h1>Hashem</h1><div class="sub" id="roleLine">—</div></div>
+      <div class="tb-id">
+        <div class="tb-title"><h1>Hashem</h1><span class="tb-page" id="tbPage" aria-live="polite"></span></div>
+        <div class="sub" id="roleLine">—</div>
+      </div>
       <div class="acts">
-        <select class="hashem-input node-pick hidden" id="nodePick" aria-label="Server shown" data-i18n-aria="node_pick"></select>
+        <span class="tb-pick" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg><select class="hashem-input node-pick hidden" id="nodePick" aria-label="Server shown" data-i18n-aria="node_pick"></select></span>
         <button type="button" class="hashem-btn hashem-btn-secondary pal-btn" id="palBtn" aria-haspopup="dialog" aria-label="Search and commands" data-i18n-aria="pal_open"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="pal-txt" data-i18n="pal_search">Search</span><kbd id="palKbd">Ctrl K</kbd></button>
-        <button class="hashem-btn hashem-btn-secondary" id="refreshBtn">Refresh</button>
+        <button class="hashem-btn hashem-btn-secondary tb-refresh" id="refreshBtn" aria-label="Refresh"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.5 6.2M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18.5 2v4h-4M5.5 22v-4h4"/></svg><span class="tb-refresh-t">Refresh</span></button>
       </div>
     </header>
   <div class="drawer-ov" id="drawerOv"></div>
@@ -3132,6 +3183,7 @@
             </div>
             <div class="lm-acts">
               <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="_ntLinks = null; loadNodeTunnels()">Refresh</button>
+              <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openNodeProbe()">Test between servers</button>
               <button type="button" class="hashem-btn hashem-btn-primary u-btn-30" onclick="openNodeTunnel()">New tunnel</button>
             </div>
           </div>

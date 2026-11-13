@@ -1456,3 +1456,40 @@ html.nv .nv-off { display: none !important; }
 .nm-map.compact .nm-col { gap: 8px; }
 .nm-map.compact .nm-node { padding: 8px 10px; }
 .nm-map.compact .nm-node:not(.sel) :is(.nm-bars, .nm-rate) { display: none; }
+
+/* ---------- Test between servers (openNodeProbe in app.js) ---------- */
+.np-seg { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--ln); border-radius: var(--r-md); background: var(--sunk); align-self: flex-start; margin: 4px 0 8px; }
+.np-seg-b { border: 0; background: transparent; color: var(--mu); font: inherit; font-size: var(--fs-small); font-weight: 600; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+.np-seg-b.on { background: var(--s1); color: var(--tx); box-shadow: 0 0 0 1px var(--ln2); }
+.np-seg-b:focus-visible { outline: 2px solid var(--ac-out70); outline-offset: 1px; }
+.np-out { display: grid; gap: 12px; margin-top: 12px; }
+.np-out:empty { display: none; }
+.np-busy { display: flex; align-items: center; gap: 10px; padding: 14px; border: 1px dashed var(--ln2); border-radius: var(--r-md); color: var(--mu); font-size: var(--fs-small); }
+.np-sum { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.np-sum > div { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--ln); border-radius: var(--r-md); background: var(--sunk); min-width: 0; }
+.np-sum b { font-size: var(--fs-h4); color: var(--tx); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.np-sum span { font-size: var(--fs-caption); color: var(--dim); }
+.np-rows { display: grid; gap: 6px; }
+.np-row {
+  display: grid; grid-template-columns: 10px minmax(110px, 1.3fr) minmax(60px, 1.6fr) minmax(76px, auto) minmax(56px, auto);
+  align-items: center; gap: 4px 10px; padding: 8px 10px; border: 1px solid var(--ln); border-radius: 10px; background: var(--s1);
+}
+.np-row.best { border-color: var(--ok-b40); box-shadow: 0 0 0 3px var(--ok-soft); }
+.np-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+.np-row.ok .np-dot { background: var(--ok); } .np-row.err .np-dot { background: var(--er); } .np-row.warn .np-dot { background: var(--wr); }
+.np-name { display: grid; min-width: 0; }
+.np-name b { font-size: var(--fs-small); color: var(--tx); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.np-name small { font-family: var(--font-mono); font-size: var(--fs-caption); color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.np-bar { position: relative; height: 6px; border-radius: 3px; background: var(--ln2); overflow: hidden; }
+.np-bar i { position: absolute; inset: 0; border-radius: inherit; background: var(--dim); transform-origin: left center; transform: scaleX(var(--np-v, 0)); transition: transform var(--dur); }
+[dir="rtl"] .np-bar i { transform-origin: right center; }
+.np-row.ok .np-bar i { background: var(--ok); } .np-row.warn .np-bar i { background: var(--wr); } .np-row.err .np-bar i { background: var(--er); }
+.np-val { font-size: var(--fs-caption); color: var(--tx2); text-align: end; white-space: nowrap; direction: ltr; unicode-bidi: isolate; }
+.np-note { grid-column: 2 / -1; font-family: var(--font-mono); font-size: var(--fs-caption); color: var(--dim); overflow-wrap: anywhere; }
+@media (max-width: 560px) {
+  .np-sum > div { padding: 8px; }
+  .np-sum b { font-size: var(--fs-small); }
+  .np-row { grid-template-columns: 10px minmax(0, 1fr) auto; }
+  .np-bar { grid-column: 2 / -1; grid-row: 2; }
+  .np-v2 { display: none; }
+}
