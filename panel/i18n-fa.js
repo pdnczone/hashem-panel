@@ -165,6 +165,7 @@ window.FA_TEXT = {
 "Sign In": "ورود",
 "· Infrastructure": "· زیرساخت",
 "Hashem": "هاشم",
+"Tunnel panel": "پنل تونل",
 "Collapse sidebar": "جمع کردن نوار کناری",
 "Main navigation": "منوی اصلی",
 "Overview": "نمای کلی",

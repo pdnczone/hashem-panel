@@ -413,7 +413,7 @@ body[data-t="light"] .sup-card { box-shadow:0 18px 50px rgba(15,23,42,.22), 0 0 
 
 /* ---- collapsible sidebar + alert badges ---- */
 .sb-toggle {
-  position:absolute; top:94px; inset-inline-end:-13px; z-index:3; width:26px; height:26px; display:grid; place-items:center;
+  position:absolute; top:63px; inset-inline-end:-13px; z-index:3; width:26px; height:26px; display:grid; place-items:center;
   border-radius:50%; border:1px solid var(--ln2); background:var(--s2); color:var(--mu); cursor:pointer; padding:0;
   box-shadow:var(--lift-sm); transition:transform .25s var(--spring), color .15s, border-color .15s;
 }
@@ -436,7 +436,7 @@ body[data-t="light"] .sup-card { box-shadow:0 18px 50px rgba(15,23,42,.22), 0 0 
   html[data-sb="1"] .sidebar .sidebar-nav .nav-item { justify-content:center !important; padding:12px 0 !important; width:100%; position:relative; }
   html[data-sb="1"] .sidebar .sidebar-nav .nav-item > span:not(.nav-badge),
   html[data-sb="1"] .sidebar .nav-sec,
-  html[data-sb="1"] .sidebar .brand-name,
+  html[data-sb="1"] .sidebar .brand-text,
   html[data-sb="1"] .sidebar #updBadge,
   html[data-sb="1"] .sidebar .term-live { display:none; }
   html[data-sb="1"] .sidebar .nav-badge { position:absolute; top:2px; inset-inline-end:2px; min-width:16px; height:16px; padding:0 4px; font-size:12px; margin:0; box-shadow:0 0 0 2px var(--sidebar-bg); }
@@ -445,8 +445,7 @@ body[data-t="light"] .sup-card { box-shadow:0 18px 50px rgba(15,23,42,.22), 0 0 
   html[data-sb="1"] .sidebar .sidebar-foot .sf-ic { display:block; }
   html[data-sb="1"] .sidebar .sidebar-foot .sf-t { display:none; }
   html[data-sb="1"] .sidebar .sidebar-nav { padding-inline:8px; }
-  html[data-sb="1"] .sidebar .sidebar-brand { padding-inline:6px; }
-  html[data-sb="1"] .sidebar .sb-toggle { top:94px; }
+  html[data-sb="1"] .sidebar .sidebar-brand { padding-inline:6px; justify-content:center; }
   html[data-sb="1"] .sidebar .nav-item.on::before { inset-inline-start:-8px; }
 }
 @media (max-width:760px) { .sb-toggle { display:none; } }
@@ -557,8 +556,6 @@ html[data-dens="compact"] .hashem-table th, html[data-dens="compact"] .hashem-ta
 .brand-premium-badge .bp-gem .bp-facet { fill: none; stroke-width: 1.1; opacity: .7; }
 .brand-premium-badge .bp-label { font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; line-height: 1; }
 html[lang="fa"] .brand-premium-badge .bp-label { letter-spacing: 0; } /* tracking breaks Persian joins */
-.drawer-head .brand-premium-badge { margin-inline-start: -2px; }
-html[data-sb="1"] .sidebar .brand-tier { display: none; }
 
 /* ---------- cluster ---------- */
 .cl-head-txt { min-width: 240px; }
