@@ -432,7 +432,7 @@ function goTab(name) {
   document.querySelectorAll('.sidebar-nav [data-tab]').forEach(markTab);
   // the page shown, next to the title
   const nav = document.querySelector(`.sidebar-nav [data-tab="${name}"] span`), pg = $('tbPage');
-  if (pg) pg.textContent = name === 'dashboard' ? '' : (nav ? nav.textContent.trim() : '');
+  if (pg && nav) pg.textContent = nav.textContent.trim(); // the page's name is the title
   const dr = $('drawerNav');
   if (dr) dr.querySelectorAll('[data-tab]').forEach(markTab);
   if (name === 'setup' || name === 'tunnel') loadSSHFwd();
@@ -1600,6 +1600,21 @@ function peerRemoveClick(peerId, name) {
 // Signature: the topbar names the link itself: this server ⇄ the other side · engine ·
 // latency, with one live dot. Values sit in <bdi> so they keep their order in Persian.
 const LS_ENGINE = { frp: 'GRE + FRP', backhaul: 'Backhaul (no GRE)', 'gre-backhaul': 'Backhaul (with GRE)', bagher: 'Bagher' };
+// The topbar names this server (hostname and public IP): with several
+// servers open it tells them apart. A click copies the IP.
+function tbHostSet(sv) {
+  const b = $('tbHost');
+  if (!b) return;
+  const ip = (sv && sv.public_ip) || '', host = (sv && sv.hostname) || '';
+  b.hidden = !ip && !host;
+  $('tbHostTxt').textContent = [host, ip].filter(Boolean).join(' · ');
+  b.dataset.ip = ip;
+  b.disabled = !ip;
+}
+(function initTbHost() {
+  const b = $('tbHost');
+  if (b) b.onclick = () => copyTextSafe(b.dataset.ip, tr('', 'Copied'), b.dataset.ip);
+})();
 function linkStrip(s) {
   const el = $('roleLine');
   if (!el || !s) return;
@@ -1615,12 +1630,17 @@ function linkStrip(s) {
     : (peers[0] && (peers[0].name || peers[0].remote_pub)) || L.remote_pub || L.gre_peer || (iran ? tr('x003', 'Foreign') : tr('x002', 'Iran'));
   const eng = LS_ENGINE[L.engine || L.tunnel_engine] || '';
   const up = !!(L.frp_up || (L.gre && L.gre.exists) || peers.some(p => p.frp_up || p.gre_up));
-  const pinged = L.ping_ok || peers.some(p => p.ping_ok);
-  const ms = L.ping_ok && parseFloat(L.ping_ms) > 0 ? Math.round(parseFloat(L.ping_ms)) + ' ms' : '';
+  // a live session is healthy even unpinged: the server pings only links
+  // without one (snapshot.go), so ping_ok alone would show a working tunnel weak
+  const good = o => o.ping_ok || o.health_state === 'healthy';
+  const pinged = good(L) || peers.some(good);
+  const lat = L.ping_ok && parseFloat(L.ping_ms) > 0 ? parseFloat(L.ping_ms)
+    : (L.health_state === 'healthy' && L.latency_ms > 0 ? L.latency_ms : 0);
+  const ms = lat ? Math.round(lat) + ' ms' : '';
   const state = up ? (pinged ? 'ok' : 'warn') : 'err';
   const globe = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>';
   const bolt = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>';
-  const slow = ms && parseFloat(L.ping_ms) > 150;
+  const slow = lat > 150;
   const stateTxt = up ? tr('ls_up', 'Tunnel up') : tr('ls_down', 'Tunnel down');
   // this server, the wire (its state), the other side; then the engine and latency
   el.innerHTML = '<span class="ls-link"><span class="ls-end here"><span class="ls-dot ' + state + '" aria-hidden="true"></span><bdi>' + esc(here) + '</bdi></span>' +
@@ -1809,6 +1829,7 @@ async function refresh() {
     if (typeof supObserve === 'function') supObserve(s);
     if (typeof uiObserve === 'function') uiObserve(s);
     linkStrip(s);
+    tbHostSet(s.server);
     if (s.local) {
       const isForeign = /foreign/i.test(s.local.role || '') || (s.local.frp_svc === 'frpc');
       const ap = $('setupAddPeerStep');

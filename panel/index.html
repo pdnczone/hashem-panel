@@ -120,9 +120,16 @@
      this server, a live wire, the other side, then the engine and latency. */
   .tb-id { display:grid; gap:5px; min-width:0; flex:1 1 auto; }
   .topbar .acts { flex:none; }
-  .tb-title { display:flex; align-items:baseline; gap:10px; min-width:0; }
-  .tb-page { font-size:var(--fs-body); font-weight:600; color:var(--mu); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .tb-page:not(:empty)::before { content:""; display:inline-block; width:1px; height:14px; margin-inline-end:10px; background:var(--ln2); vertical-align:-2px; }
+  .tb-title { display:flex; align-items:center; gap:12px; min-width:0; }
+  .topbar h1.tb-page { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  /* this server: its name and public IP; a click copies the IP */
+  .tb-host { display:inline-flex; align-items:center; gap:7px; min-width:0; max-width:340px; height:28px; padding:0 11px; border:1px solid var(--ln); border-radius:999px;
+    background:var(--s2); color:var(--tx2); font:inherit; font-size:12px; font-weight:600; font-variant-numeric:tabular-nums; cursor:pointer; transition:border-color .15s ease, color .15s ease; }
+  .tb-host[hidden] { display:none; }
+  .tb-host:hover { border-color:var(--ac); color:var(--tx); }
+  .tb-host:focus-visible { outline:2px solid var(--ac); outline-offset:2px; }
+  .tb-host svg { width:14px; height:14px; flex:none; fill:none; stroke:var(--ac); stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  .tb-host bdi { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .topbar #roleLine { display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-variant-numeric:tabular-nums; min-width:0; }
   #roleLine bdi { color:var(--tx2); font-weight:500; }
   .ls-link { display:inline-flex; align-items:center; gap:8px; padding:3px 10px 3px 8px; border:1px solid var(--ln2); border-radius:999px; background:var(--sunk); min-width:0; max-width:100%; overflow:hidden; }
@@ -167,7 +174,7 @@
     .topbar .tb-title { grid-column:2; grid-row:1; align-self:center; }
     .topbar #roleLine { grid-column:1 / -1; grid-row:2; }
     .topbar .acts { grid-column:3; grid-row:1; }
-    .tb-page { display:none; }
+    .tb-host { display:none; }
     .tb-pick .node-pick { max-width:104px; }
     .topbar .tb-title { overflow:hidden; } .topbar h1 { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .ls-end.there svg { display:none; } .ls-link { gap:6px; }
@@ -1602,7 +1609,7 @@
     <header class="topbar">
       <button class="menu-btn" id="menuBtn" aria-label="Menu" data-i18n-aria="aria_menu">☰</button>
       <div class="tb-id">
-        <div class="tb-title"><h1>Hashem</h1><span class="tb-page" id="tbPage" aria-live="polite"></span></div>
+        <div class="tb-title"><h1 class="tb-page" id="tbPage" aria-live="polite">Dashboard</h1><button type="button" class="tb-host" id="tbHost" hidden title="Copy this server's IP"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg><bdi id="tbHostTxt"></bdi></button></div>
         <div class="sub" id="roleLine">—</div>
       </div>
       <div class="acts">
