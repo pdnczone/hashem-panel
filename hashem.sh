@@ -2345,6 +2345,141 @@ install_backhaul_binaries() {
     fi
 }
 
+# ---- FRP upgrade on servers set up by an older release ----
+# install_frp_binaries keeps any frps/frpc it finds, so a server set up by an
+# older release kept that release's FRP (0.61.1 was seen) through every update.
+# frp_upgrade moves an older FRP to DEFAULT_FRP_VERSION: never a downgrade,
+# every FRP config of a unit is checked with the new binary first, the old
+# binaries are kept as .bak, and the running FRP services are restarted onto
+# it (and put back on the old one when one of them does not come back).
+# Backhaul is not touched: its pin has not changed (v0.7.2), and a v2 core an
+# operator put in place reads another config schema.
+
+# frp_installed_version prints the version of the installed frps (or frpc).
+frp_installed_version() {
+    local b v
+    for b in frps frpc; do
+        [[ -x "${INSTALL_DIR}/$b" ]] || continue
+        v=$("${INSTALL_DIR}/$b" --version 2>/dev/null | head -n1 | tr -d 'v[:space:]')
+        [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && { echo "$v"; return 0; }
+    done
+    return 1
+}
+
+# ver_lt A B: A is an older version than B.
+ver_lt() { [[ "$1" != "$2" && "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" == "$1" ]]; }
+
+# frp_units prints "unit binary config" for each unit that runs frps or frpc
+# from INSTALL_DIR (main tunnel, extra peers, hubs, Bagher); config is "-"
+# when the unit has no -c.
+frp_units() {
+    local f line bin conf
+    for f in "${HASHEM_SYSTEMD_DIR:-/etc/systemd/system}"/*.service; do
+        [[ -f "$f" ]] || continue
+        line=$(grep -m1 -E "^ExecStart=${INSTALL_DIR}/frp[sc]([[:space:]]|$)" "$f" 2>/dev/null) || continue
+        bin=$(sed -E "s#^ExecStart=${INSTALL_DIR}/(frp[sc]).*#\1#" <<<"$line")
+        conf=$(sed -nE 's#.*[[:space:]]-c[[:space:]]+([^[:space:]]+).*#\1#p' <<<"$line")
+        echo "$(basename "$f" .service) $bin ${conf:--}"
+    done
+}
+
+frp_upgrade() {
+    local WANT="$DEFAULT_FRP_VERSION" CUR
+    if [[ ! -x "${INSTALL_DIR}/frps" && ! -x "${INSTALL_DIR}/frpc" ]]; then
+        echo -e "${CYAN}[i] FRP is not installed here; nothing to upgrade.${NC}"
+        return 0
+    fi
+    if ! CUR=$(frp_installed_version); then
+        echo -e "${YELLOW}[!] Could not read the installed FRP version; it is left as it is.${NC}"
+        return 0
+    fi
+    if ! ver_lt "$CUR" "$WANT"; then
+        echo -e "${GREEN}[OK] FRP ${CUR} is up to date.${NC}"
+        return 0
+    fi
+    { exec 209>/run/hashem-frp-upgrade.lock; } 2>/dev/null || exec 209>/tmp/hashem-frp-upgrade.lock
+    if ! flock -n 209; then
+        echo -e "${YELLOW}[!] An FRP upgrade is already running.${NC}"
+        return 0
+    fi
+    echo -e "${CYAN}[*] FRP ${CUR} is older than ${WANT}; upgrading it.${NC}"
+    detect_arch
+    local TMP TAR MIRROR_REPO="${HASHEM_MIRROR_REPO:-pdnczone/hashem-frp}"
+    TMP=$(mktemp -d)
+    TAR="frp_${WANT}_linux_${FRP_ARCH}.tar.gz"
+    if ! download_with_fallback "$TMP/$TAR" "https://github.com/${MIRROR_REPO}/releases/download/v${WANT}/${TAR}" 90 &&
+        ! download_with_fallback "$TMP/$TAR" "https://github.com/fatedier/frp/releases/download/v${WANT}/${TAR}" 90; then
+        rm -rf "$TMP"
+        echo -e "${RED}[!] Could not download FRP ${WANT}; FRP ${CUR} stays.${NC}"
+        return 1
+    fi
+    if ! tar -xzf "$TMP/$TAR" -C "$TMP" 2>/dev/null; then
+        rm -rf "$TMP"
+        echo -e "${RED}[!] The FRP ${WANT} archive is damaged; FRP ${CUR} stays.${NC}"
+        return 1
+    fi
+    # Only the binaries this server has are replaced, and only by ones that
+    # run here and say they are WANT.
+    local b src BINS=()
+    for b in frps frpc; do
+        [[ -x "${INSTALL_DIR}/$b" ]] || continue
+        src=$(find "$TMP" -type f -name "$b" 2>/dev/null | head -n1)
+        if [[ -z "$src" ]] || ! chmod +x "$src" || [[ "$("$src" --version 2>/dev/null | head -n1 | tr -d 'v[:space:]')" != "$WANT" ]]; then
+            rm -rf "$TMP"
+            echo -e "${RED}[!] The downloaded ${b} does not run as FRP ${WANT} here; FRP ${CUR} stays.${NC}"
+            return 1
+        fi
+        mv -f "$src" "$TMP/new-$b"
+        BINS+=("$b")
+    done
+    # Every config the new FRP will read must pass its own check first.
+    local unit bin conf out bad=0 ACTIVE=()
+    while read -r unit bin conf; do
+        [[ -n "$unit" ]] || continue
+        if [[ "$conf" != "-" && -f "$conf" && -x "$TMP/new-$bin" ]]; then
+            if ! out=$("$TMP/new-$bin" verify -c "$conf" 2>&1); then
+                echo -e "${RED}[!] ${conf} does not pass FRP ${WANT}'s check:${NC} $(tail -n1 <<<"$out")"
+                bad=1
+            fi
+        fi
+        systemctl is-active --quiet "$unit" 2>/dev/null && ACTIVE+=("$unit")
+    done < <(frp_units)
+    if (( bad )); then
+        rm -rf "$TMP"
+        echo -e "${YELLOW}[!] FRP ${CUR} stays until the config above is fixed (then run: hashem cores-upgrade).${NC}"
+        return 1
+    fi
+    # Swap: a rename, so a running binary is never written over.
+    for b in "${BINS[@]}"; do
+        cp -f "${INSTALL_DIR}/$b" "${INSTALL_DIR}/$b.bak" 2>/dev/null || true
+        if ! install -m 0755 "$TMP/new-$b" "${INSTALL_DIR}/.$b.new" || ! mv -f "${INSTALL_DIR}/.$b.new" "${INSTALL_DIR}/$b"; then
+            rm -f "${INSTALL_DIR}/.$b.new"
+            for src in "${BINS[@]}"; do
+                [[ -f "${INSTALL_DIR}/$src.bak" ]] && mv -f "${INSTALL_DIR}/$src.bak" "${INSTALL_DIR}/$src"
+            done
+            rm -rf "$TMP"
+            echo -e "${RED}[!] Could not put FRP ${WANT} in ${INSTALL_DIR}; FRP ${CUR} stays.${NC}"
+            return 1
+        fi
+    done
+    rm -rf "$TMP"
+    (( ${#ACTIVE[@]} )) || { echo -e "${GREEN}[OK] FRP ${CUR} -> ${WANT} (no FRP service was running).${NC}"; return 0; }
+    echo -e "${CYAN}[*] Restarting ${#ACTIVE[@]} FRP service(s) on ${WANT}: ${ACTIVE[*]}${NC}"
+    for unit in "${ACTIVE[@]}"; do systemctl restart "$unit" >/dev/null 2>&1 || true; done
+    sleep 4
+    local DOWN=()
+    for unit in "${ACTIVE[@]}"; do systemctl is-active --quiet "$unit" 2>/dev/null || DOWN+=("$unit"); done
+    if (( ${#DOWN[@]} )); then
+        echo -e "${RED}[!] ${DOWN[*]} did not stay up on FRP ${WANT}; going back to ${CUR}.${NC}"
+        for b in "${BINS[@]}"; do
+            [[ -f "${INSTALL_DIR}/$b.bak" ]] && mv -f "${INSTALL_DIR}/$b.bak" "${INSTALL_DIR}/$b"
+        done
+        for unit in "${ACTIVE[@]}"; do systemctl restart "$unit" >/dev/null 2>&1 || true; done
+        return 1
+    fi
+    echo -e "${GREEN}[OK] FRP ${CUR} -> ${WANT}; ${#ACTIVE[@]} service(s) back up. Update the server(s) at the other end too.${NC}"
+}
+
 # ---- Spoof Tunnel (ParsaKSH/spoof-tunnel): IP-spoofing UDP pipe + WireGuard ----
 DEFAULT_SPOOF_VERSION="v3.0.2"
 SPOOF_REPO="ParsaKSH/spoof-tunnel"
@@ -9561,6 +9696,9 @@ update_all() {
     if [[ -x "${INSTALL_DIR}/spoof" ]]; then
         "$HASHEM_BIN" spoof install </dev/null >/dev/null 2>&1 || true
     fi
+    # FRP from an older release moves to the pinned version (the new script's
+    # frp_upgrade checks the configs and restarts the FRP services).
+    "$HASHEM_BIN" cores-upgrade </dev/null || true
     # The timer runs whether or not alerts are on: scheduled backups,
     # restarts and Auto-Pool depend on it (M6).
     watchdog_timer_ensure >/dev/null 2>&1 || true
@@ -10659,7 +10797,7 @@ menu_update() {
         ui_menu c "Update" "Channel: $(update_get_channel)   Panel: ${UI_VER:-not installed}" \
             "1|Update now|Latest hashem and panel from the current channel (configs are backed up first)." \
             "2|Update channel|stable, or dev for test builds." \
-            "3|Download core binaries|FRP and Backhaul, checked and cached." \
+            "3|Download core binaries|FRP and Backhaul; an older FRP is upgraded (its services restart)." \
             "4|Refresh system packages|The tools Hashem needs (iproute2, curl, ...)." \
             "5|Load kernel modules|ip_gre and fou."
         case "$c" in
@@ -10682,6 +10820,7 @@ menu_update() {
             3)
                 ui_page "Core binaries"
                 install_frp_binaries "both" || true
+                frp_upgrade || true
                 install_backhaul_binaries "both" || true
                 echo -e "${GREEN}[OK] Core binaries are ready.${NC}"
                 ui_pause
@@ -10979,7 +11118,8 @@ Usage:
   hashem stress-test [host] [port] [conns]     # high-concurrency connection stress test (verify zero drops)
   hashem update | update-all                   # update script + panel to the latest release of the update channel
   hashem update-channel [stable|dev]           # show / set update channel (default stable; dev = test builds)
-  hashem download-cores                        # download & pre-cache FRP and Backhaul core binaries
+  hashem download-cores                        # download FRP and Backhaul if missing; upgrade an older FRP
+  hashem cores-upgrade                         # move an FRP from an older release to the pinned version (restarts FRP services)
   hashem backhaul                              # Backhaul menu: setup, status, logs, bundle
   hashem backhaul-migrate                      # move tunnels from the old Modified Backhaul script into Hashem
   hashem free-ram                              # cap journald + drop cache + 1GB swap
@@ -12403,9 +12543,11 @@ if [[ $# -gt 0 ]]; then
         download-cores|cores)
             echo -e "${CYAN}[*] Downloading and verifying core binaries from pdnczone repository...${NC}"
             install_frp_binaries "all" || { echo -e "${RED}[!] Failed to install FRP binaries.${NC}"; exit 1; }
+            frp_upgrade || true
             install_backhaul_binaries || { echo -e "${RED}[!] Failed to install Backhaul binary.${NC}"; exit 1; }
             echo -e "${GREEN}[OK] All core binaries (frps, frpc, backhaul) are cached in ${INSTALL_DIR}.${NC}"
             ;;
+        cores-upgrade) frp_upgrade ;;
         backhaul|bh|modified-backhaul|backhaul-premium|mbh)
             menu_backhaul ;;
         backhaul-migrate) cli_backhaul_migrate ;;
