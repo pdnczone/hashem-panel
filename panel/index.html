@@ -786,18 +786,19 @@
   .set-sws { display:flex; flex-direction:column; padding:2px 14px; border:1px solid var(--ln); border-radius:var(--r-md); background:var(--sunk); }
   .set-sw { display:flex; align-items:center; gap:12px; min-height:46px; font-size:14px; color:var(--tx2); cursor:pointer; }
   .set-sw + .set-sw { border-top:1px solid var(--ln); }
-  .set-sw input { appearance:none; -webkit-appearance:none; position:relative; flex:none; width:40px; min-width:40px; height:24px; min-height:24px; margin:0;
+  .set-sw input, .perf-sw input { appearance:none; -webkit-appearance:none; position:relative; flex:none; width:40px; min-width:40px; height:24px; min-height:24px; margin:0;
     border-radius:999px; border:1px solid var(--ln2); background:var(--s3); cursor:pointer; transition:background .2s ease, border-color .2s ease; }
-  .set-sw input::before { content:""; position:absolute; top:2px; inset-inline-start:2px; width:18px; height:18px; border-radius:50%;
+  .set-sw input::before, .perf-sw input::before { content:""; position:absolute; top:2px; inset-inline-start:2px; width:18px; height:18px; border-radius:50%;
     background:var(--mu); transition:transform .2s var(--spring), background .2s ease; }
-  .set-sw input:checked { background:var(--ac-fill); border-color:var(--ac-fill); }
-  .set-sw input:checked::before { transform:translateX(16px); background:var(--ac-on); }
-  [dir="rtl"] .set-sw input:checked::before { transform:translateX(-16px); }
-  .set-sw input:focus-visible { outline:2px solid var(--ac); outline-offset:2px; }
+  .set-sw input:checked, .perf-sw input:checked { background:var(--ac-fill); border-color:var(--ac-fill); }
+  .set-sw input:checked::before, .perf-sw input:checked::before { transform:translateX(16px); background:var(--ac-on); }
+  [dir="rtl"] .set-sw input:checked::before, [dir="rtl"] .perf-sw input:checked::before { transform:translateX(-16px); }
+  .perf-sw input:disabled { opacity:.55; cursor:not-allowed; }
+  .set-sw input:focus-visible, .perf-sw input:focus-visible { outline:2px solid var(--ac); outline-offset:2px; }
   .set-sw:has(#alTgNote:not(:empty)) { flex-wrap:wrap; row-gap:2px; padding-block:10px; }
   #alTgNote { font-size:12px; color:var(--mu); }
   #alTgNote:not(:empty) { flex-basis:100%; padding-inline-start:52px; }
-  @media (prefers-reduced-motion: reduce) { .set-sw input, .set-sw input::before { transition:none; } }
+  @media (prefers-reduced-motion: reduce) { .set-sw input, .set-sw input::before, .perf-sw input, .perf-sw input::before { transition:none; } }
   @media (max-width:640px) { #tab-settings:not([hidden]) { gap:22px; } .set-grid > .tunnel-card { padding:16px; } .set-sub { padding:14px; } }
   .upd-stat.warn { border-color:var(--wr-b40); background:linear-gradient(180deg, var(--wr-soft), transparent 70%), var(--s2); }
   .upd-stat.ok { border-color:var(--ok-b40); }
@@ -851,33 +852,77 @@
   .upd-md ul { margin:4px 0; padding-inline-start:18px; }
   .upd-md li { margin:3px 0; }
   .upd-md code { font-family:var(--font-mono); font-size:12px; background:var(--sunk); padding:1px 5px; border-radius:4px; }
-  /* Performance tab */
+  /* Performance tab: the look of the Settings and Update pages. What runs now
+     as three tiles, the FRP options as switch rows in two columns, the kernel
+     values as tiles with a state icon. */
   .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
-  .perf-fs { border:0; margin:0; padding:0; min-width:0; }
-  .perf-fs:disabled { opacity:.5; }
-  #tab-perf .wd-radio-opt:has(input:disabled) { opacity:.5; cursor:not-allowed; }
-  .perf-fs:disabled .wd-radio-opt:has(input:disabled) { opacity:1; }
-  .perf-key { font-family:var(--font-mono); font-weight:500; font-size:12px; color:var(--dim); margin-inline-start:6px; }
-  .perf-note { margin-top:12px; padding:10px 12px; border-radius:var(--r-md); border:1px solid var(--info-badge-b); background:var(--info-soft); color:var(--tx2); font-size:13px; line-height:1.5; }
-  .perf-err { color:var(--er); }
-  #tab-perf .tc-header:has(> div > .qs-hint) { flex-wrap:nowrap; align-items:flex-start; }
-  #tab-perf .tc-header > div:has(> .qs-hint) { flex:1; min-width:0; }
+  #tab-perf:not([hidden]) { display:flex; flex-direction:column; gap:16px; }
+  #tab-perf [hidden] { display:none !important; }
+  .perf-fs { display:flex; flex-direction:column; gap:12px; border:0; margin:0; padding:0; min-width:0; }
+  .perf-note { padding:10px 12px; border-radius:var(--r-md); border:1px solid var(--info-badge-b); background:var(--info-soft); color:var(--tx2); font-size:13px; line-height:1.5; }
+  .perf-tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap:12px; }
+  .perf-tile { --pc:var(--ac); display:flex; align-items:flex-start; gap:12px; min-width:0; padding:14px; border:1px solid var(--ln); border-radius:var(--r-md);
+    background:linear-gradient(135deg, color-mix(in srgb, var(--pc) 9%, transparent), transparent 65%), var(--s2); }
+  .perf-tile[data-st="ok"] { --pc:var(--ok); }
+  .perf-tile[data-st="warn"] { --pc:var(--wr); border-color:var(--wr-b40); }
+  .perf-tile[data-st="off"] { --pc:var(--mu); }
+  .perf-tile-ic { flex:none; width:40px; height:40px; border-radius:12px; display:grid; place-items:center; color:var(--pc);
+    background:color-mix(in srgb, var(--pc) 14%, transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--pc) 28%, transparent); }
+  .perf-tile-ic svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .perf-tile-t { display:flex; flex-direction:column; gap:3px; flex:1; min-width:0; }
+  .perf-tile-k { font-size:12px; font-weight:600; color:var(--mu); }
+  .perf-tile-v { font-size:20px; font-weight:700; line-height:1.3; color:var(--tx); font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+  .perf-tile-s { font-size:12px; line-height:1.5; color:var(--mu); overflow-wrap:anywhere; }
+  .perf-meter { display:block; height:6px; margin-top:6px; border-radius:999px; background:var(--sunk); box-shadow:inset 0 0 0 1px var(--ln); overflow:hidden; }
+  .perf-meter i { display:block; width:var(--pct, 0%); height:100%; border-radius:inherit; background:var(--pc); transition:width .4s ease; }
+  .perf-cols { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap:16px; }
+  .perf-col { display:flex; flex-direction:column; gap:8px; min-width:0; }
+  .perf-sec { margin:0; padding-inline:2px; font-size:12px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--tx2); }
+  html[lang="fa"] .perf-sec { font-size:13px; letter-spacing:0; }
+  .perf-list { display:flex; flex-direction:column; padding:0 14px; border:1px solid var(--ln); border-radius:var(--r-md); background:var(--sunk); }
+  .perf-list > * + * { border-top:1px solid var(--ln); }
+  .perf-sw { display:flex; align-items:flex-start; gap:14px; min-width:0; padding:13px 0; cursor:pointer; }
+  .perf-sw input { margin-top:2px; }
+  .perf-sw-t, .perf-field { display:flex; flex-direction:column; gap:5px; min-width:0; }
+  .perf-sw-t { flex:1; }
+  .perf-field { padding:13px 0; }
+  .perf-field > label { display:flex; flex-direction:column; align-items:flex-start; gap:5px; }
+  .perf-sw-t b, .perf-field b { font-size:14px; font-weight:600; color:var(--tx); }
+  .perf-sw-t > .perf-key { align-self:flex-start; }
+  .perf-key { font-family:var(--font-mono); font-size:12px; color:var(--mu); padding:1px 7px; border-radius:6px; border:1px solid var(--ln); background:var(--s2); direction:ltr; unicode-bidi:isolate; }
+  .perf-field select { max-width:260px; }
+  .perf-unit { display:flex; align-items:center; gap:8px; }
+  .perf-unit .hashem-input { max-width:140px; }
+  .perf-unit span { font-size:13px; color:var(--mu); }
+  .perf-live { font-weight:500; color:var(--tx2); }
+  .perf-sw:has(input:disabled) { cursor:not-allowed; }
+  .perf-sw:has(input:disabled) .perf-sw-t, .perf-field:has(:disabled) { opacity:.55; }
+  .qs-hint.perf-err, .tc-sub.perf-err, .perf-err { color:var(--er); }
+  .perf-facts { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 140px), 1fr)); gap:10px; }
+  .perf-fact { display:flex; flex-direction:column; gap:4px; min-width:0; padding:12px; border:1px solid var(--ln); border-radius:var(--r-md); background:var(--s2); }
+  .perf-fact-v { font-size:17px; font-weight:700; color:var(--tx); font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+  .perf-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap:16px; }
+  .perf-grid > .tunnel-card { min-width:0; }
   #autoPoolCard .hashem-input[readonly] { color:var(--mu); cursor:default; }
+  @media (max-width:640px) { .perf-tile-v { font-size:18px; } .perf-field select { max-width:none; } }
   .status-indicator.ok { color:var(--tx2); }
   .status-indicator.ok .dot { background:var(--ok); }
   .status-indicator.warn { color:var(--wr); }
   .status-indicator.warn .dot { background:var(--wr); }
-  .ns-list { display:grid; grid-template-columns:repeat(auto-fit, minmax(250px, 1fr)); gap:8px 12px; }
-  .ns-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:10px; padding:10px 12px;
-    background:var(--sunk); border:1px solid var(--ln); border-radius:var(--r-md); min-width:0; }
-  .ns-dot { width:8px; height:8px; border-radius:50%; background:var(--dim); }
-  .ns-row[data-lvl="ok"] .ns-dot { background:var(--ok); }
-  .ns-row[data-lvl="warn"] .ns-dot { background:var(--wr); }
-  .ns-row[data-lvl="err"] .ns-dot { background:var(--er); }
-  .ns-k { color:var(--tx2); font-size:13px; font-weight:500; }
-  .ns-sub { display:block; color:var(--dim); font-size:12px; margin-top:2px; }
-  .ns-v { font-family:var(--font-mono); font-size:12px; color:var(--tx); text-align:end; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .ns-list { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap:8px; }
+  .ns-row { --nc:var(--dim); display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:12px; min-width:0; padding:11px 12px;
+    background:var(--s2); border:1px solid var(--ln); border-radius:var(--r-md); }
+  .ns-row[data-lvl="ok"] { --nc:var(--ok); }
+  .ns-row[data-lvl="warn"] { --nc:var(--wr); border-color:var(--wr-b40); background:linear-gradient(135deg, var(--wr-soft), transparent 70%), var(--s2); }
+  .ns-row[data-lvl="err"] { --nc:var(--er); border-color:var(--er-badge-b); background:linear-gradient(135deg, var(--er-soft), transparent 70%), var(--s2); }
+  .ns-ic { width:28px; height:28px; border-radius:50%; display:grid; place-items:center; color:var(--nc); background:color-mix(in srgb, var(--nc) 15%, transparent); }
+  .ns-ic svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; }
+  .ns-k { min-width:0; color:var(--tx); font-size:13px; font-weight:600; }
+  .ns-sub { display:block; margin-top:2px; color:var(--mu); font-size:12px; font-weight:400; }
+  .ns-v { font-family:var(--font-mono); font-size:12px; color:var(--tx); padding:3px 8px; border-radius:6px; border:1px solid var(--ln); background:var(--sunk);
+    text-align:end; font-variant-numeric:tabular-nums; white-space:nowrap; }
   .ns-empty { color:var(--dim); font-size:13px; padding:8px 0; }
+  @media (max-width:480px) { .ns-row { grid-template-columns:auto minmax(0,1fr); } .ns-v { grid-column:2; justify-self:start; } }
   /* Watchdog & Backup styles */
   .wd-hero-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-top:8px; }
   .wd-stat-box { background:var(--sunk); border:1px solid var(--ln); border-radius:var(--r-md); padding:12px; display:flex; flex-direction:column; gap:4px; }
@@ -2514,32 +2559,42 @@
         </div>
       </section>
       <section id="tab-perf" role="tabpanel" hidden>
-        <!-- Overview -->
-        <div class="tunnel-card wd-hero-card">
+        <!-- Overview: what runs now, as three tiles -->
+        <div class="tunnel-card">
           <div class="tc-header">
-            <p class="tc-title">Performance</p>
+            <div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 18a9 9 0 1 1 17 0"/><path d="m12 14 4.5-5"/><circle cx="12" cy="14" r="1.6"/></svg></span><p class="tc-title">Performance</p></div>
             <div class="u-flex-center-gap10">
-              <span class="status-indicator" id="perfSyncInd"><span class="dot"></span><span id="perfSyncTxt">—</span></span>
+              <span class="status-indicator upd-pill" id="perfSyncInd"><span class="dot"></span><span id="perfSyncTxt">—</span></span>
               <button class="hashem-btn hashem-btn-primary" id="perfApplyTopBtn" hidden>Apply Now</button>
             </div>
           </div>
           <div class="qs-hint">Speed settings for the tunnel engine and the server's network stack. The defaults suit traffic that is already encrypted, such as VLESS, Reality and Trojan.</div>
           <div class="perf-note" id="perfEngineNote" role="status" hidden></div>
-          <div class="wd-hero-grid">
-            <div class="wd-stat-box">
-              <span class="wd-stat-label" id="perfEngLabel">FRP transport</span>
-              <div class="wd-stat-val" id="perfCryptoVal">—</div>
-              <span class="wd-stat-sub" id="perfCryptoSub">—</span>
+          <div class="perf-tiles">
+            <div class="perf-tile" id="perfTileEng">
+              <span class="perf-tile-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 2 4.5 13.5H12L11 22l8.5-11.5H12z"/></svg></span>
+              <div class="perf-tile-t">
+                <span class="perf-tile-k" id="perfEngLabel">FRP transport</span>
+                <div class="perf-tile-v" id="perfCryptoVal">—</div>
+                <span class="perf-tile-s" id="perfCryptoSub">—</span>
+              </div>
             </div>
-            <div class="wd-stat-box">
-              <span class="wd-stat-label" id="perfPoolLabel">Work-conn pool (frpc / frps)</span>
-              <div class="wd-stat-val" id="perfPoolVal">—</div>
-              <span class="wd-stat-sub" id="perfPoolSub">—</span>
+            <div class="perf-tile" id="perfTilePool">
+              <span class="perf-tile-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 3 7.5 12 12l9-4.5z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></svg></span>
+              <div class="perf-tile-t">
+                <span class="perf-tile-k" id="perfPoolLabel">Work-conn pool (frpc / frps)</span>
+                <div class="perf-tile-v" id="perfPoolVal">—</div>
+                <span class="perf-tile-s" id="perfPoolSub">—</span>
+              </div>
             </div>
-            <div class="wd-stat-box">
-              <span class="wd-stat-label">Network stack</span>
-              <div class="wd-stat-val" id="perfNetVal">—</div>
-              <span class="wd-stat-sub" id="perfNetSub">—</span>
+            <div class="perf-tile" id="perfTileNet">
+              <span class="perf-tile-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2.5"/><path d="M9 9h6v6H9zM9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></span>
+              <div class="perf-tile-t">
+                <span class="perf-tile-k">Network stack</span>
+                <div class="perf-tile-v" id="perfNetVal">—</div>
+                <span class="perf-tile-s" id="perfNetSub">—</span>
+                <span class="perf-meter" id="perfNetMeter" aria-hidden="true" hidden><i></i></span>
+              </div>
             </div>
           </div>
         </div>
@@ -2547,60 +2602,74 @@
         <!-- FRP encryption, compression and multiplexing -->
         <div class="tunnel-card" id="perfFrpCard">
           <div class="tc-header">
-            <p class="tc-title">FRP Transport</p>
+            <div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 8h13M13 4l4 4-4 4"/><path d="M20 16H7M11 12l-4 4 4 4"/></svg></span><p class="tc-title">FRP Transport</p></div>
             <span class="badge" id="perfRoleBadge">—</span>
           </div>
           <div class="qs-hint">The FRP options of this tunnel. Encryption, compression and multiplexing only cost CPU and speed for VLESS, Reality and Trojan, whose traffic is already encrypted: leave them off unless a service needs them.</div>
           <fieldset class="perf-fs" id="perfFrpSet">
             <legend class="sr-only">FRP transport options</legend>
-            <div class="u-flex-col-gap14 u-mt-12">
-              <label class="wd-radio-opt u-items-start">
-                <input type="checkbox" id="perfEncCheck" class="u-checkbox-ac">
-                <div>
-                  <b class="u-color-tx">Proxy Encryption <span class="perf-key" data-no-i18n>transport.useEncryption</span></b>
-                  <div class="qs-hint u-mt-2">Encrypts traffic between frpc and frps with AES-128. Only worth it for plain, unencrypted services.</div>
+            <div class="perf-cols">
+              <div class="perf-col">
+                <h3 class="perf-sec">Speed</h3>
+                <div class="perf-list">
+                  <label class="perf-sw">
+                    <span class="perf-sw-t">
+                      <b>Proxy Encryption</b>
+                      <code class="perf-key" data-no-i18n>transport.useEncryption</code>
+                      <span class="qs-hint">Encrypts traffic between frpc and frps with AES-128. Only worth it for plain, unencrypted services.</span>
+                    </span>
+                    <input type="checkbox" id="perfEncCheck">
+                  </label>
+                  <label class="perf-sw" id="perfCompRow">
+                    <span class="perf-sw-t">
+                      <b>Proxy Compression</b>
+                      <code class="perf-key" data-no-i18n>transport.useCompression</code>
+                      <span class="qs-hint">Snappy compression per proxy. Helps plain text services; encrypted traffic does not compress, so for VPN traffic it only uses CPU.</span>
+                    </span>
+                    <input type="checkbox" id="perfCompCheck">
+                  </label>
+                  <label class="perf-sw">
+                    <span class="perf-sw-t">
+                      <b>TCP Multiplexing</b>
+                      <code class="perf-key" data-no-i18n>transport.tcpMux</code>
+                      <span class="qs-hint">Carries every user connection inside one TCP connection. Over GRE this roughly halves throughput (measured 460 against 1010 Mbit). It must be the same on the Iran server and every foreign server, or frpc cannot log in.</span>
+                      <span class="qs-hint perf-live" id="perfMuxLive">—</span>
+                    </span>
+                    <input type="checkbox" id="perfMuxCheck">
+                  </label>
                 </div>
-              </label>
-              <label class="wd-radio-opt u-items-start" id="perfCompRow">
-                <input type="checkbox" id="perfCompCheck" class="u-checkbox-ac">
-                <div>
-                  <b class="u-color-tx">Proxy Compression <span class="perf-key" data-no-i18n>transport.useCompression</span></b>
-                  <div class="qs-hint u-mt-2">Snappy compression per proxy. Helps plain text services; encrypted traffic does not compress, so for VPN traffic it only uses CPU.</div>
-                </div>
-              </label>
-              <label class="wd-radio-opt u-items-start">
-                <input type="checkbox" id="perfMuxCheck" class="u-checkbox-ac">
-                <div>
-                  <b class="u-color-tx">TCP Multiplexing <span class="perf-key" data-no-i18n>transport.tcpMux</span></b>
-                  <div class="qs-hint u-mt-2">Carries every user connection inside one TCP connection. Over GRE this roughly halves throughput (measured 460 against 1010 Mbit). It must be the same on the Iran server and every foreign server, or frpc cannot log in.</div>
-                  <div class="qs-hint u-mt-2" id="perfMuxLive">—</div>
-                </div>
-              </label>
-              <div class="fg">
-                <label for="perfPPSelect"><b class="u-color-tx">PROXY Protocol <span class="perf-key" data-no-i18n>transport.proxyProtocolVersion</span></b></label>
-                <select class="hashem-input u-max-w-260" id="perfPPSelect">
-                  <option value="off">Off</option>
-                  <option value="v2">v2 (Xray, 3x-ui)</option>
-                  <option value="v1">v1</option>
-                </select>
-                <div class="qs-hint u-mt-2">Sends each user's real IP to the service on this server, so Xray logs, limits and IP checks see real users instead of 127.0.0.1. Turn on Proxy Protocol (acceptProxyProtocol) in the Xray inbound first: without it every connection fails.</div>
-                <div class="qs-hint u-mt-2" id="perfPPLive" hidden></div>
               </div>
-              <div class="fg">
-                <label for="perfBwInput"><b class="u-color-tx">Bandwidth Limit per Port <span class="perf-key" data-no-i18n>transport.bandwidthLimit</span></b></label>
-                <div class="u-flex-center-gap8"><input type="number" class="hashem-input u-max-w-140" id="perfBwInput" min="0" max="10000" step="1" value="0" inputmode="numeric"><span class="qs-hint">MB/s</span></div>
-                <div class="qs-hint u-mt-2">A cap on each forwarded port, for all its users together (megabytes per second). 0 means no limit.</div>
-              </div>
-              <label class="wd-radio-opt u-items-start">
-                <input type="checkbox" id="perfHcCheck" class="u-checkbox-ac">
-                <div>
-                  <b class="u-color-tx">Health Check <span class="perf-key" data-no-i18n>healthCheck</span></b>
-                  <div class="qs-hint u-mt-2">frpc checks the service on this server every 10 seconds and closes its port on the Iran server while it is down, so users fail at once instead of hanging.</div>
+              <div class="perf-col">
+                <h3 class="perf-sec">Services</h3>
+                <div class="perf-list">
+                  <div class="perf-field">
+                    <label for="perfPPSelect"><b>PROXY Protocol</b><code class="perf-key" data-no-i18n>transport.proxyProtocolVersion</code></label>
+                    <select class="hashem-input" id="perfPPSelect">
+                      <option value="off">Off</option>
+                      <option value="v2">v2 (Xray, 3x-ui)</option>
+                      <option value="v1">v1</option>
+                    </select>
+                    <span class="qs-hint">Sends each user's real IP to the service on this server, so Xray logs, limits and IP checks see real users instead of 127.0.0.1. Turn on Proxy Protocol (acceptProxyProtocol) in the Xray inbound first: without it every connection fails.</span>
+                    <span class="qs-hint perf-live" id="perfPPLive" hidden></span>
+                  </div>
+                  <div class="perf-field">
+                    <label for="perfBwInput"><b>Bandwidth Limit per Port</b><code class="perf-key" data-no-i18n>transport.bandwidthLimit</code></label>
+                    <div class="perf-unit"><input type="number" class="hashem-input" id="perfBwInput" min="0" max="10000" step="1" value="0" inputmode="numeric"><span>MB/s</span></div>
+                    <span class="qs-hint">A cap on each forwarded port, for all its users together (megabytes per second). 0 means no limit.</span>
+                  </div>
+                  <label class="perf-sw">
+                    <span class="perf-sw-t">
+                      <b>Health Check</b>
+                      <code class="perf-key" data-no-i18n>healthCheck</code>
+                      <span class="qs-hint">frpc checks the service on this server every 10 seconds and closes its port on the Iran server while it is down, so users fail at once instead of hanging.</span>
+                    </span>
+                    <input type="checkbox" id="perfHcCheck">
+                  </label>
                 </div>
-              </label>
+              </div>
             </div>
-            <div class="qs-hint u-mt-12" id="perfRoleHint" hidden></div>
-            <div class="qs-actions u-mt-16 u-ai-c">
+            <div class="perf-note" id="perfRoleHint" hidden></div>
+            <div class="set-acts">
               <button class="hashem-btn hashem-btn-primary" id="perfApplyBtn">Apply &amp; Restart Tunnels</button>
               <button class="hashem-btn hashem-btn-danger" id="perfResetBtn">Reset to Defaults</button>
               <span class="badge warn" id="perfDirty" hidden>Unsaved changes</span>
@@ -2609,45 +2678,44 @@
           </fieldset>
         </div>
 
+        <div class="perf-grid">
         <!-- Auto Pool -->
         <div class="tunnel-card" id="autoPoolCard">
           <div class="tc-header">
-            <div>
-              <p class="tc-title" data-i18n="perf_ap_title">Auto Pool (FRP work connections)</p>
-              <div class="qs-hint" data-i18n="perf_ap_sub">Sizes frpc poolCount and frps maxPoolCount from pool-full errors, active connections, CPU and free RAM. Scales up fast, scales down slowly, restarts only frpc and only when few users are connected.</div>
-            </div>
+            <div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 3 7.5 12 12l9-4.5z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></svg></span><p class="tc-title" data-i18n="perf_ap_title">Auto Pool (FRP work connections)</p></div>
             <span class="badge ok" id="perfAutoPoolBadge">Auto</span>
           </div>
+          <div class="qs-hint" data-i18n="perf_ap_sub">Sizes frpc poolCount and frps maxPoolCount from pool-full errors, active connections, CPU and free RAM. Scales up fast, scales down slowly, restarts only frpc and only when few users are connected.</div>
           <fieldset class="perf-fs" id="perfPoolSet">
             <legend class="sr-only">Auto Pool</legend>
-            <div class="u-flex-col-gap14 u-mt-12">
-              <label class="wd-radio-opt u-items-start">
-                <input type="checkbox" id="perfAutoPool" class="u-checkbox-ac" checked>
-                <div>
-                  <b class="u-color-tx" data-i18n="perf_ap_toggle">Auto Pool (recommended)</b>
-                  <div class="qs-hint u-mt-2" data-i18n="perf_ap_toggle_hint">When off, the manual values below are written to frpc.toml / frps.toml as typed.</div>
-                </div>
+            <div class="perf-list">
+              <label class="perf-sw">
+                <span class="perf-sw-t">
+                  <b data-i18n="perf_ap_toggle">Auto Pool (recommended)</b>
+                  <span class="qs-hint" data-i18n="perf_ap_toggle_hint">When off, the manual values below are written to frpc.toml / frps.toml as typed.</span>
+                </span>
+                <input type="checkbox" id="perfAutoPool" checked>
               </label>
             </div>
-            <div class="wd-hero-grid u-mt-12">
-              <div class="wd-stat-box">
-                <span class="wd-stat-label" data-i18n="perf_ap_last_decision">Last decision</span>
-                <div class="wd-stat-val u-fs-18" id="perfApDecision">—</div>
-                <span class="wd-stat-sub" id="perfApReason">—</span>
+            <div class="perf-facts">
+              <div class="perf-fact">
+                <span class="perf-tile-k" data-i18n="perf_ap_last_decision">Last decision</span>
+                <div class="perf-fact-v" id="perfApDecision">—</div>
+                <span class="perf-tile-s" id="perfApReason">—</span>
               </div>
-              <div class="wd-stat-box">
-                <span class="wd-stat-label" data-i18n="perf_ap_errors">Pool-full errors (last tick)</span>
-                <div class="wd-stat-val u-fs-18" id="perfApErrors">—</div>
-                <span class="wd-stat-sub" id="perfApConns">—</span>
+              <div class="perf-fact">
+                <span class="perf-tile-k" data-i18n="perf_ap_errors">Pool-full errors (last tick)</span>
+                <div class="perf-fact-v" id="perfApErrors">—</div>
+                <span class="perf-tile-s" id="perfApConns">—</span>
               </div>
-              <div class="wd-stat-box">
-                <span class="wd-stat-label" data-i18n="perf_ap_last_restart">Last frpc restart</span>
-                <div class="wd-stat-val u-fs-18" id="perfApRestart">—</div>
-                <span class="wd-stat-sub" id="perfApQuiet">—</span>
+              <div class="perf-fact">
+                <span class="perf-tile-k" data-i18n="perf_ap_last_restart">Last frpc restart</span>
+                <div class="perf-fact-v" id="perfApRestart">—</div>
+                <span class="perf-tile-s" id="perfApQuiet">—</span>
               </div>
             </div>
-            <div class="qs-hint u-mt-8" id="perfApFrpsNote" hidden data-i18n="perf_ap_frps_note">maxPoolCount was raised in frps.toml; restart frps during a quiet period to apply it.</div>
-            <div class="qs-row u-mt-12">
+            <div class="perf-note" id="perfApFrpsNote" hidden data-i18n="perf_ap_frps_note">maxPoolCount was raised in frps.toml; restart frps during a quiet period to apply it.</div>
+            <div class="set-fields">
               <div class="fg">
                 <label for="perfPoolCount" data-i18n="perf_pool_count">Client Pool Count (frpc)</label>
                 <input type="number" id="perfPoolCount" class="hashem-input" min="2" max="1000" step="1" value="20" inputmode="numeric" aria-describedby="perfPoolHint">
@@ -2659,8 +2727,8 @@
                 <div class="tc-sub" id="perfMaxHint" data-i18n="perf_max_sub">Server-side maximum work connection headroom (always at least 1.5 × poolCount).</div>
               </div>
             </div>
-            <div class="qs-hint u-mt-8" id="perfPoolErr" aria-live="polite" hidden></div>
-            <div class="qs-actions u-mt-12 u-ai-c">
+            <div class="qs-hint" id="perfPoolErr" aria-live="polite" hidden></div>
+            <div class="set-acts">
               <button class="hashem-btn hashem-btn-primary" id="perfSaveTuningBtn" type="button" data-i18n="perf_save_tuning">Save &amp; Apply Capacity</button>
               <span class="u-hint-12" id="perfTuningStatus" aria-live="polite"></span>
             </div>
@@ -2670,20 +2738,18 @@
         <!-- Backhaul connection pool -->
         <div class="tunnel-card" id="perfBhCard" hidden>
           <div class="tc-header">
-            <div>
-              <p class="tc-title">Backhaul Connection Pool</p>
-              <div class="qs-hint">Connections the foreign server keeps open to the Iran server, ready for new users. Raise it when many users connect at once and new connections are slow to start; lower it to keep fewer idle connections. Applying restarts backhaul-client, so connections drop for a few seconds.</div>
-            </div>
+            <div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 3 7.5 12 12l9-4.5z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></svg></span><p class="tc-title">Backhaul Connection Pool</p></div>
             <span class="badge" id="perfBhBadge">—</span>
           </div>
-          <div class="qs-row u-mt-12">
+          <div class="qs-hint">Connections the foreign server keeps open to the Iran server, ready for new users. Raise it when many users connect at once and new connections are slow to start; lower it to keep fewer idle connections. Applying restarts backhaul-client, so connections drop for a few seconds.</div>
+          <div class="set-fields">
             <div class="fg">
               <label for="perfBhPool">Connection Pool</label>
               <input type="number" id="perfBhPool" class="hashem-input" min="1" max="64" step="1" value="8" inputmode="numeric" aria-describedby="perfBhHint">
               <div class="tc-sub" id="perfBhHint">From 1 to 64. The default is 8.</div>
             </div>
           </div>
-          <div class="qs-actions u-mt-12 u-ai-c">
+          <div class="set-acts">
             <button class="hashem-btn hashem-btn-primary" id="perfBhSaveBtn" type="button">Save &amp; Apply Pool</button>
             <span class="u-hint-12" id="perfBhStatus" aria-live="polite"></span>
           </div>
@@ -2692,17 +2758,16 @@
         <!-- Kernel network stack -->
         <div class="tunnel-card" id="netStackCard">
           <div class="tc-header">
-            <div>
-              <p class="tc-title">Network Stack</p>
-              <div class="qs-hint">Kernel settings that decide speed on long, lossy links. Optimize Network sets all of them and saves the current values first, so Restore can bring them back.</div>
-            </div>
+            <div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2.5"/><path d="M9 9h6v6H9zM9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></span><p class="tc-title">Network Stack</p></div>
             <span class="badge" id="netStackBadge">—</span>
           </div>
-          <div class="ns-list u-mt-8" id="netStackList"></div>
-          <div class="qs-actions u-mt-12">
+          <div class="qs-hint">Kernel settings that decide speed on long, lossy links. Optimize Network sets all of them and saves the current values first, so Restore can bring them back.</div>
+          <div class="ns-list" id="netStackList"></div>
+          <div class="set-acts">
             <button class="hashem-btn hashem-btn-primary" id="perfOptimizeBtn">Optimize Network</button>
             <button class="hashem-btn hashem-btn-secondary" id="perfRestoreBtn" hidden>Restore Previous Settings</button>
           </div>
+        </div>
         </div>
 
       </section>
