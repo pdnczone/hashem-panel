@@ -3,7 +3,7 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
-## v3.2.0 — not released yet
+## v3.1.2 — 2026-11-13
 
 **Nodes without a panel: a server joins as a bare core, and the central manages all of it.** Run `hashem update` on every server, the central first. Servers that already have a panel keep it. [Guide](docs/NODES.md)
 
