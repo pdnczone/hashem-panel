@@ -69,6 +69,18 @@ func handleNodesGet(w http.ResponseWriter, r *http.Request) {
 		case "tunnels":
 			links, errs := nodeTunLinksLive(ctx)
 			writeJSON(w, map[string]any{"links": links, "errors": errs})
+		case "pathtest": // &server=N: the path test as that Iran server sees it (node_probe.go)
+			id, aerr := strconv.Atoi(r.URL.Query().Get("server"))
+			if aerr != nil || id < 0 {
+				writeAPIError(w, r, "E-NODE-01", "server is missing")
+				return
+			}
+			pv, perr := nodePathTestView(ctx, id)
+			if perr != nil {
+				writeAPIError(w, r, "E-NODE-04", perr.Error())
+				return
+			}
+			writeJSON(w, pv)
 		default:
 			writeAPIError(w, r, "E-NODE-01", "unknown view")
 		}
@@ -330,6 +342,36 @@ func handleNodesPost(w http.ResponseWriter, r *http.Request) {
 		}
 		LogSecurityAudit("node_tunnel_create", cfg.Username, ClientIP(r), fmt.Sprintf("server=%d client=%d engine=%s ports=%s", q.Server, q.Client, q.Engine, q.Ports))
 		writeJSON(w, map[string]any{"status": "ok", "job": id})
+		return
+	case "pathtest-start", "pathtest-stop", "benchmark-run": // between two servers, from here (node_probe.go)
+		if !isCentral() {
+			return
+		}
+		q := req.nodeTunReq
+		switch req.Action {
+		case "pathtest-start":
+			ctx, cancel := context.WithTimeout(r.Context(), nodeProbeTO)
+			v, perr := nodePathTestStart(ctx, q.Server, q.Client)
+			cancel()
+			if perr != nil {
+				writeAPIError(w, r, "E-NODE-04", perr.Error())
+				return
+			}
+			LogSecurityAudit("node_pathtest", cfg.Username, ClientIP(r), fmt.Sprintf("server=%d client=%d", q.Server, q.Client))
+			writeJSON(w, v)
+		case "pathtest-stop":
+			ctx, cancel := context.WithTimeout(r.Context(), nodeProbeTO)
+			nodePathTestStop(ctx, q.Server, q.Client)
+			cancel()
+			writeJSON(w, map[string]any{"status": "ok"})
+		default:
+			rep, berr := nodeBenchRun(r.Context(), q.Server, q.Client, req.PeerID)
+			if berr != nil {
+				writeAPIError(w, r, "E-NODE-04", berr.Error())
+				return
+			}
+			writeJSON(w, rep)
+		}
 		return
 	case "tunnel-list":
 		if !isCentral() {

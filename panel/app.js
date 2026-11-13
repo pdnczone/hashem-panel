@@ -430,6 +430,9 @@ function goTab(name) {
     b.setAttribute('tabindex', on ? '0' : '-1');
   };
   document.querySelectorAll('.sidebar-nav [data-tab]').forEach(markTab);
+  // the page shown, next to the title
+  const nav = document.querySelector(`.sidebar-nav [data-tab="${name}"] span`), pg = $('tbPage');
+  if (pg) pg.textContent = name === 'dashboard' ? '' : (nav ? nav.textContent.trim() : '');
   const dr = $('drawerNav');
   if (dr) dr.querySelectorAll('[data-tab]').forEach(markTab);
   if (name === 'setup' || name === 'tunnel') loadSSHFwd();
@@ -1615,11 +1618,17 @@ function linkStrip(s) {
   const pinged = L.ping_ok || peers.some(p => p.ping_ok);
   const ms = L.ping_ok && parseFloat(L.ping_ms) > 0 ? Math.round(parseFloat(L.ping_ms)) + ' ms' : '';
   const state = up ? (pinged ? 'ok' : 'warn') : 'err';
-  const sep = ' <span class="ls-sep" aria-hidden="true">·</span> ';
-  el.innerHTML = '<span class="ls-dot ' + state + '" aria-hidden="true"></span><bdi>' + esc(here) + '</bdi>' +
-    '<span class="ls-arrow" aria-hidden="true">⇄</span><bdi>' + esc(there) + '</bdi>' +
-    (eng ? sep + '<bdi>' + esc(eng) + '</bdi>' : '') + (ms ? sep + '<bdi>' + esc(ms) + '</bdi>' : '');
-  el.title = up ? tr('ls_up', 'Tunnel up') : tr('ls_down', 'Tunnel down');
+  const globe = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>';
+  const bolt = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>';
+  const slow = ms && parseFloat(L.ping_ms) > 150;
+  const stateTxt = up ? tr('ls_up', 'Tunnel up') : tr('ls_down', 'Tunnel down');
+  // this server, the wire (its state), the other side; then the engine and latency
+  el.innerHTML = '<span class="ls-link"><span class="ls-end here"><span class="ls-dot ' + state + '" aria-hidden="true"></span><bdi>' + esc(here) + '</bdi></span>' +
+    '<span class="ls-wire ' + state + '" role="img" aria-label="' + esc(stateTxt) + '"></span>' +
+    '<span class="ls-end there' + (/^[0-9a-f.:]+$/i.test(there) ? ' ip' : '') + '">' + globe + '<bdi>' + esc(there) + '</bdi></span></span>' +
+    (eng ? '<span class="ls-chip eng"><bdi>' + esc(eng) + '</bdi></span>' : '') +
+    (ms ? '<span class="ls-chip ms' + (slow ? ' slow' : '') + '">' + bolt + '<bdi>' + esc(ms) + '</bdi></span>' : '');
+  el.title = stateTxt;
 }
 // The base tunnel exists. A peer's backhaul-server-N alone is not one: the
 // status names that unit when no base unit runs, for the role of a hub that
@@ -3888,7 +3897,11 @@ $('toggle').addEventListener('click', () => {
   })(0);
 })();
 $('logoutBtn').onclick = async () => { try { await api('/api/logout', {}); } catch(e){ /* logout best-effort: always fall through to login screen */ } showLogin(); };
-$('refreshBtn').onclick = refresh;
+$('refreshBtn').onclick = async () => {
+  const b = $('refreshBtn');
+  b.classList.add('spin');
+  try { await refresh(); } finally { b.classList.remove('spin'); }
+};
 $('removeTunnelBtn').onclick = async () => {
   // peers other than the first tunnel itself (peer 1 on the legacy names)
   const others = (tunPeerCache || []).filter(p => !p.legacy && p.gre_if !== 'gre-tunnel').length;
@@ -12493,7 +12506,7 @@ function nmCard(s, rel) {
     : s.core ? `<span class="nm-tag mu" title="${esc(tr('', 'Node core: no web panel on this server; this panel manages it'))}">${esc(tr('', 'Core'))}</span>` : '';
   const btn = (label, fn, cls) => `<button type="button" class="hashem-btn ${cls || 'hashem-btn-ghost'} u-btn-30" onclick="${fn}">${esc(label)}</button>`;
   // a tunnel from this server to another one, set up on both ends from here
-  const mk = s.online && !s.held ? btn(tr('', 'New tunnel'), `openNodeTunnel(${s.id})`, 'hashem-btn-secondary') : '';
+  const mk = s.online && !s.held ? btn(tr('', 'New tunnel'), `openNodeTunnel(${s.id})`, 'hashem-btn-secondary') + btn(tr('', 'Test'), `openNodeProbe(${s.id})`) : '';
   const acts = mk + (s.central ? btn(tr('', 'Dashboard'), "goTab('dashboard')")
     : (s.online && !s.held ? btn(tr('', 'Open'), `openNodeHere(${s.id})`) : '') + btn(tr('', 'Details'), `nodeMapDetails(${s.id})`));
   return `<div class="nm-node${s.central ? ' central' : ''}${s.online ? '' : ' off'}${_nmSel === s.id ? ' sel' : ''}${rel ? ' rel' : ''}" data-nm="${s.id}">
@@ -12694,7 +12707,7 @@ function ntLinkRow(l) {
   return `<div class="lm-row${l.state === 'down' ? ' cut' : ''}"><div class="lm-head"><div class="lm-name"><b>${esc(ntName(l.server))} → ${esc(ntName(l.client))}</b>
     <small class="lm-num">${esc([l.server_ip + ' → ' + l.client_ip, l.carrier || l.engine || 'frp', l.name || ''].filter(Boolean).join(' · '))}${l.auto ? ' · ' + esc(tr('', 'Autopilot')) + ' ' + esc(l.auto === 'on' ? tr('', 'On') : tr('', 'Off')) : ''}</small></div>
     ${st ? `<span class="badge ${st[0]}">${esc(st[1])}</span>` : ''}</div>
-    <div class="lm-acts">${btn(tr('', 'Swap carrier'), `ntOpen(${s}, 'tunnel', 'swap:${p}')`, 'hashem-btn-secondary')}${btn(tr('', 'Ports and settings'), `ntOpen(${s}, 'tunnel', 'edit:${p}')`)}${btn(tr('', 'Test the path'), `ntOpen(${s}, 'benchmark')`)}${btn(tr('', 'Restart both ends'), `ntRestart(${s}, ${c}, ${p}, ${h})`)}${btn(tr('', 'Remove both ends'), `ntRemove(${s}, ${c}, ${p}, ${h})`, 'hashem-btn-ghost u-c-er')}</div></div>`;
+    <div class="lm-acts">${btn(tr('', 'Swap carrier'), `ntOpen(${s}, 'tunnel', 'swap:${p}')`, 'hashem-btn-secondary')}${btn(tr('', 'Ports and settings'), `ntOpen(${s}, 'tunnel', 'edit:${p}')`)}${btn(tr('', 'Test'), `openNodeProbe(${s}, ${c}, 'bench', ${p})`)}${btn(tr('', 'Restart both ends'), `ntRestart(${s}, ${c}, ${p}, ${h})`)}${btn(tr('', 'Remove both ends'), `ntRemove(${s}, ${c}, ${p}, ${h})`, 'hashem-btn-ghost u-c-er')}</div></div>`;
 }
 function ntLeftRow(l) {
   return `<div class="lm-row cut"><div class="lm-head"><div class="lm-name"><b>${esc(tr('', 'Left over'))}: ${esc(ntName(l.server))}</b>
@@ -12733,7 +12746,9 @@ async function loadNodeTunnels() {
 // openNodeTunnel opens New tunnel; pick (a server's id, from its card on the
 // map) fills that server in on its side, and the other end with a server of
 // the other side.
-function openNodeTunnel(pick) {
+// ntPairFor: the Iran and the foreign server a dialog starts with; pick
+// (a server's id) goes on its own side, the other end on the other side.
+function ntPairFor(pick) {
   const ids = [0].concat(((_nodes && _nodes.nodes) || []).filter(n => n.online && !n.held).map(n => Number(n.id)));
   const sides = {};
   nmServers().forEach(x => { sides[x.id] = x.side; });
@@ -12742,6 +12757,10 @@ function openNodeTunnel(pick) {
   if (typeof pick === 'number' && ids.includes(pick)) { if (sides[pick] === 'foreign') cl = pick; else sv = pick; }
   if (sv === null) sv = ids.find(id => id !== cl && sides[id] === 'iran') ?? ids.find(id => id !== cl && sides[id] !== 'foreign') ?? ids.find(id => id !== cl) ?? 0;
   if (cl === null) cl = ids.find(id => id !== sv && sides[id] === 'foreign') ?? ids.find(id => id !== sv && sides[id] !== 'iran') ?? ids.find(id => id !== sv) ?? -1;
+  return [sv, cl];
+}
+function openNodeTunnel(pick) {
+  const [sv, cl] = ntPairFor(pick);
   const html = `<div class="xr-fields">
       <div class="xr-field"><label class="qs-label" for="ntS">${esc(tr('', 'Iran server (users connect to it)'))}</label><select class="hashem-input" id="ntS">${ntServerOpts(sv)}</select></div>
       <div class="xr-field"><label class="qs-label" for="ntC">${esc(tr('', 'Foreign server'))}</label><select class="hashem-input" id="ntC">${ntServerOpts(cl)}</select></div>
@@ -12781,6 +12800,177 @@ function openNodeTunnel(pick) {
   $('ntE').addEventListener('change', udp);
   udp();
 }
+// ---- testing the way between two servers from here (node_probe.go) ----
+// The path test needs no tunnel: the central starts it on the Iran server and
+// joins the foreign server itself, with no code to copy. The benchmark
+// measures the carriers of a tunnel between the two, on its Iran server.
+let _np = null; // {server, client, mode, peer, run, view, rep, timer}
+function npLink(s, c) { return (_ntLinks || []).find(l => Number(l.server) === s && Number(l.client) === c) || null; }
+function openNodeProbe(a, b, mode, peer) {
+  let sv = a, cl = b;
+  if (typeof b !== 'number') [sv, cl] = ntPairFor(typeof a === 'number' ? a : undefined);
+  if (_np && _np.timer) clearTimeout(_np.timer);
+  _np = { server: sv, client: cl, mode: mode || (npLink(sv, cl) ? 'bench' : 'path'), peer: Number(peer) || 0, run: false, view: null, rep: null, timer: 0, fails: 0, err: '' };
+  const seg = (m, label) => `<button type="button" class="np-seg-b" data-np-mode="${m}" aria-pressed="false" onclick="npMode('${m}')">${esc(label)}</button>`;
+  const html = `<div class="xr-fields">
+      <div class="xr-field"><label class="qs-label" for="npS">${esc(tr('', 'Iran server'))}</label><select class="hashem-input" id="npS" onchange="npPick()">${ntServerOpts(sv)}</select></div>
+      <div class="xr-field"><label class="qs-label" for="npC">${esc(tr('', 'Foreign server'))}</label><select class="hashem-input" id="npC" onchange="npPick()">${ntServerOpts(cl)}</select></div>
+    </div>
+    <div class="np-seg" role="group" aria-label="${esc(tr('', 'Test'))}">${seg('path', tr('', 'Test the paths'))}${seg('bench', tr('', 'Benchmark the tunnel'))}</div>
+    <div class="qs-hint" id="npHint"></div>
+    <div id="npOut" class="np-out"></div>`;
+  custModal(tr('', 'Test between servers'), html, tr('', 'Run the test'), npRun);
+  $('custModalNo').textContent = tr('', 'Close'); // the dialog stays open on its results
+  npMode(_np.mode);
+  npPoll();
+}
+function npPick() {
+  if (!_np) return;
+  // the selects are locked while a test runs; a finished one stays on its servers until it expires
+  if (_np.view && _np.view.active) api('/api/nodes', { action: 'pathtest-stop', server: _np.server, client: _np.client }).catch(() => {});
+  _np.server = parseInt($('npS').value, 10); _np.client = parseInt($('npC').value, 10); _np.peer = 0;
+  _np.view = null; _np.rep = null; _np.err = '';
+  npMode(_np.mode);
+}
+function npMode(m) {
+  if (!_np) return;
+  _np.mode = m;
+  document.querySelectorAll('.np-seg-b').forEach(b => { const on = b.dataset.npMode === m; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+  const link = npLink(_np.server, _np.client);
+  const hint = m === 'path'
+    ? tr('', 'Which transports get through between these two servers, measured with the real cores. No tunnel is needed and nothing stays installed; it takes about a minute.')
+    : link ? tr('', 'Measures each carrier of the tunnel between these servers (latency, loss, jitter) on its Iran server and names the best one. Its users are not cut.')
+      : tr('', 'There is no tunnel from this Iran server to this foreign server. Test the paths instead: it needs none.');
+  $('npHint').textContent = hint;
+  const y = $('custModalYes');
+  if (y) { y.textContent = m === 'path' ? tr('', 'Test the paths') : tr('', 'Run the benchmark'); y.disabled = m === 'bench' && !link; }
+  npRender();
+}
+async function npRun() {
+  const n = _np;
+  if (!n || n.run || (n.view && n.view.active)) return false; // one test at a time
+  if (n.server === n.client || n.client < 0) throw new Error(tr('', 'Pick two different servers.'));
+  n.run = true;
+  n.err = ''; n.fails = 0;
+  npRender();
+  try {
+    if (n.mode === 'path') {
+      const sv = n.server, cl = n.client;
+      const v = await api('/api/nodes', { action: 'pathtest-start', server: sv, client: cl });
+      if (_np !== n) { // the dialog was closed while it started: stop it again
+        api('/api/nodes', { action: 'pathtest-stop', server: sv, client: cl }).catch(() => {});
+        return false;
+      }
+      n.view = v;
+      n.run = false;
+      npPoll();
+    } else {
+      const l = npLink(n.server, n.client);
+      n.rep = await api('/api/nodes', { action: 'benchmark-run', server: n.server, client: n.client, peer_id: n.peer || (l ? Number(l.peer_id) : 0) });
+      n.run = false;
+    }
+  } catch (e) { n.run = false; npRender(); throw e; }
+  npRender();
+  return false; // the dialog stays open on its results
+}
+async function npStop() {
+  const n = _np;
+  if (!n) return;
+  try { await api('/api/nodes', { action: 'pathtest-stop', server: n.server, client: n.client }); } catch (_) { /* gone already */ }
+  if (n.view) n.view.active = false;
+  npRender();
+}
+// npPoll reads the Iran server's path test every 2 s while it runs and the
+// dialog is open; closing the dialog stops a running test on both servers.
+async function npPoll() {
+  const n = _np;
+  if (!n) return;
+  clearTimeout(n.timer);
+  const open = $('npOut') && !$('custModal').hidden;
+  if (!open) {
+    if (n.view && n.view.active) api('/api/nodes', { action: 'pathtest-stop', server: n.server, client: n.client }).catch(() => {});
+    _np = null;
+    return;
+  }
+  if (n.mode === 'path' && n.view && n.view.active && !document.hidden) {
+    try { n.view = await api('/api/nodes?view=pathtest&server=' + n.server); n.fails = 0; } catch (e) {
+      // the Iran server stopped answering: say so after a few tries, and stop asking
+      if (++n.fails >= 3) { n.err = e.message; n.view.active = false; }
+    }
+    if (_np !== n) return;
+    npRender();
+  }
+  n.timer = setTimeout(npPoll, n.view && n.view.active ? 2000 : 1000);
+}
+function npRender() {
+  npRenderHTML();
+  const out = $('npOut');
+  if (out) out.querySelectorAll('.np-bar i[data-v]').forEach(i => i.style.setProperty('--np-v', i.dataset.v));
+}
+function npRenderHTML() {
+  const out = $('npOut'), n = _np;
+  if (!out || !n) return;
+  const locked = n.run || !!(n.view && n.view.active);
+  ['npS', 'npC'].forEach(id => { if ($(id)) $(id).disabled = locked; });
+  document.querySelectorAll('.np-seg-b').forEach(b => { b.disabled = locked; });
+  const y = $('custModalYes');
+  if (y) y.disabled = locked || (n.mode === 'bench' && !npLink(n.server, n.client));
+  const errBox = n.err ? `<div class="xr-err">${esc(n.err)}</div>` : '';
+  const busy = label => `<div class="np-busy"><span class="ent-spinner" aria-hidden="true"></span>${esc(label)}</div>`;
+  if (n.mode === 'path') {
+    const v = n.view;
+    if (n.run) { out.innerHTML = busy(tr('', 'Starting the test on both servers…')); return; }
+    if (!v) { out.innerHTML = ''; return; }
+    const remote = v.remote && v.remote.checks && v.remote.checks.length ? v.remote : null;
+    const rows = (remote ? remote.checks : v.checks) || [];
+    const settled = remote ? remote.settled : v.settled;
+    const ok = rows.filter(c => c.status === 'ok');
+    const max = Math.max(1, ...rows.map(c => Number(c.mbps) || 0));
+    const order = { ok: 0, fail: 1, waiting: 2, skip: 3 };
+    const sorted = settled ? rows.slice().sort((a, b) => (order[a.status] - order[b.status]) || ((b.mbps || 0) - (a.mbps || 0))) : rows;
+    const fast = ok.filter(c => c.mbps > 0).sort((a, b) => b.mbps - a.mbps)[0];
+    const state = v.active ? (v.phase === 'cores' ? tr('pt_cores', 'Downloading cores') : !v.joined ? tr('', 'Waiting for the foreign server…') : settled ? tr('pt_done', 'Finished') : tr('pt_running', 'Running'))
+      : tr('pt_done', 'Finished');
+    out.innerHTML = errBox + `<div class="np-sum">
+        <div><b class="lm-num">${ok.length} / ${rows.length || '—'}</b><span>${esc(tr('', 'Transports that work'))}</span></div>
+        <div><b data-no-i18n>${fast ? esc(ptRowName(fast).join(' ')) : '—'}</b><span>${esc(tr('', 'Fastest'))}${fast ? ' · <bdi>' + esc(fast.mbps + ' Mbit/s') + '</bdi>' : ''}</span></div>
+        <div><b>${esc(state)}</b><span>${v.active && v.expires_in ? esc(ptLeft(v.expires_in)) : esc(tr('', 'State'))}</span></div>
+      </div>
+      <div class="np-rows">${sorted.map(c => {
+        const st = PT_STATUS[c.status] || PT_STATUS.waiting, [eng, name] = ptRowName(c);
+        const w = c.mbps ? Math.max(3, Math.round(c.mbps / max * 100)) : 0;
+        return `<div class="np-row ${st[0]}"><span class="np-dot" aria-hidden="true"></span>
+          <span class="np-name"><b data-no-i18n>${esc(eng)}</b><small data-no-i18n>${esc(name)}${c.port ? ' · ' + esc(c.port + '/' + c.proto) : ''}</small></span>
+          <span class="np-bar" title="${esc(c.mbps ? c.mbps + ' Mbit/s' : '')}"><i data-v="${(w / 100).toFixed(2)}"></i></span>
+          <span class="np-val lm-num">${c.mbps ? esc(c.mbps + ' Mbit/s') : esc(tr(st[1], st[2]))}</span>
+          <span class="np-val np-v2 lm-num">${c.rtt_ms ? esc(c.rtt_ms + ' ms') : '—'}</span>
+          ${c.note ? `<span class="np-note" dir="ltr" data-no-i18n>${esc(c.note)}</span>` : ''}</div>`;
+      }).join('')}</div>
+      ${(v.notes || []).length ? `<ul class="qs-hint">${v.notes.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+      ${v.active ? `<div class="lm-acts"><button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="npStop()">${esc(tr('', 'Stop the test'))}</button></div>` : ''}`;
+    return;
+  }
+  if (n.run) { out.innerHTML = busy(tr('', 'Measuring every carrier… this can take a few minutes.')); return; }
+  const r = n.rep;
+  if (!r) { out.innerHTML = ''; return; }
+  const ms = (r.metrics || []).slice().sort((a, b) => (b.score || 0) - (a.score || 0));
+  const best = ms.find(m => m.is_recommended) || ms[0];
+  const usable = best && best.score > 0 && best.packet_loss < 100;
+  const cls = m => m.status === 'healthy' || m.status === 'good' ? 'ok' : m.status === 'warning' ? 'warn' : m.status === 'down' || m.status === 'critical' ? 'err' : 'dim';
+  out.innerHTML = `<div class="np-sum">
+      <div><b data-no-i18n>${usable ? esc((best.name || best.id).replace(/\s*\(.*?\)/, '')) : '—'}</b><span>${esc(usable ? tr('', 'Best carrier') : tr('', 'No carrier answered'))}</span></div>
+      <div><b class="lm-num">${usable ? esc(best.score + ' / 100') : '—'}</b><span>${esc(tr('', 'Score'))}</span></div>
+      <div><b data-no-i18n>${esc(r.active_carrier || '—')}</b><span>${esc(tr('', 'In use now'))}</span></div>
+    </div>
+    <div class="np-rows">${ms.map(m => `<div class="np-row ${cls(m)}${m === best && usable ? ' best' : ''}"><span class="np-dot" aria-hidden="true"></span>
+        <span class="np-name"><b data-no-i18n>${esc((m.name || m.id).replace(/\s*\(.*?\)/, ''))}</b><small data-no-i18n>${esc(m.id)}${m.is_active ? ' · ' + esc(tr('', 'in use')) : ''}</small></span>
+        <span class="np-bar" title="${esc(String(m.score || 0))}"><i data-v="${(Math.min(100, m.score || 0) / 100).toFixed(2)}"></i></span>
+        <span class="np-val lm-num">${m.avg_rtt_ms > 0 ? esc(m.avg_rtt_ms.toFixed(0) + ' ms') : '—'}</span>
+        <span class="np-val np-v2 lm-num">${esc(tr('', 'loss'))} ${esc(String(m.packet_loss ?? '—'))}%</span>
+        ${m.error_detail ? `<span class="np-note" dir="ltr" data-no-i18n>${esc(m.error_detail)}</span>` : ''}</div>`).join('')}</div>
+    ${usable && !best.is_active ? `<div class="lm-acts"><button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="custModalClose(); ntOpen(${Number(n.server)}, 'tunnel', 'swap:${Number(n.peer || (npLink(n.server, n.client) || {}).peer_id || 0)}')">${esc(tr('', 'Swap the carrier'))}</button></div>` : ''}`;
+}
+
 async function ntRemove(server, client, peer, hub) {
   if (!await entConfirm(tr('', 'Remove this tunnel?'), tr('', 'The foreign server\'s end is removed first, then the Iran server\'s. Users of this tunnel are cut.'), tr('', 'Remove'))) return;
   try { await api('/api/nodes', { action: 'tunnel-remove', server, client, peer_id: peer, hub }); loadNodes(); } catch (e) { toastErr(tr('', 'Failed'), e.message); }
@@ -12806,6 +12996,8 @@ function nodePickRender() {
     if (!sel) continue;
     const show = _nodePickList.length > 0 && !NV;
     sel.classList.toggle('hidden', !show);
+    const wrap = sel.closest('.tb-pick'); // the header's picker sits in a wrapper with its icon
+    if (wrap) wrap.hidden = !show;
     if (!show) continue;
     const opts = [`<option value="">${esc(tr('', 'This server'))}</option>`].concat(_nodePickList.map(n =>
       `<option value="${Number(n.id)}"${n.online && !n.held ? '' : ' disabled'}>${esc(n.name)}${!n.online ? ' — ' + esc(tr('', 'Offline')) : n.held ? ' — ' + esc(tr('', 'not approved')) : ''}</option>`));
