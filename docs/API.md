@@ -33,12 +33,12 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `GET` | `/api/alerts` | session | `handleAlertsGet` |
 | `POST` | `/api/alerts` | session + CSRF | `handleAlertsPost` |
 | `GET` | `/api/audit` | session | `handleAuditGet` |
+| `GET` | `/api/autopilot` | session | `handleAutopilotGet` |
+| `POST` | `/api/autopilot` | session + CSRF | `handleAutopilotPost` |
 | `GET` | `/api/bagher` | session | `handleSSHFwdGet` |
 | `POST` | `/api/bagher` | session + CSRF | `handleSSHFwdPost` |
 | `GET` | `/api/benchmark` | session | `handleBenchmarkGet` |
 | `POST` | `/api/benchmark/apply` | session + CSRF | `handleBenchmarkApply` |
-| `GET` | `/api/autopilot` | session | `handleAutopilotGet` |
-| `POST` | `/api/autopilot` | session + CSRF | `handleAutopilotPost` |
 | `POST` | `/api/benchmark/run` | session + CSRF | `handleBenchmarkRun` |
 | `GET` | `/api/carrier` | session | `handleCarrierGet` |
 | `POST` | `/api/carrier` | session + CSRF | `handleCarrierPost` |
@@ -92,13 +92,14 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `GET` | `/api/peer/config` | session | `handlePeerConfigGet` |
 | `POST` | `/api/peer/config` | session + CSRF | `handlePeerConfigPost` |
 | `POST` | `/api/peer/handshake` | peer secret (or session) | `handlePeerHandshake` |
+| `GET` | `/api/peer/node-offer` | peer secret (or session) | `handlePeerNodeOffer` |
+| `POST` | `/api/peer/pathtest-join` | peer secret (or session) | `handlePeerPathTestJoin` |
 | `POST` | `/api/peer/ping` | peer secret (or session) | `handlePeerPing` |
 | `POST` | `/api/peer/rescue-ack` | rescue peer | `handlePeerRescueAck` |
 | `GET` | `/api/peer/rescue-offer` | rescue peer | `handlePeerRescueOffer` |
 | `POST` | `/api/peer/revpath-probe` | peer secret (or session) | `handlePeerRevPathProbe` |
 | `POST` | `/api/peer/sshfwd-install-key` | peer secret (or session) | `handlePeerSSHFwdInstallKey` |
 | `GET` | `/api/peer/status` | peer secret (or session) | `handlePeerStatus` |
-| `POST` | `/api/peer/pathtest-join` | peer secret (or session) | `handlePeerPathTestJoin` |
 | `POST` | `/api/peer/swap-carrier` | peer secret (or session) | `handlePeerSwapCarrier` |
 | `GET` | `/api/peer/swap-request` | peer secret (or session) | `handlePeerSwapRequestGet` |
 | `POST` | `/api/peer/swap-request` | peer secret (or session) | `handlePeerSwapRequest` |
@@ -159,6 +160,7 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/update` | session + CSRF | `handleUpdate` |
 | `GET` | `/api/update/channel` | session | `handleUpdateChannelGet` |
 | `POST` | `/api/update/channel` | session + CSRF | `handleUpdateChannelPost` |
+| `POST` | `/api/update/kind` | session + CSRF | `handleUpdateKind` |
 | `GET` | `/api/update/peer` | session | `handleUpdatePeer` |
 | `GET` | `/api/version` | session | `handleVersion` |
 | `GET` | `/api/watchdog` | session | `handleWatchdogGet` |
@@ -169,4 +171,4 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/xray` | session + CSRF | `handleXrayPost` |
 | `GET` | `/metrics` | none | `handleMetrics` |
 
-Total: 143 routes.
+Total: 147 routes.

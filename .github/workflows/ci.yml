@@ -150,10 +150,10 @@ jobs:
             && go test -c -o /tmp/customerslab.test . && go build -o /tmp/gre-panel-lab .)
           sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" CUST_LAB_TEST_BIN=/tmp/customerslab.test CUST_LAB_FRP_DIR=/tmp/frp-rel \
             CUST_LAB_BACKHAUL=/tmp/backhaul-rel/backhaul CUST_LAB_XRAY=/tmp/xray-dl/xray CUST_LAB_PANEL_BIN=/tmp/gre-panel-lab bash tests/test_customers_lab.sh
-      - name: Nodes lab (a central and a node in two namespaces, join with a code, the pinned channel, a silent firewall cut and a central restart recovered by themselves, removal)
+      - name: Nodes lab (a central and a node in two namespaces, join with a code, the pinned channel, a silent firewall cut and a central restart recovered by themselves, removal; then the same with a node core)
         run: |
-          (cd panel && go test -c -o /tmp/nodeslab.test .)
-          sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" NODES_LAB_TEST_BIN=/tmp/nodeslab.test bash tests/test_nodes_lab.sh
+          (cd panel && go test -c -o /tmp/nodeslab.test . && go test -c -tags nodecore -o /tmp/nodeslabcore.test .)
+          sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" NODES_LAB_TEST_BIN=/tmp/nodeslab.test NODES_LAB_CORE_BIN=/tmp/nodeslabcore.test bash tests/test_nodes_lab.sh
       - name: Backhaul UDP lab (tcpmux plus the UDP companion, UDP on the same port, TCP unharmed, kill -9 recovery, dashboard traffic counters)
         run: |
           (cd panel && go test -c -o /tmp/udplab.test .)

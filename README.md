@@ -51,7 +51,7 @@ The GRE link itself can be wrapped four ways: **Direct** (protocol 47), **WSS** 
 - **Swap a tunnel's carrier** from either server; both switch, and both go back if the new one does not connect within 45 seconds.
 - **Autopilot (Pro):** a tunnel that stays down is tested and moved to a carrier that gets through, on both servers, by itself; you get a message. [Guide](docs/AUTOPILOT.md)
 - **Cluster:** several foreign servers behind one Iran port (failover, balance, sticky, least connections), Iran servers backing each other up, and DNS failover. [Guide](docs/CLUSTER.md)
-- **Nodes:** manage all your servers from one panel: add them with one line or SSH, open any server's pages from the central, make a tunnel between two of them from one page, update and back them up, and get their alerts in one place. [Guide](docs/NODES.md)
+- **Nodes:** manage all your servers from one panel: add them with one line or SSH (a node needs only the core, no panel of its own), open any server's pages from the central, make a tunnel between two of them from one page, update and back them up, and get their alerts in one place. [Guide](docs/NODES.md)
 - **Customers (Pro):** sell tunnels: each customer brings foreign servers, you set the plan (days, volume, speed), and their tunnels stop when it ends. [Guide](docs/CUSTOMERS.md)
 - **Watchdog, encrypted backups and diagnostics** (`hashem doctor`), with Quick Repair.
 - **Updates you can undo:** stable and dev channels, SHA-256 verified, automatic rollback after a bad start.

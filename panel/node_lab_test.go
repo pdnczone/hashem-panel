@@ -25,10 +25,18 @@ import (
 //   - the node is removed on the central: it goes back to standalone.
 //
 //     NODES_LAB_NODE_NS=<ns> NODES_LAB_ADDR=<central ip> go test -run TestNodesLab
+//
+// NODES_LAB_NODE_BIN is another build of this test binary for the node side:
+// the node core's (go test -c -tags nodecore), with NODES_LAB_NODE_KIND=core.
+// The central is then the panel build and the node the core, as installed.
 func TestNodesLab(t *testing.T) {
 	ns, ip := os.Getenv("NODES_LAB_NODE_NS"), os.Getenv("NODES_LAB_ADDR")
 	if ns == "" || ip == "" {
 		t.Skip("set NODES_LAB_NODE_NS and NODES_LAB_ADDR to run the nodes lab")
+	}
+	nodeBin, wantKind := os.Getenv("NODES_LAB_NODE_BIN"), os.Getenv("NODES_LAB_NODE_KIND")
+	if nodeBin == "" {
+		nodeBin = os.Args[0]
 	}
 	nodeLabFast()
 	old := configDir
@@ -54,7 +62,7 @@ func TestNodesLab(t *testing.T) {
 	}
 	defer os.RemoveAll(nd)
 	node := func(cmd, code string, wait time.Duration) *exec.Cmd {
-		c := exec.Command("ip", "netns", "exec", ns, os.Args[0], "-test.run=^TestNodeHelperProcess$")
+		c := exec.Command("ip", "netns", "exec", ns, nodeBin, "-test.run=^TestNodeHelperProcess$")
 		c.Env = append(os.Environ(), "NODE_HELPER=1", "NODE_HELPER_FAST=1", "NODE_HELPER_DIR="+nd, "NODE_HELPER_CMD="+cmd,
 			"NODE_HELPER_CODE="+code, "NODE_HELPER_WAIT="+wait.String())
 		return c
@@ -104,6 +112,13 @@ func TestNodesLab(t *testing.T) {
 		r := nodeFindLocked(1)
 		return nodeSessions[1] != nil && r != nil && r.Info.Version == "helper-v1" && r.Addr != ""
 	})
+	nodesMu.Lock()
+	kind := nodeFindLocked(1).Info.Kind
+	nodesMu.Unlock()
+	if kind != wantKind {
+		t.Fatalf("the node reports kind %q, want %q", kind, wantKind)
+	}
+	t.Logf("ok: the node's kind is %q", kind)
 
 	// the central relays a page's call to the node over the real network
 	rw := nodeTestViewCall(nodeTestView(t, 1), "GET", "status", "")

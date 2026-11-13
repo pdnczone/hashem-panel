@@ -3,6 +3,21 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## v3.2.0 — not released yet
+
+**Nodes without a panel: a server joins as a bare core, and the central manages all of it.** Run `hashem update` on every server, the central first. Servers that already have a panel keep it. [Guide](docs/NODES.md)
+
+- **Node core.** A server that is only a node no longer needs the whole panel. `hashem-node` is the same program without the web page, the login and the terminal; its port answers only the other servers of its tunnels and is a 404 to anything else. Tunnels, engines, Watchdog, Autopilot and the license check are the same as on a panel.
+- **New nodes get the core.** **Add a server** and **Add with SSH** install the core on a server without Hashem; tick **Install the web panel on it too** for a panel as well. The join line carries `--core`.
+- **Core or panel, either way.** Each node's row says **Core only** or **With panel**, with a button to change it; on the server, `hashem panel status | install | remove`. The swap downloads the other build of the same release, checks it against the release's checksums and restarts the service. Tunnels are not touched.
+- **The Peer Link goes over the node channel.** When a tunnel's two servers belong to one central, the carrier swap, the path test and Autopilot reach the other server through the central instead of its panel port. Autopilot no longer needs the foreign panel's port open to the Iran server in that case. Otherwise the direct call is used, as before.
+- **Tunnels between servers** (Nodes page): each tunnel shows its state, its carrier and whether Autopilot watches it, with **Swap carrier**, **Ports and settings**, **Test the path**, **Restart both ends** and **Remove both ends**.
+- **Autopilot on every server.** On a central, the Autopilot tab lists every Iran server with its tunnels, its newest events and a switch for the server or one tunnel. Autopilot still runs on each Iran server and needs that server's license. A node's Autopilot tab was empty when opened from the central; it is relayed now.
+- **Setup starts with nodes.** The Setup page first suggests adding your other server and making the tunnel from one page; the manual setup with a role and a token is below it, unchanged.
+- Not managed from the central, as before: the login, password, 2FA, HTTPS and access settings and the terminal. A core's certificate is `hashem tls ...` over SSH.
+- The one-line installer reads `hashem.sh` from the main branch: a server without Hashem gets the core only once this release is there, and a core/panel swap needs a release that carries `hashem-node`.
+- Releases carry `hashem-node-linux-amd64` and `hashem-node-linux-arm64`, in `checksums.txt`.
+
 ## v3.1.0 — 2026-11-12
 
 **Autopilot: a tunnel that stays down moves itself to a carrier that gets through.** A Hashem Pro feature; every Pro key includes it. Run `hashem update` on both servers, then turn it on in the new **Autopilot** tab on the Iran server (or `hashem autopilot on`). It is off until you do. [Guide](docs/AUTOPILOT.md)
