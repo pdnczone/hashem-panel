@@ -79,6 +79,7 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 | `E-UPDATE-07` | 502 | checksum verification failed | Downloaded binary or script failed SHA256 checksum check. |
 | `E-UPDATE-08` | 400 | invalid update channel | Channel must be stable or dev. |
 | `E-UPDATE-09` | 500 | new version did not start (rolled back) | The panel went back to the previous version. Check the Logs tab, then try again or pick another version. |
+| `E-UPDATE-10` | 500 | FRP was not upgraded (old FRP kept) | The download failed, a config did not pass the new FRP's check, or a service did not come back. Run hashem cores-upgrade on the server to see which. |
 
 ## E-GRE-xx — GRE interface and ping diagnostics
 
@@ -320,4 +321,4 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 | `E-ACCESS-02` | 401 | current password is incorrect | Verify your current password before changing access settings. |
 | `E-ACCESS-03` | 409 | port conflict detected | The requested port is reserved or used by a tunnel/proxy. Pick a free port. |
 
-Total: 169 codes.
+Total: 170 codes.

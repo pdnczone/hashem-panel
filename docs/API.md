@@ -66,6 +66,7 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/dial` | session + CSRF | `handleDialPost` |
 | `GET` | `/api/doctor` | session | `handleDoctorGet` |
 | `POST` | `/api/doctor` | session + CSRF | `handleDoctorPost` |
+| `GET` | `/api/doctor/extra` | session | `handleDoctorExtraGet` |
 | `GET` | `/api/errors` | session | `handleErrors` |
 | `GET` | `/api/fleet` | session | `handleFleet` |
 | `GET` | `/api/health` | none | `handleHealth` |
@@ -171,4 +172,4 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/xray` | session + CSRF | `handleXrayPost` |
 | `GET` | `/metrics` | none | `handleMetrics` |
 
-Total: 147 routes.
+Total: 148 routes.

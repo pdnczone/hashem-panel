@@ -45,6 +45,7 @@ Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 - **Auto Pool** takes `frp_max_pool` from `perf.json` as its ceiling when that is above the RAM cap (it was fixed at 500).
 - **A foreign server's header no longer shows a working tunnel as weak.** A link with a live session is not pinged, by design, so its `ping_ok` stays false; the header read only `ping_ok` and drew the link amber, dashed and with no latency. `/api/status` on a foreign server now carries the health of its own session (as the dashboard does), and the header counts a healthy session as up, with its latency.
 - **Diagnostics** warns when the two ends of a tunnel run different FRP versions (both ends need this release to say theirs).
+- **An update now updates FRP too.** A server set up by an older release kept that release's FRP (0.61.1 was seen) through every update, because the installer keeps any frps/frpc it finds. Now `hashem update`, the panel's first start after an update (also when the update is run by an older release) and the new `hashem cores-upgrade` move an older FRP to the pinned version (0.71.0). They never downgrade. They check every FRP config with the new binary first, keep the old binaries as `.bak` and restart the FRP services that were running, including Bagher's. If one of those services does not come back, the old FRP goes back in. The FRP tunnels drop for a few seconds. Update the servers at both ends. Backhaul stays on v0.7.2, the version Hashem has always installed. Bagher uses the same frps/frpc.
 
 ## v3.1.0 — 2026-11-12
 
