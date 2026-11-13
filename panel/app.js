@@ -9834,11 +9834,11 @@ async function loadLicense() {
   }
 }
 
-// Premium tier: the tag under the name and a gold hairline on the logo tile.
+// Premium tier: the tag under the name and a gold ring on the logo, in the
+// sidebar and the phone drawer.
 function setBrandTier(on) {
   document.querySelectorAll('[data-brand-tier]').forEach(el => el.classList.toggle('hidden', !on));
-  const b = document.querySelector('.sidebar-brand');
-  if (b) b.classList.toggle('is-premium', on);
+  document.querySelectorAll('[data-brand]').forEach(b => b.classList.toggle('is-premium', on));
 }
 
 function renderLicense(d) {
