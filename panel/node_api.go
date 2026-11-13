@@ -53,6 +53,27 @@ func handleNodesGet(w http.ResponseWriter, r *http.Request) {
 	if pub, err := nodePub(); err == nil {
 		out["key_fp"] = nodeFingerprint(pub)
 	}
+	// ?view=fleet|tunnels: the read-only views the Nodes page refreshes on
+	// its own while it is open. A GET, so that refresh writes no audit line
+	// (every POST does); the same answers as the fleet and tunnel-list actions.
+	if v := r.URL.Query().Get("view"); v != "" {
+		if self.Role != nodeRoleCentral {
+			writeAPIError(w, r, "E-NODE-02", "this panel is not a central")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), nodeTunPlanTO)
+		defer cancel()
+		switch v {
+		case "fleet":
+			writeJSON(w, nodeFleetOverview(ctx))
+		case "tunnels":
+			links, errs := nodeTunLinksLive(ctx)
+			writeJSON(w, map[string]any{"links": links, "errors": errs})
+		default:
+			writeAPIError(w, r, "E-NODE-01", "unknown view")
+		}
+		return
+	}
 	switch self.Role {
 	case nodeRoleCentral:
 		out["role"] = nodeRoleCentral
