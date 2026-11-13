@@ -433,6 +433,7 @@ function goTab(name) {
   const dr = $('drawerNav');
   if (dr) dr.querySelectorAll('[data-tab]').forEach(markTab);
   if (name === 'setup' || name === 'tunnel') loadSSHFwd();
+  if (name === 'setup' && !NV) loadNodes();
   if (name === 'cluster') {
     loadClusterStatus();
   }
@@ -12124,8 +12125,27 @@ function nodeJobRow(j) {
   return `<details class="lm-row" data-job="${j.id}"${open ? ' open' : ''} ontoggle="_nodeJobOpen[${j.id}] = this.open"><summary class="lm-head"><div class="lm-name"><b>${esc(j.name || j.host)}</b><small class="lm-num">SSH ${esc(j.host)}</small></div>
     <span class="badge ${st[0]}">${esc(st[1])}</span></summary><pre class="cs-code">${esc(j.log || '')}</pre></details>`;
 }
+// The Setup page's first suggestion: add the other server as a node, then
+// make the tunnel between the two from here (node_tunnel.go).
+function setupNodeRender(d) {
+  const card = $('setupNodeCard'), body = $('setupNodeBody'), note = $('setupManualNote');
+  if (!card || !body) return;
+  card.hidden = NV || d.role === 'node';
+  if (note) note.hidden = card.hidden;
+  if (card.hidden) return;
+  const nodes = d.nodes || [], on = nodes.filter(n => n.online && !n.held).length;
+  const step = (n, title, sub, btns) => `<div class="qs-step"><span class="qs-num">${n}</span><div class="qs-body"><label class="qs-label">${esc(title)}</label>
+    <div class="qs-hint">${esc(sub)}</div><div class="lm-acts u-mt-8">${btns}</div></div></div>`;
+  body.innerHTML = step(1, tr('', 'Add your other server'), nodes.length ? tr('', 'Servers added') + ': ' + nodes.length + ' · ' + tr('', 'Online') + ': ' + on : tr('', 'Run one line on it, or let this panel log in with SSH and do it.'),
+    `<button type="button" class="hashem-btn hashem-btn-primary u-btn-30" onclick="openNodeInvite()">${esc(tr('', 'Add a server'))}</button>
+     <button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openNodeSSH()">${esc(tr('', 'Add with SSH'))}</button>`) +
+    step(2, tr('', 'Make the tunnel between them'), on ? tr('', 'Pick the Iran server, the foreign server, the engine and the ports.') : tr('', 'Add a server first: it shows up here when it joins.'),
+    `<button type="button" class="hashem-btn hashem-btn-primary u-btn-30" ${on ? '' : 'disabled'} onclick="openNodeTunnel()">${esc(tr('', 'New tunnel'))}</button>
+     <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="goTab('nodes')">${esc(tr('', 'Open the Nodes page'))}</button>`);
+}
 function renderNodes(d) {
   _nodes = d;
+  setupNodeRender(d);
   renderNodeTunnels(d);
   const acts = $('nodeActs'), body = $('nodeBody'), err = $('nodeErr');
   if (err) { err.textContent = d.error || ''; err.classList.toggle('hidden', !d.error); }
