@@ -7384,6 +7384,7 @@ async function loadDoctor(forceRun = false) {
       rep = await api('/api/doctor');
     }
     renderDoctor(rep);
+    loadDoctorExtra();
   } catch(e) {
     toastErr('Diagnostics failed', e.message);
   }
@@ -7572,6 +7573,8 @@ function renderDoctor(rep) {
 
   // Reverse-path card: per-peer two-direction diagnosis + fix buttons.
   renderRevPath(rep.revpath || []);
+  renderReach(rep, unset);
+  renderClock(rep, unset);
 }
 
 // Tunnels card: one row per tunnel (service, session, data) plus Bagher.
@@ -7620,6 +7623,9 @@ function doctorReportText(rep) {
   L.push(f.length ? 'Findings:' : 'Findings: none');
   f.forEach(x => L.push('- [' + x.severity + '] ' + x.title + (x.fix ? ' → ' + x.fix : '')));
   (rep.notes || []).forEach(n => L.push('Note: ' + n));
+  const rc = rep.reach || {}, ck = rep.clock || {};
+  if (rc.tested) L.push('Reach: ' + (rc.verdict || 'not judged') + ' — ' + (rc.probes || []).map(p => p.label + ' ' + p.host + ':' + p.port + ' ' + p.state + (p.tls ? ' tls ' + p.tls : '')).join(', '));
+  if (ck.tested) L.push('Clock: NTP ' + (ck.ntp || 'unknown') + (ck.peer_known ? ', other server ' + (ck.peer_skew_ms / 1000).toFixed(1) + ' s ± ' + (ck.peer_err_ms / 1000).toFixed(1) + ' s' : ''));
   if (rep.last_error) L.push('Last tunnel error: ' + rep.last_error.code + ' ' + rep.last_error.time + ' ' + (rep.last_error.detail || ''));
   return L.join('\n');
 }
@@ -7936,6 +7942,369 @@ async function limitAction(action, ip) {
   }
 }
 
+// ---- Diagnostics, second half (doctor_more.go): reach, clocks, route, stability, ports, history ----
+let docExtra = null, docPortResults = {}, docJobTimer = null, docStabSecs = 60;
+const REACH_STATE = { open: ['Answers', 'ok'], refused: ['Refused', 'info'], timeout: ['No answer', 'err'], reset: ['Connection reset', 'err'], unreachable: ['Unreachable', 'err'], error: ['Error', 'err'] };
+const REACH_LABEL = { tunnel: 'Tunnel port', panel: 'Panel port', https: 'HTTPS', ssh: 'SSH' };
+const REACH_VERDICT = {
+  open: ['The other server answers on TCP', 'ok', 'Open'],
+  port_blocked: ['The port that should answer is filtered while other ports answer', 'err', 'Port filtered'],
+  port_closed: ['The server answers, but nothing listens on that port', 'warn', 'Port closed'],
+  tcp_blocked: ['Ping passes but no TCP port answers: TCP to this IP is filtered', 'err', 'TCP filtered'],
+  down: ['Neither ping nor TCP gets an answer', 'err', 'No answer'],
+  tls_cut: ['TCP connects, but the TLS handshake is cut', 'err', 'TLS cut'],
+};
+// Latin digits, as the rest of Diagnostics shows its measurements
+const docNum = (v, d) => new Intl.NumberFormat('en', { maximumFractionDigits: d == null ? 1 : d }).format(v);
+const docBadgeHTML = (text, cls) => '<span class="badge ' + cls + '">' + esc(tr('', text)) + '</span>';
+
+function renderReach(rep, unset) {
+  const r = (rep && rep.reach) || {}, probes = r.probes || [];
+  const val = $('docReachVal'), box = $('docReachBox');
+  if (!val || !box) return;
+  if (unset || !r.tested || !probes.length) {
+    val.className = 'doc-reach-verdict';
+    val.textContent = tr('', 'Not measured');
+    docSet('docReachSub', tr('', unset ? 'Measured once a tunnel is set up' : 'No other server is known to this server'));
+    docBadge($('docReachBadge'), 'Not tested', 'dim');
+    box.innerHTML = '';
+    return;
+  }
+  const v = REACH_VERDICT[r.verdict];
+  // the main tunnel works anyway: worth knowing, not a fault
+  const cls = v && v[1] !== 'ok' && r.tunnel_ok ? 'warn' : (v ? v[1] : '');
+  val.className = 'doc-reach-verdict ' + cls;
+  val.textContent = v ? tr('', v[0]) : tr('', 'Measured; no port here is known to answer, so nothing is judged');
+  docSet('docReachSub', docTpl('TCP from this server to {0}', [probes[0].host]) +
+    (v && v[1] !== 'ok' && r.tunnel_ok ? '. ' + tr('', 'The tunnel works, so this does not affect it.') : ''));
+  if (v) docBadge($('docReachBadge'), v[2], cls); else docBadge($('docReachBadge'), 'Info', 'dim');
+  box.innerHTML = probes.map(p => {
+    const st = REACH_STATE[p.state] || REACH_STATE.error;
+    const ms = p.ms > 0 ? ' <span class="mono">' + esc(docNum(p.ms)) + ' ms</span>' : '';
+    const tls = p.tls ? ' ' + docBadgeHTML(p.tls === 'ok' ? 'TLS passes' : p.tls === 'cut' ? 'TLS cut' : 'Not TLS', p.tls === 'cut' ? 'err' : 'dim') : '';
+    return '<div class="trow"><span class="k">' + esc(tr('', REACH_LABEL[p.label] || p.label)) + ' <bdi class="mono">' + esc(p.port) + '</bdi>' +
+      (p.anchor ? ' <span class="qs-hint">· ' + esc(tr('', 'should answer')) + '</span>' : '') + '</span><span class="v">' +
+      docBadgeHTML(st[0], st[1]) + ms + tls + '</span></div>';
+  }).join('');
+}
+
+function renderClock(rep, unset) {
+  const c = (rep && rep.clock) || {};
+  const val = $('docClockVal');
+  if (!val) return;
+  const off = c.peer_known ? Math.abs(c.peer_skew_ms) - c.peer_err_ms : 0;
+  if (unset || !c.peer_known) {
+    val.textContent = tr('', 'Not measured');
+    val.classList.add('is-muted');
+    docSet('docClockSub', tr('', unset ? 'Measured once a tunnel is set up' : 'Needs the panel link to the other server'));
+  } else {
+    val.classList.remove('is-muted');
+    const sec = c.peer_skew_ms / 1000;
+    val.textContent = Math.abs(c.peer_skew_ms) < 1000 ? tr('', 'In sync') : (sec > 0 ? '+' : '−') + docNum(Math.abs(sec)) + ' s';
+    docSet('docClockSub', Math.abs(c.peer_skew_ms) < 1000 ? tr('', 'Both clocks show the same second') :
+      docTpl(sec > 0 ? 'The other server is {0} seconds ahead' : 'The other server is {0} seconds behind', [docNum(Math.abs(sec))]));
+  }
+  const ntp = $('docNtpVal');
+  if (ntp) ntp.innerHTML = c.ntp === 'yes' ? docBadgeHTML('On', 'ok') : c.ntp === 'no' ? docBadgeHTML('Off', 'warn') : docBadgeHTML('Unknown', 'dim');
+  docSet('docClockErrVal', c.peer_known ? '± ' + docNum(c.peer_err_ms, 0) + ' ms' : '—');
+  const b = $('docClockBadge');
+  if (unset) docBadge(b, 'Not tested', 'dim');
+  else if (c.peer_known && off > 60000) docBadge(b, 'Far apart', 'err');
+  else if (c.peer_known && off > 5000) docBadge(b, 'Drifting', 'warn');
+  else if (c.ntp === 'no') docBadge(b, 'Not synced', 'warn');
+  else if (c.peer_known) docBadge(b, 'In sync', 'ok');
+  else docBadge(b, 'Not tested', 'dim');
+}
+
+async function loadDoctorExtra() {
+  if (!isProLicensed('diagnostics')) return;
+  try {
+    docExtra = await api('/api/doctor/extra');
+    renderDoctorExtra();
+  } catch (e) { reportErr('doctor-extra', e); }
+}
+
+function renderDoctorExtra() {
+  const x = docExtra;
+  if (!x) return;
+  const fill = (id, list) => {
+    const sel = $(id);
+    if (!sel) return;
+    const keep = sel.value;
+    sel.innerHTML = list.map(t => '<option value="' + esc(t.id) + '">' + esc(tr('', t.label)) + ' — ' + esc(t.host) + '</option>').join('') ||
+      '<option value="">' + esc(tr('', 'No other server yet')) + '</option>';
+    if (list.some(t => t.id === keep)) sel.value = keep;
+  };
+  fill('docTraceTarget', (x.targets || []).filter(t => !t.inner));
+  fill('docStabTarget', x.targets || []);
+  docTraceModeSync();
+  renderTraceJob(x.trace);
+  renderStabJob(x.stability);
+  renderDocPorts();
+  renderDocHist(x.history || {});
+  const running = (x.trace && x.trace.running) || (x.stability && x.stability.running);
+  clearTimeout(docJobTimer);
+  if (running) docJobTimer = setTimeout(docJobPoll, 1500);
+}
+
+async function docJobPoll() {
+  const tab = $('tab-doctor');
+  if (document.hidden || !tab || tab.hidden) { docJobTimer = setTimeout(docJobPoll, 3000); return; }
+  await loadDoctorExtra();
+}
+
+function docTraceModeSync() {
+  const sel = $('docTraceTarget'), mode = $('docTraceMode');
+  if (!sel || !mode || !docExtra) return;
+  const t = (docExtra.targets || []).find(t => t.id === sel.value);
+  const tcp = mode.querySelector('option[value="tcp"]');
+  if (tcp) tcp.disabled = !(t && t.port);
+  if (mode.value === 'tcp' && !(t && t.port)) mode.value = 'icmp';
+  const btn = $('docTraceBtn'), lbl = btn && btn.querySelector('span');
+  if (lbl && !(docExtra.trace && docExtra.trace.running)) lbl.textContent = tr('', docExtra.trace_tool ? 'Trace Route' : 'Install mtr and Trace');
+  if (btn) btn.disabled = !t || !!(docExtra.trace && docExtra.trace.running);
+}
+
+function docProgressHTML(job, text) {
+  const pct = Math.round((job.progress || 0) * 100);
+  return '<div class="qs-hint">' + text + '</div><div class="doc-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + pct + '"><i data-p="' + pct + '"></i></div>';
+}
+// width from data-p: no inline style attributes (budget), set as a custom property
+function docProgressPaint(box) { if (box) box.querySelectorAll('.doc-progress i').forEach(i => i.style.setProperty('--p', i.dataset.p + '%')); }
+
+function renderTraceJob(job) {
+  const box = $('docTraceBox');
+  if (!box) return;
+  docSet('docTraceMeta', job && job.finished ? docTpl('Traced {0}', [docAgo(job.finished)]) : tr('', 'Where on the way packets are lost'));
+  if (!job) {
+    box.innerHTML = docExtra && !docExtra.trace_tool ? '<div class="qs-hint">' + esc(tr('', 'mtr is not installed on this server. The button installs it (apt), then traces.')) + '</div>' : '';
+    return;
+  }
+  if (job.running) {
+    box.innerHTML = docProgressHTML(job, docTplHTML('Tracing the route to {0}: 10 probes to every hop…', [job.target]));
+    docProgressPaint(box);
+    return;
+  }
+  if (job.error && !job.result) {
+    box.innerHTML = '<div class="doc-verdict err">' + docBadgeHTML('Failed', 'err') + '<span data-no-i18n>' + esc(job.error) + '</span></div>';
+    return;
+  }
+  const r = job.result || {}, hops = r.hops || [];
+  let v;
+  if (r.verdict === 'clean') v = ['ok', 'No loss', tr('', 'No loss to the destination. Loss at a middle hop that does not last to the end is a router that answers slowly, not lost traffic.')];
+  else if (r.verdict === 'loss') {
+    const hop = hops.find(h => h.n === r.loss_from) || {};
+    let where = '';
+    if (r.border_hop) where = ' ' + tr('', r.loss_from < r.border_hop ? 'That is before the long link (the jump in latency): the loss is near this server, in its datacenter or provider.' : 'That is at or after the long link (the jump in latency): the loss is on the long-distance path or near the other server.');
+    v = ['err', 'Loss', docTpl('Loss starts at hop {0} ({1}) and lasts to the destination.', [String(r.loss_from), hop.host || '?']) + where];
+  } else {
+    v = ['warn', 'No reply', docTpl('The destination does not answer. The last answer came from hop {0}.', [String(Math.max(1, (r.loss_from || 1) - 1))]) +
+      (r.mode === 'icmp' ? ' ' + tr('', 'Many servers drop ping: try TCP.') : '')];
+  }
+  const rows = hops.map(h => {
+    const silent = !h.host, lossy = r.verdict === 'loss' && h.n >= r.loss_from && h.loss > 0;
+    const lc = h.loss >= 20 ? 'bad' : h.loss > 0 ? 'some' : '';
+    return '<tr class="' + (silent ? 'silent' : lossy ? 'lossy' : '') + '"><td>' + h.n + '</td><td class="addr">' +
+      (silent ? '<span class="doc-noans">' + esc(tr('', 'no answer')) + '</span>' : esc(h.host)) + (h.n === r.border_hop ? ' <span class="badge info tag">' + esc(tr('', 'long link')) + '</span>' : '') +
+      '</td><td><span class="doc-loss ' + lc + '"><b>' + (silent ? '—' : esc(docNum(h.loss)) + '%') + '</b></span></td><td>' +
+      (silent ? '—' : esc(docNum(h.avg)) + ' ms') + '</td><td>' + (silent ? '—' : esc(docNum(h.worst)) + ' ms') + '</td></tr>';
+  }).join('');
+  box.innerHTML = '<div class="doc-verdict ' + v[0] + '">' + docBadgeHTML(v[1], v[0]) + '<span>' + esc(v[2]) + '</span></div>' +
+    '<div class="doc-hops-wrap"><table class="doc-hops"><thead><tr><th>#</th><th>' + esc(tr('', 'Address')) + '</th><th>' + esc(tr('', 'Loss')) +
+    '</th><th>' + esc(tr('', 'Average')) + '</th><th>' + esc(tr('', 'Worst')) + '</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+    '<div class="qs-hint" data-no-i18n>' + esc((r.tool || '') + ' · ' + (r.mode === 'tcp' ? 'TCP ' + r.port : 'ICMP') + (r.installed ? ' · ' + tr('', 'mtr was installed for this run') : '')) + '</div>';
+}
+
+async function docTraceRun() {
+  if (!isProLicensed('diagnostics')) { openBagherLicModal('diagnostics'); return; }
+  const target = ($('docTraceTarget') || {}).value, mode = ($('docTraceMode') || {}).value || 'icmp';
+  try {
+    await api('/api/doctor', { action: 'trace', target, mode, install: !(docExtra && docExtra.trace_tool) });
+    await loadDoctorExtra();
+  } catch (e) { toastErr(tr('', 'Route trace failed'), e.message); }
+}
+
+function docStabChart(r) {
+  const s = r.samples || [];
+  if (!s.length) return '';
+  const ok = s.filter(v => v >= 0);
+  const top = Math.max(10, Math.min(r.max || 10, Math.max((r.p95 || 0) * 1.6, (r.p50 || 0) + 40)));
+  const W = Math.max(s.length, 2), H = 100;
+  let d = '', pen = false, lost = '';
+  s.forEach((v, i) => {
+    if (v < 0) { pen = false; lost += '<rect class="lost" x="' + i + '" y="0" width="1" height="' + H + '"></rect>'; return; }
+    const y = (H - Math.min(v, top) / top * (H - 6) - 3).toFixed(1);
+    d += (pen ? 'L' : 'M') + (i + 0.5) + ' ' + y + ' ';
+    pen = true;
+  });
+  const total = Math.round(s.length * (r.interval || 1));
+  return '<svg class="doc-chart" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="' +
+    esc(docTpl('Latency over {0} seconds; red marks lost packets', [String(total)])) + '">' +
+    '<line class="grid" x1="0" x2="' + W + '" y1="' + (H / 2) + '" y2="' + (H / 2) + '"></line>' + lost +
+    (ok.length ? '<path class="ln" d="' + d + '"></path>' : '') + '</svg>' +
+    '<div class="doc-chart-axis"><span>0 s</span><span>' + esc(docTpl('top of the chart: {0} ms', [docNum(top, 0)])) + '</span><span>' + total + ' s</span></div>';
+}
+
+function renderStabJob(job) {
+  const box = $('docStabBox'), btn = $('docStabBtn');
+  if (!box) return;
+  const lbl = btn && btn.querySelector('span');
+  if (lbl) lbl.textContent = tr('', job && job.running ? 'Stop Test' : 'Start Test');
+  if (btn) btn.classList.toggle('hashem-btn-primary', !(job && job.running));
+  if (btn) btn.classList.toggle('hashem-btn-secondary', !!(job && job.running));
+  if (!job) { box.innerHTML = ''; return; }
+  if (job.error && !job.result) {
+    box.innerHTML = '<div class="doc-verdict err">' + docBadgeHTML('Failed', 'err') + '<span data-no-i18n>' + esc(job.error) + '</span></div>';
+    return;
+  }
+  const r = job.result || {};
+  let head = '';
+  if (job.running) head = docProgressHTML(job, docTplHTML(r.mode === 'tcp' ? 'Connecting to {0} every second (it does not answer ping)…' : 'Pinging {0} twice a second…', [job.target]));
+  else if (r.verdict) {
+    const V = {
+      stable: ['ok', 'Stable', tr('', 'No drops and no unusual spikes.')],
+      spiky: ['warn', 'Spikes', docTpl('Latency jumps now and then ({0} spikes). Calls and games will stutter.', [String(r.spikes)])],
+      lossy: ['warn', 'Some loss', docTpl('{0}% of packets were lost, without long drops.', [docNum(r.loss_pct)])],
+      drops: ['err', 'Drops', docTpl('The link drops: {0} times, the longest for {1} seconds.', [String(r.drops), docNum(r.longest_gap)])],
+    }[r.verdict];
+    if (V) head = '<div class="doc-verdict ' + V[0] + '">' + docBadgeHTML(V[1], V[0]) + '<span>' + esc(V[2]) + '</span></div>';
+  }
+  const stat = (k, v, cls) => '<div class="doc-stat ' + (cls || '') + '"><span>' + esc(tr('', k)) + '</span><b>' + esc(v) + '</b></div>';
+  const stats = r.sent ? '<div class="doc-stats">' +
+    stat('Loss', docNum(r.loss_pct) + '%', r.loss_pct >= 5 ? 'bad' : r.loss_pct >= 1 ? 'warn' : '') +
+    stat('Average', docNum(r.avg) + ' ms') + stat('95% under', docNum(r.p95) + ' ms') + stat('Jitter', docNum(r.jitter) + ' ms', r.jitter > 25 ? 'warn' : '') +
+    stat('Longest drop', docNum(r.longest_gap) + ' s', r.longest_gap >= 3 ? 'bad' : r.longest_gap > 0 ? 'warn' : '') +
+    stat('Spikes', docNum(r.spikes, 0), r.spikes > r.sent * 0.05 ? 'warn' : '') + '</div>' : '';
+  box.innerHTML = head + stats + docStabChart(r) +
+    (!job.running && r.sent ? '<div class="qs-hint" data-no-i18n>' + esc((r.mode === 'tcp' ? 'TCP ' + r.port : 'ICMP') + ' · ' + r.target + ' · ' + docAgo(job.finished)) + '</div>' : '');
+  docProgressPaint(box);
+}
+
+async function docStabClick() {
+  if (!isProLicensed('diagnostics')) { openBagherLicModal('diagnostics'); return; }
+  const running = docExtra && docExtra.stability && docExtra.stability.running;
+  try {
+    if (running) await api('/api/doctor', { action: 'stability-stop' });
+    else await api('/api/doctor', { action: 'stability', target: ($('docStabTarget') || {}).value, seconds: docStabSecs });
+    await loadDoctorExtra();
+  } catch (e) { toastErr(tr('', 'Stability test failed'), e.message); }
+}
+
+const DOC_PORT_DETAIL = ['server sent a banner', 'payload answered', 'payload accepted, connection held open', 'payload accepted, remote closed afterwards'];
+function renderDocPorts() {
+  const card = $('docPortsCard'), box = $('docPortsBox');
+  if (!card || !box) return;
+  const list = (docExtra && docExtra.ports) || [];
+  card.classList.toggle('hidden', !list.length);
+  const groups = [];
+  list.forEach(p => {
+    let g = groups.find(x => x.name === p.group && x.kind === p.kind);
+    if (!g) groups.push(g = { name: p.group, kind: p.kind, engine: p.engine, ports: [] });
+    g.ports.push(p);
+  });
+  const eng = e => DOC_ENGINE[e] || LS_ENGINE[e] || (e === "xray" ? "Xray" : e || "");
+  box.innerHTML = groups.map(g => '<div class="doc-pgroup"><div class="doc-pgroup-head"><span data-no-i18n>' + esc(g.kind === 'tunnel' && g.name === 'Tunnel' ? tr('', 'Main tunnel') : g.name) + '</span><small>' +
+    esc(tr('', g.kind === 'customer' ? 'Customer' : 'Tunnel')) + (g.engine ? ' · ' + esc(eng(g.engine)) : '') + '</small></div>' +
+    g.ports.map(p => {
+      const r = docPortResults[p.key];
+      const badge = !r ? docBadgeHTML('Not tested', 'dim') : r.testing ? docBadgeHTML('Testing…', 'info') : r.state === 'ok' ? docBadgeHTML('Works', 'ok') : docBadgeHTML('Fails', 'err');
+      const det = r && r.detail ? (DOC_PORT_DETAIL.includes(r.detail) ? esc(tr('', r.detail)) : '<span data-no-i18n>' + esc(r.detail) + '</span>') :
+        (p.udp ? esc(tr('', 'UDP is forwarded too; only TCP is tested')) : '');
+      return '<div class="doc-prow"><span class="pn">' + esc(p.port) + '</span>' + badge + '<span class="pd">' + det + '</span>' +
+        '<span class="pm">' + (r && r.state === 'ok' && r.ms ? esc(docNum(r.ms)) + ' ms ' : '') +
+        '<button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="docTestPorts([' + jsArg(p.key) + '])">' + esc(tr('', 'Test')) + '</button></span></div>';
+    }).join('') + '</div>').join('');
+}
+
+async function docTestPorts(keys) {
+  if (!isProLicensed('diagnostics')) { openBagherLicModal('diagnostics'); return; }
+  const list = (docExtra && docExtra.ports) || [];
+  const want = keys && keys.length ? keys : list.map(p => p.key);
+  want.forEach(k => { docPortResults[k] = { testing: true }; });
+  renderDocPorts();
+  const btn = $('docPortsBtn');
+  if (btn && !keys) btn.disabled = true;
+  try {
+    const r = await api('/api/doctor', { action: 'ports', keys: keys || [] });
+    (r.ports || []).forEach(p => { docPortResults[p.key] = p; });
+    const bad = (r.ports || []).filter(p => p.state !== 'ok').length;
+    if (!keys) {
+      if (bad) toastErr(tr('', 'Some ports do not answer'), docTpl('{0} of {1} ports fail', [String(bad), String((r.ports || []).length)]));
+      else toastOk(tr('', 'Every port answers'), docTpl('{0} ports tested', [String((r.ports || []).length)]));
+    }
+  } catch (e) {
+    toastErr(tr('', 'Port test failed'), e.message);
+  } finally {
+    want.forEach(k => { if (docPortResults[k] && docPortResults[k].testing) delete docPortResults[k]; });
+    if (btn) btn.disabled = false;
+    renderDocPorts();
+  }
+}
+
+function renderDocHist(h) {
+  const box = $('docHistBox');
+  if (!box) return;
+  const es = h.entries || [], sch = h.schedule || {};
+  const sel = $('docSchedSel'), al = $('docSchedAlert');
+  if (sel && document.activeElement !== sel) sel.value = String(sch.every_hours || 0);
+  if (al) { al.checked = !!sch.alert; al.disabled = !sch.every_hours; }
+  const a = (docExtra && docExtra.alerts) || {};
+  docSet('docSchedHint', tr('', 'Scheduled runs skip iPerf3. Alerts go to the Telegram bot and webhook set in Settings, Alerts.') +
+    (sch.alert && !a.enabled ? ' ' + tr('', 'Alerts are off in Settings, so nothing is sent until you turn them on there.') :
+     sch.alert && !a.degraded ? ' ' + tr('', 'Only changes to and from Critical are sent; for the rest, turn on "Also alert on degraded ⇄ healthy" in Settings.') : ''));
+  docSet('docHistMeta', es.length ? docTpl(es.length === 1 ? '1 run' : '{0} runs', [String(es.length)]) + ' · ' + tr('', 'last') + ' ' + docAgo(new Date(es[es.length - 1].t * 1000).toISOString()) : '');
+  if (!es.length) {
+    box.innerHTML = '<div class="qs-hint">' + esc(tr('', 'No runs yet. Every run of Diagnostics is kept here (the last 60).')) + '</div>';
+    return;
+  }
+  const n = es.length, W = Math.max(n, 24) * 6;
+  const dt = t => new Date(t * 1000).toLocaleString(currentLang === 'fa' ? 'fa-IR' : undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const bars = es.map((e, i) => {
+    const hgt = Math.max(3, e.score), x = W - (n - i) * 6;
+    return '<rect class="r-' + esc(e.rating) + '" x="' + (x + 1) + '" y="' + (100 - hgt) + '" width="4" height="' + hgt + '" rx="1"><title>' +
+      esc(dt(e.t) + ' — ' + e.score + '/100') + '</title></rect>';
+  }).join('');
+  const rows = es.slice(-8).reverse().map(e => {
+    const top = e.top_tpl ? docTplHTML(e.top_tpl, e.top_args) : esc(tr('', 'No problems found'));
+    const m = [];
+    if (e.rtt >= 0) m.push(docNum(e.rtt) + ' ms');
+    if (e.loss >= 0) m.push(docNum(e.loss, 0) + '%');
+    if (e.mbps) m.push(docNum(e.mbps) + ' Mbps');
+    if (e.auto) m.push(tr('', 'scheduled'));
+    return '<div class="doc-hrow"><span>' + esc(dt(e.t)) + '</span><span class="hs ' + esc(e.rating) + '">' + e.score + '</span><span class="ht" data-no-i18n>' + top +
+      '</span><span class="hm" data-no-i18n>' + esc(m.join(' · ')) + '</span></div>';
+  }).join('');
+  box.innerHTML = '<svg class="doc-hist-chart" viewBox="0 0 ' + W + ' 100" preserveAspectRatio="none" role="img" aria-label="' +
+    esc(tr('', 'Health score of each run, oldest to newest')) + '">' + bars + '</svg><div class="doc-hist-list">' + rows + '</div>';
+}
+
+async function docSchedSave() {
+  if (!isProLicensed('diagnostics')) { openBagherLicModal('diagnostics'); return; }
+  const every = parseInt(($('docSchedSel') || {}).value, 10) || 0;
+  const alert = !!($('docSchedAlert') || {}).checked;
+  try {
+    const r = await api('/api/doctor', { action: 'schedule', every_hours: every, alert: every > 0 && alert });
+    if (docExtra) docExtra.history = Object.assign({}, docExtra.history, { schedule: r.schedule });
+    renderDocHist((docExtra && docExtra.history) || { schedule: r.schedule });
+    toastOk(tr('', 'Schedule saved'), every ? $('docSchedSel').selectedOptions[0].textContent : tr('', 'Off'));
+  } catch (e) { toastErr(tr('', 'Failed'), e.message); loadDoctorExtra(); }
+}
+
+(function initDoctorExtra() {
+  const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
+  on('docTraceBtn', 'click', docTraceRun);
+  on('docTraceTarget', 'change', docTraceModeSync);
+  on('docStabBtn', 'click', docStabClick);
+  on('docPortsBtn', 'click', () => docTestPorts(null));
+  on('docSchedSel', 'change', docSchedSave);
+  on('docSchedAlert', 'change', docSchedSave);
+  const seg = $('docStabLen');
+  if (seg) seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    docStabSecs = +b.dataset.s;
+    seg.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  }));
+})();
+
 async function runDoctor() {
   if (doctorRunning) return;
   if (!isProLicensed('diagnostics')) { openBagherLicModal('diagnostics'); return; }
@@ -7948,6 +8317,7 @@ async function runDoctor() {
   if (btn) { btn.disabled = true; btn.classList.add('doc-pulse'); tick(); timer = setInterval(tick, 1000); }
   try {
     renderDoctor(await api('/api/doctor', { action: 'run' }));
+    loadDoctorExtra(); // the run joined the history
     toastOk(tr('x018', "Diagnostics complete"), `${tr('x019', "Health score")}: ${doctorData && doctorData.rating !== 'unset' ? doctorData.score + '/100' : '—'}`);
   } catch(e) {
     toastErr(tr('x020', "Diagnostics failed"), e.message);

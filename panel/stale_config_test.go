@@ -108,7 +108,7 @@ func TestStaleConfigActiveServiceWins(t *testing.T) {
 
 func TestStaleConfigDoctorIssue(t *testing.T) {
 	bin := staleLab(t)
-	rep := runFullDiagnostics()
+	rep := runFullDiagnostics(false)
 	issues := staleIssues(rep)
 	if len(issues) != 2 {
 		t.Fatalf("want 2 stale issues (backhaul + frpc), got %v", issues)
@@ -125,7 +125,7 @@ func TestStaleConfigDoctorIssue(t *testing.T) {
 
 	fakeBinary(t, bin, "backhaul", 0o755)
 	fakeBinary(t, bin, "frpc", 0o755)
-	if got := staleIssues(runFullDiagnostics()); len(got) != 0 {
+	if got := staleIssues(runFullDiagnostics(false)); len(got) != 0 {
 		t.Fatalf("no stale issue expected with binaries present, got %v", got)
 	}
 }

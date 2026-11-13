@@ -256,6 +256,9 @@ func alertLinks(s *HubSnapshot, now time.Time, t *alertTracker) []linkSnap {
 		}
 		links = append(links, linkSnap{Name: name, State: l.HealthState, Why: reasonsText(l.Reasons)})
 	}
+	if d, ok := doctorAlertLink(); ok { // scheduled Diagnostics (doctor_more.go)
+		links = append(links, d)
+	}
 	return append(links, hostResourceLinks(now, alertHostReaders, t.lastState)...)
 }
 
