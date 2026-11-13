@@ -276,6 +276,9 @@ func runAction(action string, peerID int) (string, error) {
 			return "", err
 		}
 		firstTunnelForget()
+		// no tunnel is left: the Peer Link to the old server goes with it
+		pruneTunnelLinks()
+		forgetPeerLink()
 		return out, nil
 	}
 	return "", fmt.Errorf("unknown action")
@@ -575,6 +578,7 @@ func removePeerViaInstaller(id int) (string, error) {
 		return o, fmt.Errorf("remove-peer failed: %w", runErr)
 	}
 	invalidatePeerIfsCache()
+	pruneTunnelLinks() // the removed peer's record, pinned certificate and last address
 	return o, nil
 }
 
@@ -636,6 +640,7 @@ func removePeerDirect(p *peerRecord) (string, error) {
 	if err := os.WriteFile(peersFile(), append(data, '\n'), 0600); err != nil {
 		return "", err
 	}
+	pruneTunnelLinks()
 	return fmt.Sprintf("peer '%s' (id %d) removed", p.Name, p.ID), nil
 }
 
@@ -1236,10 +1241,10 @@ kcpBindPort = %d
 quicBindPort = %d
 auth.method = "token"
 auth.token = %q
-%stransport.tcpKeepalive = 15
+%s%stransport.tcpKeepalive = 15
 transport.heartbeatTimeout = 45
 transport.maxPoolCount = %d
-`, port, port, quicPort, token, tcpMuxTomlLines(), maxPool)
+`, port, port, quicPort, token, frpLogTomlLines(), tcpMuxTomlLines(), maxPool)
 			tx.backup(filepath.Join(frpDir, "frps.toml"))
 			if err := writeEngineFile(frpDir, "frps.toml", frpsToml); err != nil {
 				return outMsg.String(), tx.rollback(err)
@@ -1314,13 +1319,13 @@ serverPort = %d
 auth.method = "token"
 auth.token = %q
 loginFailExit = false
-transport.protocol = %q
+%stransport.protocol = %q
 %stransport.heartbeatInterval = 15
 transport.heartbeatTimeout = 45
 transport.dialServerTimeout = 10
 transport.dialServerKeepalive = 15
 transport.poolCount = %d
-`, peerGre, effPort, token, frpProto, tcpMuxTomlLines(), pool))
+`, peerGre, effPort, token, frpLogTomlLines(), frpProto, tcpMuxTomlLines(), pool))
 
 			for _, p := range proxyPorts {
 				frpcBuf.WriteString(fmt.Sprintf(`
@@ -1521,7 +1526,7 @@ func ensureFRPServiceUnits(svcName string) {
 	content := string(data)
 	changed := false
 	if !strings.Contains(content, "LimitNOFILE") {
-		content = strings.Replace(content, "[Service]", "[Service]\nLimitNOFILE=1048576\nLimitNPROC=512000\nTasksMax=infinity\nStartLimitIntervalSec=0", 1)
+		content = strings.Replace(content, "[Service]", "[Service]\nLimitNOFILE=1048576\nLimitNPROC=512000\nTasksMax=infinity", 1)
 		changed = true
 	}
 	if !strings.Contains(content, "CPUWeight=") {
@@ -1532,8 +1537,9 @@ func ensureFRPServiceUnits(svcName string) {
 		content = strings.Replace(content, "Restart=on-failure", "Restart=always", 1)
 		changed = true
 	}
-	if strings.Contains(content, "StartLimitIntervalSec=60") {
-		content = strings.Replace(content, "StartLimitIntervalSec=60\nStartLimitBurst=5\n", "", 1)
+	// the start limit belongs in [Unit], and frps/frpc get a Go memory limit
+	if fixed := frpUnitFixed(content, hostMemMB()); fixed != content {
+		content = fixed
 		changed = true
 	}
 	if changed {

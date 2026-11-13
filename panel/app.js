@@ -763,7 +763,8 @@ const I18N = {
     wd_fails: "Consecutive Fails",
     wd_last_check: "Last Check",
     wd_restart_title: "Tunnel Auto-Restart Schedule",
-    wd_restart_hint: "Periodically refreshes the tunnel interfaces and restarts FRP/Backhaul relay services gracefully without interrupting the web panel or losing configuration.",
+    wd_restart_hint: "On a schedule, the Watchdog restarts what is not working. On the Iran server that is a tunnel interface that does not answer and carries no traffic, and an engine whose service failed; interfaces that carry traffic are not touched. On a foreign server the engine (frpc or Backhaul) is restarted every time.",
+    wd_restart_warn: "This schedule is on. Every run on a foreign server restarts its engine, which drops the connections passing through that server for a few seconds. Turn it off unless a tunnel really needs a regular restart.",
     wd_restart_interval: "Restart Interval",
     wd_restart_save: "Save Schedule",
     wd_restart_now: "Restart Tunnel Now",
@@ -6832,6 +6833,7 @@ async function loadWatchdog() {
         }
       }
     }
+    if ($('wdRestartWarn')) $('wdRestartWarn').classList.toggle('hidden', !(rHours > 0));
     if (rSub) {
       rSub.textContent = 'Next restart: ' + (s.next_restart_human || 'Not scheduled') + (s.last_restart_date ? ' · Last run: ' + s.last_restart_date : '');
     }
@@ -7065,7 +7067,7 @@ if ($('wdRestartTunnelNowBtn')) {
   $('wdRestartTunnelNowBtn').onclick = async () => {
     const ok = await entConfirm({
       title: 'Restart Tunnel Services?',
-      body: 'This will perform a graceful soft-restart of GRE interface and FRP/Backhaul relay services. The web panel will stay online.',
+      body: 'This restarts the GRE interfaces, and on a foreign server its engine too. Connections passing through them drop for a few seconds. The web panel stays online.',
       yesText: 'Restart Tunnel',
       noText: 'Cancel'
     });

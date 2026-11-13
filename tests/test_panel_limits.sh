@@ -10,6 +10,7 @@ SRC=$(mktemp -d); trap 'rm -rf "$SRC"' EXIT
   echo 'RED= GREEN= CYAN= YELLOW='
   awk '/^panel_limits_for_ram\(\)/,/^}/' hashem.sh
   awk '/^unit_set_directive\(\)/,/^}/' hashem.sh
+  awk '/^unit_start_limit_fix\(\)/,/^}/' hashem.sh
   awk '/^panel_supports_watchdog\(\)/,/^}/' hashem.sh
   awk '/^apply_panel_unit_limits\(\)/,/^}/' hashem.sh
   awk '/^apply_frp_unit_weight\(\)/,/^}/' hashem.sh
@@ -58,6 +59,9 @@ for kv in "OOMScoreAdjust=-900" "Nice=-5" "CPUWeight=200" "MemoryHigh=450M" \
   grep -qE "^${kv}$" "$U" || { echo "FAIL: missing/wrong $kv"; fail=1; }
 done
 grep -q "Environment=FOO=bar" "$U" || { echo "FAIL: user extra lost"; fail=1; }
+# StartLimitIntervalSec is a [Unit] key: under [Service] systemd ignores it
+awk '/^\[Unit\]/ {u=1; next} /^\[/ {u=0} u && /^StartLimitIntervalSec=0$/ {ok=1} END {exit !ok}' "$U" || { echo "FAIL: StartLimitIntervalSec not in [Unit]"; fail=1; }
+awk '/^\[Service\]/ {s=1; next} /^\[/ {s=0} s && /^StartLimit/ {bad=1} END {exit bad}' "$U" || { echo "FAIL: StartLimit left in [Service]"; fail=1; }
 before=$(md5sum < "$U")
 apply_panel_unit_limits "$U" "450M 550M"
 check "idempotent" "$before" "$(md5sum < "$U")"

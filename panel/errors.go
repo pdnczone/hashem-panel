@@ -243,6 +243,29 @@ var (
 
 func errorLogPath() string { return filepath.Join(configDir, "panel-errors.log") }
 
+const (
+	errLogMaxBytes = 5 << 20 // rotate at 5 MiB
+	errLogKeep     = 1       // panel-errors.log.1
+)
+
+// rotateErrorLogLocked renames a full log to .1 (the older .1 goes). A peer
+// of a removed tunnel that keeps polling with its old secret wrote an
+// E-AUTH-01 line every few seconds, tens of megabytes over time. Caller
+// holds errMu.
+func rotateErrorLogLocked(path string) {
+	fi, err := os.Stat(path)
+	if err != nil || fi.Size() < errLogMaxBytes {
+		return
+	}
+	for i := errLogKeep; i >= 1; i-- {
+		src := path
+		if i > 1 {
+			src = path + "." + strconv.Itoa(i-1)
+		}
+		_ = os.Rename(src, path+"."+strconv.Itoa(i))
+	}
+}
+
 // writeAPIError is the single way backend handlers report failures:
 // stable JSON {error_code, error, hint} + journal entry.
 func writeAPIError(w http.ResponseWriter, r *http.Request, code, detail string) {
@@ -279,13 +302,14 @@ func recordError(code, endpoint, detail string) {
 	if len(errEvents) > 200 {
 		errEvents = errEvents[len(errEvents)-200:]
 	}
-	errMu.Unlock()
 	line, _ := json.Marshal(ev)
+	rotateErrorLogLocked(errorLogPath())
 	f, err := os.OpenFile(errorLogPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err == nil {
 		_, _ = f.Write(append(line, '\n'))
 		_ = f.Close()
 	}
+	errMu.Unlock()
 }
 
 // tunnelErrFamilies are the error families about the tunnel itself. The

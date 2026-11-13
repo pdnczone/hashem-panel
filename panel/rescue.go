@@ -225,13 +225,13 @@ func pickCtrlPort(avoid map[int]bool) int {
 
 func rescueFrpsToml(cport int, token string) string {
 	_, maxPool := effectivePoolValues()
-	return fmt.Sprintf("bindAddr = \"0.0.0.0\"\nbindPort = %d\nauth.method = \"token\"\nauth.token = %q\nlog.to = \"console\"\nlog.level = \"info\"\ntransport.maxPoolCount = %d\n%s", cport, token, maxPool, tcpMuxTomlLines())
+	return fmt.Sprintf("bindAddr = \"0.0.0.0\"\nbindPort = %d\nauth.method = \"token\"\nauth.token = %q\nlog.to = \"console\"\nlog.level = \"warn\"\ntransport.maxPoolCount = %d\n%s", cport, token, maxPool, tcpMuxTomlLines())
 }
 
 func rescueOriginFrpcToml(cport int, token, secret string, ports []int) string {
 	var b strings.Builder
 	pool, _ := effectivePoolValues()
-	fmt.Fprintf(&b, "serverAddr = \"127.0.0.1\"\nserverPort = %d\nauth.method = \"token\"\nauth.token = %q\nloginFailExit = false\nlog.to = \"console\"\nlog.level = \"info\"\ntransport.poolCount = %d\n%s", cport, token, pool, tcpMuxTomlLines())
+	fmt.Fprintf(&b, "serverAddr = \"127.0.0.1\"\nserverPort = %d\nauth.method = \"token\"\nauth.token = %q\nloginFailExit = false\nlog.to = \"console\"\nlog.level = \"warn\"\ntransport.poolCount = %d\n%s", cport, token, pool, tcpMuxTomlLines())
 	for _, p := range ports {
 		for _, t := range [][2]string{{"tcp", "stcp"}, {"udp", "sudp"}} {
 			fmt.Fprintf(&b, "\n[[proxies]]\nname = \"rescue-%d-%s\"\ntype = %q\nsecretKey = %q\nlocalIP = \"127.0.0.1\"\nlocalPort = %d\n", p, t[0], t[1], secret, p)
@@ -248,7 +248,7 @@ func rescueEntryFrpcToml(originIP string, cport int, token, secret string, ports
 func rescueEntryFrpcTomlMux(originIP string, cport int, token, secret string, ports []int, mux bool) string {
 	var b strings.Builder
 	pool, _ := effectivePoolValues()
-	fmt.Fprintf(&b, "serverAddr = %q\nserverPort = %d\nauth.method = \"token\"\nauth.token = %q\nloginFailExit = false\nlog.to = \"console\"\nlog.level = \"info\"\ntransport.poolCount = %d\n%s", originIP, cport, token, pool, tcpMuxTomlLinesFor(mux))
+	fmt.Fprintf(&b, "serverAddr = %q\nserverPort = %d\nauth.method = \"token\"\nauth.token = %q\nloginFailExit = false\nlog.to = \"console\"\nlog.level = \"warn\"\ntransport.poolCount = %d\n%s", originIP, cport, token, pool, tcpMuxTomlLinesFor(mux))
 	for _, p := range ports {
 		for _, t := range [][2]string{{"tcp", "stcp"}, {"udp", "sudp"}} {
 			fmt.Fprintf(&b, "\n[[visitors]]\nname = \"rescue-v-%d-%s\"\ntype = %q\nserverName = \"rescue-%d-%s\"\nsecretKey = %q\nbindAddr = \"0.0.0.0\"\nbindPort = %d\n", p, t[0], t[1], p, t[0], secret, p)

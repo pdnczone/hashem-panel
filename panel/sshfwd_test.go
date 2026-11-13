@@ -330,8 +330,9 @@ func TestSSHFwdServiceBackoff(t *testing.T) {
 	if !strings.Contains(svc, "RestartSec=15") {
 		t.Fatalf("expected RestartSec=15 for fail2ban protection, got:\n%s", svc)
 	}
-	if !strings.Contains(svc, "StartLimitIntervalSec=120") {
-		t.Fatalf("expected StartLimitIntervalSec=120 in service unit, got:\n%s", svc)
+	// in [Unit]: systemd ignores the key in [Service]
+	if !strings.Contains(svc, "[Unit]") || !strings.Contains(strings.SplitN(svc, "[Service]", 2)[0], "StartLimitIntervalSec=0") {
+		t.Fatalf("expected StartLimitIntervalSec=0 in [Unit], got:\n%s", svc)
 	}
 	if !strings.Contains(svc, "After=network-online.target hashem-bagher-frps.service") {
 		t.Fatalf("the carrier must start after frps, got:\n%s", svc)
