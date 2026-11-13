@@ -3371,5 +3371,15 @@ window.FA_TEXT = {
 "Each Iran server watches its own tunnels and moves them. Turn it on or off for a server or one tunnel from here; its rules and history open on that server.": "هر سرور ایران تانل‌های خودش را زیر نظر دارد و جابه‌جا می‌کند. از همین‌جا برای یک سرور یا یک تانل روشن و خاموشش کنید؛ قانون‌ها و تاریخچه روی همان سرور باز می‌شود.",
 "Rules and history": "قانون‌ها و تاریخچه",
 "No Iran server with a tunnel yet.": "هنوز سرور ایرانی با تانل وجود ندارد.",
-"Turn Autopilot on": "روشن کردن اتوپایلوت"
+"Turn Autopilot on": "روشن کردن اتوپایلوت",
+"Recommended: connect your servers as nodes": "پیشنهاد اول: سرورها را به‌صورت نود وصل کنید",
+"Add your other server to this panel once, then make the tunnel from here: both ends are set up for you, with no token to copy. The new server gets only the node core, and you manage it from this panel.": "سرور دیگرتان را یک بار به این پنل اضافه کنید و بعد تانل را از همین‌جا بسازید: هر دو سر خودکار راه‌اندازی می‌شود و توکنی جابه‌جا نمی‌کنید. روی سرور جدید فقط هسته‌ی نود نصب می‌شود و از همین پنل مدیریتش می‌کنید.",
+"Manual setup: answer on each server yourself and carry the token between them.": "راه‌اندازی دستی: روی هر سرور خودتان جواب بدهید و توکن را بین آن‌ها جابه‌جا کنید.",
+"Add your other server": "سرور دیگرتان را اضافه کنید",
+"Servers added": "سرورهای اضافه‌شده",
+"Run one line on it, or let this panel log in with SSH and do it.": "یک خط روی آن اجرا کنید، یا بگذارید این پنل با SSH وارد شود و خودش انجام دهد.",
+"Make the tunnel between them": "تانل بین آن‌ها را بسازید",
+"Pick the Iran server, the foreign server, the engine and the ports.": "سرور ایران، سرور خارج، موتور و پورت‌ها را انتخاب کنید.",
+"Add a server first: it shows up here when it joins.": "اول یک سرور اضافه کنید: وقتی وصل شد همین‌جا دیده می‌شود.",
+"Open the Nodes page": "باز کردن صفحه‌ی نودها"
 };
