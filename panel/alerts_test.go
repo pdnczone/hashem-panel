@@ -168,3 +168,42 @@ func TestSnapshotHookSendsOnlyWhenEnabledAndChanged(t *testing.T) {
 		t.Fatal("expected one alert on recovery")
 	}
 }
+
+type tgRT func(*http.Request) (*http.Response, error)
+
+func (f tgRT) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// Telegram's own reason reaches the user: a bad token and a bad chat id are told
+// apart, and the token never shows in the message.
+func TestSendTelegramPassesOnTheReason(t *testing.T) {
+	old := alertClient
+	defer func() { alertClient = old }()
+	reply := func(code int, body string) {
+		alertClient = &http.Client{Transport: tgRT(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: code, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
+		})}
+	}
+	wd := watchdogConfig{TGBotToken: "123456:SECRETSECRETSECRET", TGChatID: "42"}
+
+	reply(401, `{"ok":false,"error_code":401,"description":"Unauthorized"}`)
+	err := sendTelegram(wd, "x")
+	if err == nil || !strings.Contains(err.Error(), "Unauthorized") {
+		t.Fatalf("a bad token should say Unauthorized: %v", err)
+	}
+	reply(400, `{"ok":false,"error_code":400,"description":"Bad Request: chat not found"}`)
+	if err := sendTelegram(wd, "x"); err == nil || !strings.Contains(err.Error(), "chat not found") {
+		t.Fatalf("a bad chat id should say chat not found: %v", err)
+	}
+	reply(400, `{"ok":false,"description":"bad 123456:SECRETSECRETSECRET"}`)
+	if err := sendTelegram(wd, "x"); err == nil || strings.Contains(err.Error(), "SECRET") {
+		t.Fatalf("the token must be hidden: %v", err)
+	}
+	reply(502, `<html>bad gateway</html>`)
+	if err := sendTelegram(wd, "x"); err == nil || !strings.Contains(err.Error(), "HTTP 502") {
+		t.Fatalf("a body without a reason keeps the status: %v", err)
+	}
+	reply(200, `{"ok":true}`)
+	if err := sendTelegram(wd, "x"); err != nil {
+		t.Fatalf("a good send: %v", err)
+	}
+}

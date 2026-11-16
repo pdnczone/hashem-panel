@@ -395,9 +395,11 @@ func handleWatchdogPost(w http.ResponseWriter, r *http.Request) {
 	case "test":
 		out, err := runWatchdogCmd("watchdog", "test")
 		if err != nil {
+			// "Telegram said: ..." means it was reached and refused (a bad token or
+			// chat id); only a send that never got there on the tunnel route is a
+			// route problem. The generic "check ... route" line must not count.
 			code := "E-WD-02"
-			lower := strings.ToLower(out)
-			if strings.Contains(lower, "socks") || strings.Contains(lower, "route") || strings.Contains(lower, "tunnel") {
+			if !strings.Contains(out, "Telegram said:") && loadWatchdogConfig().TGRoute == "tunnel" {
 				code = "E-WD-05"
 			}
 			recordError(code, "watchdog", "Telegram test failed: "+out)

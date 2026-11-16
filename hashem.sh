@@ -8532,7 +8532,8 @@ except Exception:
     HOST="$(hostname 2>/dev/null || echo 'server')"
     local FULL_MSG="[Hashem ${HOST}] ${TEXT}"
 
-    local CURL_ARGS=(-sS -f)
+    # no -f: for a 4xx Telegram's reason ("Unauthorized", "chat not found") is in the body
+    local CURL_ARGS=(-sS)
     if [[ "$TG_ROUTE" == "tunnel" ]]; then
         if [[ -z "$TG_PORT" || "$TG_PORT" -le 0 ]]; then
             echo -e "${RED}[!] Telegram route is set to tunnel but tunnel port is not configured.${NC}" >&2
@@ -8551,6 +8552,12 @@ except Exception:
         local REDACTED_ERR
         REDACTED_ERR=$(echo "$CURL_OUT" | sed "s/${TG_TOKEN}/[REDACTED]/g")
         echo -e "${RED}[!] Telegram send failed: ${REDACTED_ERR}${NC}" >&2
+        return 1
+    fi
+    if ! grep -Eq '"ok" *: *true' <<<"$CURL_OUT"; then
+        local WHY
+        WHY=$(sed -n 's/.*"description" *: *"\([^"]*\)".*/\1/p' <<<"$CURL_OUT" | head -n1)
+        echo -e "${RED}[!] Telegram said: ${WHY:-$CURL_OUT}${NC}" >&2
         return 1
     fi
     return 0
