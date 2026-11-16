@@ -3,6 +3,11 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## Unreleased
+
+- **Nodes: a new New tunnel form.** The engine (FRP, Backhaul, Backhaul + GRE) and the transport (tcp, kcp, quic, websocket, wss; tcpmux, ws and the others for Backhaul) are picked from cards instead of typed, with the default marked. Quick port chips, a button to swap the two servers, and a checked plan that lists what would stop the tunnel before anything is made.
+- **Health: a peer bound to a private cluster address is no longer reported critical.** The data probe on a hub now tries the relay's own `lb-binds` address first, then loopback.
+
 ## v3.1.2 — 2026-11-13
 
 **Nodes without a panel: a server joins as a bare core, and the central manages all of it.** Run `hashem update` on every server, the central first. Servers that already have a panel keep it. [Guide](docs/NODES.md)

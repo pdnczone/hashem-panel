@@ -13187,46 +13187,108 @@ function ntPairFor(pick) {
   if (cl === null) cl = ids.find(id => id !== sv && sides[id] === 'foreign') ?? ids.find(id => id !== sv && sides[id] !== 'iran') ?? ids.find(id => id !== sv) ?? -1;
   return [sv, cl];
 }
+// The New tunnel dialog: two servers, then an engine, a transport and the
+// ports, each picked from cards; the central checks the plan before it makes
+// anything. Sent as '' (the engine's own default) when the default is picked.
+const NT_ENG = [
+  ['frp', 'FRP', 'FRP over a GRE link. The default: the most transports, and free.', false],
+  ['backhaul', 'Backhaul', 'Backhaul on its own, with no GRE. For when GRE is blocked between the two.', true],
+  ['gre-backhaul', 'Backhaul + GRE', 'Backhaul carried over a GRE link.', true]];
+const NT_TR = {
+  frp: [['tcp', 'TCP', 'Plain TCP. The safe default.'], ['kcp', 'KCP', 'Over UDP. Better on a link that drops packets.'],
+    ['quic', 'QUIC', 'Over UDP, encrypted, quick to connect.'], ['websocket', 'WebSocket', 'Looks like an ordinary web connection.'],
+    ['wss', 'WSS', 'WebSocket inside TLS. For strict networks.']],
+  backhaul: [['tcp', 'TCP', 'One connection for each user.'], ['tcpmux', 'TCP Mux', 'Many users on one connection. The default.'],
+    ['udp', 'UDP', 'For UDP traffic.'], ['ws', 'WS', 'WebSocket, without TLS.'], ['wss', 'WSS', 'WebSocket inside TLS.'],
+    ['wsmux', 'WS Mux', 'WebSocket, many users on one connection.'], ['wssmux', 'WSS Mux', 'WSS, many users on one connection.']]
+};
+NT_TR['gre-backhaul'] = NT_TR.backhaul;
+const ntDefTransport = e => e === 'frp' ? 'tcp' : 'tcpmux';
+const NT_PORTS = [443, 2083, 8443, 2053, 80];
+let _ntf = { engine: 'frp', transport: 'tcp', checked: false };
+function ntDirty() {
+  _ntf.checked = false;
+  const y = $('custModalYes'); if (y) y.textContent = tr('', 'Check');
+  const p = $('ntPlan'); if (p) p.innerHTML = '';
+}
+function ntRenderEngines() {
+  $('ntEng').innerHTML = NT_ENG.map(([id, name, desc, pro]) => `<button type="button" class="nt-card" role="radio" aria-checked="${id === _ntf.engine}" onclick="ntPickEngine('${id}')">
+    <span class="nt-card-h"><b>${esc(name)}</b>${pro ? `<span class="badge info">Pro</span>` : ''}</span><small>${esc(tr('', desc))}</small></button>`).join('');
+}
+function ntRenderTransports() {
+  const list = NT_TR[_ntf.engine], def = ntDefTransport(_ntf.engine);
+  $('ntTr').innerHTML = list.map(([id, name, desc]) => `<button type="button" class="nt-card nt-card-s" role="radio" aria-checked="${id === _ntf.transport}" onclick="ntPickTransport('${id}')">
+    <span class="nt-card-h"><b data-no-i18n>${esc(name)}</b>${id === def ? `<span class="badge">${esc(tr('', 'Default'))}</span>` : ''}</span><small>${esc(tr('', desc))}</small></button>`).join('');
+}
+function ntPickEngine(id) {
+  if (id === _ntf.engine) return;
+  _ntf.engine = id;
+  _ntf.transport = ntDefTransport(id);
+  ntRenderEngines(); ntRenderTransports();
+  $('ntUdpWrap').classList.toggle('hidden', id === 'frp');
+  $('ntPortsHint').textContent = id === 'frp' ? tr('', 'Single port numbers, separated by commas.') : tr('', 'Port numbers, ranges (8000-8010) and mappings (8080=80), separated by commas.');
+  ntDirty();
+}
+function ntPickTransport(id) { _ntf.transport = id; ntRenderTransports(); ntDirty(); }
+function ntPortChip(p) {
+  const f = $('ntP');
+  const have = f.value.split(/[\s,]+/).filter(Boolean);
+  f.value = (have.includes(String(p)) ? have.filter(x => x !== String(p)) : have.concat(String(p))).join(', ');
+  ntDirty();
+}
+function ntSwapEnds() {
+  const s = $('ntS'), c = $('ntC'), v = s.value;
+  if (![...c.options].some(o => o.value === v) || ![...s.options].some(o => o.value === c.value)) return;
+  s.value = c.value; c.value = v;
+  ntDirty();
+}
+function ntPlanHTML(q, d) {
+  const row = (k, v) => `<div class="nt-prow"><span>${esc(k)}</span><b class="lm-num">${esc(v)}</b></div>`;
+  const probs = (d.problems || []);
+  return `<div class="nt-plan${probs.length ? ' bad' : ' good'}"><div class="nt-plan-h">${esc(probs.length ? tr('', 'This tunnel cannot be made yet') : tr('', 'Ready to make'))}</div>
+    ${probs.length ? `<ul class="nt-probs">${probs.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    ${row(tr('', 'Iran server'), ntName(q.server) + ' · ' + (d.server_role === 'iran' ? tr('', 'its first tunnel') : tr('', 'one more tunnel')))}
+    ${row(tr('', 'Foreign server'), ntName(q.client) + ' · ' + (d.client_mode === 'join-hub' ? tr('', 'joins as one more Iran hub (Cluster, Pro)') : tr('', 'its first tunnel')))}
+    ${row(tr('', 'Control port'), String(d.frp_port || '—'))}${d.local_gre ? row('GRE', d.local_gre + ' ↔ ' + d.peer_gre) : ''}</div>`;
+}
 function openNodeTunnel(pick) {
   const [sv, cl] = ntPairFor(pick);
-  const html = `<div class="xr-fields">
-      <div class="xr-field"><label class="qs-label" for="ntS">${esc(tr('', 'Iran server (users connect to it)'))}</label><select class="hashem-input" id="ntS">${ntServerOpts(sv)}</select></div>
-      <div class="xr-field"><label class="qs-label" for="ntC">${esc(tr('', 'Foreign server'))}</label><select class="hashem-input" id="ntC">${ntServerOpts(cl)}</select></div>
+  _ntf = { engine: 'frp', transport: 'tcp', checked: false };
+  const portChips = NT_PORTS.map(p => `<button type="button" onclick="ntPortChip(${p})">${p}</button>`).join('');
+  const html = `<div class="nt-form">
+    <div class="nt-ends">
+      <div class="xr-field"><label class="qs-label" for="ntS">${esc(tr('', 'Iran server (users connect to it)'))}</label><select class="hashem-input" id="ntS" onchange="ntDirty()">${ntServerOpts(sv)}</select></div>
+      <button type="button" class="nt-sw" onclick="ntSwapEnds()" aria-label="${esc(tr('', 'Swap the two servers'))}" title="${esc(tr('', 'Swap the two servers'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4 3 8l4 4M3 8h14M17 12l4 4-4 4M21 16H7"/></svg></button>
+      <div class="xr-field"><label class="qs-label" for="ntC">${esc(tr('', 'Foreign server'))}</label><select class="hashem-input" id="ntC" onchange="ntDirty()">${ntServerOpts(cl)}</select></div>
     </div>
-    <div class="xr-fields">
-      <div class="xr-field"><label class="qs-label" for="ntE">${esc(tr('', 'Engine'))}</label><select class="hashem-input" id="ntE">
-        <option value="frp">FRP</option><option value="backhaul">Backhaul</option><option value="gre-backhaul">Backhaul + GRE</option></select></div>
-      <div class="xr-field"><label class="qs-label" for="ntT">${esc(tr('', 'Transport'))}</label><input class="hashem-input lm-num" id="ntT" dir="ltr" maxlength="12" placeholder="${esc(tr('', 'default'))}"></div>
-      <div class="xr-field"><label class="qs-label" for="ntF">${esc(tr('', 'Control port'))}</label><input class="hashem-input lm-num" id="ntF" type="number" min="1" max="65535" placeholder="${esc(tr('', 'automatic'))}"></div>
-    </div>
-    <div class="xr-field"><label class="qs-label" for="ntP">${esc(tr('', 'Ports users connect to'))}</label><input class="hashem-input lm-num" id="ntP" dir="ltr" maxlength="300" placeholder="443, 2083"></div>
-    <label class="qs-hint hidden" id="ntUdpWrap"><input type="checkbox" id="ntU"> ${esc(tr('', 'Also forward UDP (Backhaul)'))}</label>
+    <section class="nt-sec"><h4 id="ntEngL">${esc(tr('', 'Engine'))}</h4><div class="nt-cards" id="ntEng" role="radiogroup" aria-labelledby="ntEngL"></div></section>
+    <section class="nt-sec"><h4 id="ntTrL">${esc(tr('', 'Transport'))}</h4><div class="nt-cards" id="ntTr" role="radiogroup" aria-labelledby="ntTrL"></div></section>
+    <section class="nt-sec"><h4>${esc(tr('', 'Ports users connect to'))}</h4>
+      <input class="hashem-input lm-num" id="ntP" dir="ltr" maxlength="300" placeholder="443, 2083" aria-label="${esc(tr('', 'Ports users connect to'))}" oninput="ntDirty()">
+      <div class="lm-chips nt-chips">${portChips}</div><div class="qs-hint" id="ntPortsHint">${esc(tr('', 'Single port numbers, separated by commas.'))}</div></section>
+    <details class="nt-adv"><summary>${esc(tr('', 'More options'))}</summary>
+      <div class="xr-fields"><div class="xr-field"><label class="qs-label" for="ntF">${esc(tr('', 'Control port'))}</label><input class="hashem-input lm-num" id="ntF" type="number" min="1" max="65535" placeholder="${esc(tr('', 'automatic'))}" oninput="ntDirty()"></div></div>
+      <label class="qs-hint hidden" id="ntUdpWrap"><input type="checkbox" id="ntU" onchange="ntDirty()"> ${esc(tr('', 'Also forward UDP (Backhaul)'))}</label></details>
     <div class="qs-hint">${esc(tr('', 'The Iran server\'s end is made first, then the foreign server\'s with its bundle. If the second fails, the first is removed again. Tunnels already running are not touched.'))}</div>
-    <div id="ntPlan"></div>`;
-  let checked = false;
-  const req = () => ({ server: parseInt($('ntS').value, 10), client: parseInt($('ntC').value, 10), engine: $('ntE').value,
-    transport: $('ntT').value.trim(), ports: $('ntP').value.trim(), frp_port: parseInt($('ntF').value, 10) || 0,
-    accept_udp: $('ntE').value !== 'frp' && $('ntU').checked });
+    <div id="ntPlan" aria-live="polite"></div></div>`;
+  const req = () => ({ server: parseInt($('ntS').value, 10), client: parseInt($('ntC').value, 10), engine: _ntf.engine,
+    transport: _ntf.transport === ntDefTransport(_ntf.engine) ? '' : _ntf.transport, ports: $('ntP').value.trim(), frp_port: parseInt($('ntF').value, 10) || 0,
+    accept_udp: _ntf.engine !== 'frp' && $('ntU').checked });
   custModal(tr('', 'New tunnel between servers'), html, tr('', 'Check'), async () => {
     const q = req();
-    if (!checked) {
+    if (q.server === q.client || !(q.client >= 0)) throw new Error(tr('', 'Pick two different servers.'));
+    if (!q.ports) throw new Error(tr('', 'Enter at least one port users connect to.'));
+    if (!_ntf.checked) {
       const d = await api('/api/nodes', Object.assign({ action: 'tunnel-plan' }, q));
-      const li = (k, v) => `<li>${esc(k)}: <b class="lm-num">${esc(v)}</b></li>`;
-      $('ntPlan').innerHTML = `<ul class="qs-hint">${li(tr('', 'Iran server'), ntName(q.server) + ' · ' + (d.server_role === 'iran' ? tr('', 'its first tunnel') : tr('', 'one more tunnel')))}
-        ${li(tr('', 'Foreign server'), ntName(q.client) + ' · ' + (d.client_mode === 'join-hub' ? tr('', 'joins as one more Iran hub (Cluster, Pro)') : tr('', 'its first tunnel')))}
-        ${li(tr('', 'Control port'), String(d.frp_port))}${d.local_gre ? li('GRE', d.local_gre + ' ↔ ' + d.peer_gre) : ''}</ul>`;
-      if ((d.problems || []).length) throw new Error(d.problems.join('\n'));
-      checked = true;
-      $('custModalYes').textContent = tr('', 'Make the tunnel');
-      ['ntS', 'ntC', 'ntE', 'ntT', 'ntF', 'ntP', 'ntU'].forEach(id => { $(id).oninput = $(id).onchange = () => { checked = false; $('custModalYes').textContent = tr('', 'Check'); $('ntPlan').innerHTML = ''; }; });
+      $('ntPlan').innerHTML = ntPlanHTML(q, d);
+      if (!(d.problems || []).length) { _ntf.checked = true; $('custModalYes').textContent = tr('', 'Make the tunnel'); }
       return false;
     }
     await api('/api/nodes', Object.assign({ action: 'tunnel-create' }, q));
     toastOk(tr('', 'Making the tunnel'), ntName(q.server) + ' → ' + ntName(q.client));
     loadNodes();
-  });  const udp = () => { $('ntUdpWrap').classList.toggle('hidden', $('ntE').value === 'frp'); };
-  $('ntE').addEventListener('change', udp);
-  udp();
+  });
+  ntRenderEngines(); ntRenderTransports();
 }
 // ---- testing the way between two servers from here (node_probe.go) ----
 // The path test needs no tunnel: the central starts it on the Iran server and
