@@ -3,7 +3,9 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
-## Unreleased
+## v3.1.3 — 2026-11-16
+
+**A New tunnel form for the Nodes page, a Watchdog that trusts traffic over ping, and a few fixes.** Run `hashem update` on every server, the central first.
 
 - **Nodes: a new New tunnel form.** The engine (FRP, Backhaul, Backhaul + GRE) and the transport (tcp, kcp, quic, websocket, wss; tcpmux, ws and the others for Backhaul) are picked from cards instead of typed, with the default marked. Quick port chips, a button to swap the two servers, and a checked plan that lists what would stop the tunnel before anything is made.
 - **Health: a peer bound to a private cluster address is no longer reported critical.** The data probe on a hub now tries the relay's own `lb-binds` address first, then loopback.

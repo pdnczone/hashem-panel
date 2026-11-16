@@ -82,6 +82,13 @@ The GRE link itself can travel four ways: **Direct** (protocol 47), **WSS** (TLS
 - **A hardened panel:** argon2id passwords, CSRF protection, optional 2FA, an audit log, and a web terminal that is off by default.
 - **Everything from SSH too:** `hashem` opens a terminal app with the same menus as the panel.
 
+## What's new in v3.1.3
+
+- **A new New tunnel form** on the Nodes page: pick the engine and the transport from cards, add ports with one click, and see a checked plan before anything is made.
+- **A Watchdog that trusts traffic over ping:** a path that drops ICMP inside GRE no longer raises a false "Tunnel DOWN" or a restart. A client session or a GRE interface that receives packets counts as a working link.
+- **A new Watchdog tab:** a status hero, a failure bar, a switch for Auto-Restart and side-by-side cards.
+- **Fixes:** the server count on the dashboard includes the main tunnel, and a peer bound to a private cluster address is no longer reported critical.
+
 ## What's new in v3.1.2
 
 - **Node core and the Nodes map:** nodes no longer need a full panel, and the Nodes page draws your whole network with live health.
