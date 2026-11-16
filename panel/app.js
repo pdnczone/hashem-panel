@@ -1626,7 +1626,9 @@ function linkStrip(s) {
   }
   const iran = /iran/i.test(L.role || '') || L.frp_svc === 'frps' || peers.length > 0;
   const here = iran ? tr('x002', 'Iran') : tr('x003', 'Foreign');
-  const there = peers.length > 1 ? peers.length + ' ' + tr('ls_servers', 'servers')
+  // the main tunnel is a server too: it sits beside the peers, not among them
+  const nSrv = peers.length + (peers.length && hasBaseTunnel(L) ? 1 : 0);
+  const there = nSrv > 1 ? nSrv + ' ' + tr('ls_servers', 'servers')
     : (peers[0] && (peers[0].name || peers[0].remote_pub)) || L.remote_pub || L.gre_peer || (iran ? tr('x003', 'Foreign') : tr('x002', 'Iran'));
   const eng = LS_ENGINE[L.engine || L.tunnel_engine] || '';
   const up = !!(L.frp_up || (L.gre && L.gre.exists) || peers.some(p => p.frp_up || p.gre_up));
@@ -2508,7 +2510,12 @@ async function refreshDash() {
     const role = String(d.role || '').toLowerCase();
     const iran = /iran|master/.test(role), foreign = /foreign/.test(role);
     const engine = engLabel(d.active_engine);
-    const upPeers = peers.filter(p => p.gre_up || p.frp_up).length;
+    // The main tunnel is one more server next to the peers (the map draws it
+    // too), so "3 servers" must count it: peers alone said 2 for a hub with
+    // the main tunnel and two peers.
+    const hasMain = multi && !!(g.exists || f.up || f.svc);
+    const nSrv = nPeers + (hasMain ? 1 : 0);
+    const upPeers = peers.filter(p => p.gre_up || p.frp_up).length + (hasMain && (g.exists || f.up) ? 1 : 0);
 
     // Hero: overall state, the link between the two servers, latency.
     const hero = $('dashHero');
@@ -2517,13 +2524,13 @@ async function refreshDash() {
     const reasons = d.reasons || [];
     set('kpiStatusSub', state === 'unset' ? tr('', 'Run Setup to create the tunnel')
       : (state !== 'ok' && reasons.length) ? reasons[0]
-      : multi ? upPeers + ' / ' + nPeers + ' ' + tr('', 'tunnels up')
+      : multi ? upPeers + ' / ' + nSrv + ' ' + tr('', 'tunnels up')
       : state === 'ok' ? tr('', 'All links are working') : tr('', 'No link is answering'));
     set('heroLocalName', tr('', iran ? 'Iran server' : foreign ? 'Foreign server' : 'This server'));
     set('heroLocalIp', d.local_pub || '—');
     let remName, remIp;
     if (unset) { remName = 'Not linked yet'; remIp = '—'; }
-    else if (multi && nPeers > 1) { remName = nPeers + ' ' + tr('', 'foreign servers'); remIp = upPeers + ' / ' + nPeers + ' ' + tr('', 'up'); }
+    else if (multi && nSrv > 1) { remName = nSrv + ' ' + tr('', 'foreign servers'); remIp = upPeers + ' / ' + nSrv + ' ' + tr('', 'up'); }
     else if (multi) { remName = peers[0].name || 'Foreign server'; remIp = peers[0].remote_pub || '—'; }
     else {
       remName = d.main_name || (bagherUp && !(d.gre || {}).exists && bObj.name) || (iran ? 'Foreign server' : foreign ? 'Iran server' : 'Other server');
@@ -2534,8 +2541,8 @@ async function refreshDash() {
     const chips = [];
     const engName = engine && engine !== 'Bagher' ? engine : 'FRP';
     if (multi) {
-      const greUp = peers.filter(p => p.gre_up).length, frpUp = peers.filter(p => p.frp_up).length;
-      chips.push(chip('GRE ' + greUp + '/' + nPeers, greUp ? 'ok' : 'err'), chip(engName + ' ' + frpUp + '/' + nPeers, frpUp ? 'ok' : 'err'));
+      const greUp = peers.filter(p => p.gre_up).length + (hasMain && g.exists ? 1 : 0), frpUp = peers.filter(p => p.frp_up).length + (hasMain && f.up ? 1 : 0);
+      chips.push(chip('GRE ' + greUp + '/' + nSrv, greUp ? 'ok' : 'err'), chip(engName + ' ' + frpUp + '/' + nSrv, frpUp ? 'ok' : 'err'));
     } else if (!unset) {
       // Backhaul and Bagher run without GRE: a missing GRE there is not a fault.
       if (g.exists || (!/backhaul/.test(role) && !(bagherUp && !f.up))) chips.push(chip('GRE', g.exists ? 'ok' : 'err'));
