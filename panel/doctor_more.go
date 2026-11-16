@@ -516,6 +516,10 @@ var (
 		_, err := runCmdTimeout(150*time.Second, "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "-qq", "mtr-tiny")
 		return err
 	}
+	installTracerouteF = func() error {
+		_, err := runCmdTimeout(150*time.Second, "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "-qq", "traceroute")
+		return err
+	}
 	errTraceMissing = errors.New("neither mtr nor traceroute is installed on this server")
 )
 
@@ -536,6 +540,7 @@ func runTrace(ctx context.Context, t docTarget, mode string, port int, install b
 			}
 		}
 	}
+	var mtrErr error
 	if _, err := lookPath("mtr"); err == nil {
 		res.Tool = "mtr"
 		args := []string{"-n", "-r", "-w", "-c", "20", "-i", "0.5", "-m", "30"}
@@ -548,10 +553,26 @@ func runTrace(ctx context.Context, t docTarget, mode string, port int, install b
 			if err == nil {
 				err = errors.New("mtr printed no hops")
 			}
-			return nil, fmt.Errorf("mtr failed: %w", err)
+			mtrErr = fmt.Errorf("mtr failed: %w", err)
 		}
-	} else if _, err := lookPath("traceroute"); err == nil {
+	}
+	// mtr missing, or it crashed (some builds abort with a core dump): traceroute
+	// shows the same route, so the page does not end on the crash.
+	if res.Tool == "" || mtrErr != nil {
+		_, terr := lookPath("traceroute")
+		if terr != nil && mtrErr != nil && install && ctx.Err() == nil {
+			if installTracerouteF() == nil {
+				_, terr = lookPath("traceroute")
+			}
+		}
+		if terr != nil {
+			if mtrErr != nil {
+				return nil, fmt.Errorf("%w (and traceroute is not installed to take over)", mtrErr)
+			}
+			return nil, errTraceMissing
+		}
 		res.Tool = "traceroute"
+		res.Hops = nil
 		args := []string{"-n", "-q", "3", "-w", "2", "-m", "30"}
 		if mode == "tcp" {
 			args = append(args, "-T", "-p", strconv.Itoa(port))
@@ -562,10 +583,11 @@ func runTrace(ctx context.Context, t docTarget, mode string, port int, install b
 			if err == nil {
 				err = errors.New("traceroute printed no hops")
 			}
+			if mtrErr != nil {
+				return nil, fmt.Errorf("%v; traceroute failed too: %w", mtrErr, err)
+			}
 			return nil, fmt.Errorf("traceroute failed: %w", err)
 		}
-	} else {
-		return nil, errTraceMissing
 	}
 	res.Verdict, res.LossFrom, res.BorderHop = traceVerdict(res.Hops, t.Host)
 	return res, nil

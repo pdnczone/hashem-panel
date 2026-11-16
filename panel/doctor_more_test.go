@@ -222,6 +222,49 @@ func TestRunTraceTools(t *testing.T) {
 	}
 }
 
+// mtr that crashes ("signal: aborted (core dumped)") must not end the trace:
+// traceroute takes over, and when there is none the error says so.
+func TestRunTraceFallsBackWhenMtrCrashes(t *testing.T) {
+	oldLook, oldRun, oldInst := lookPath, traceRunFn, installTracerouteF
+	t.Cleanup(func() { lookPath, traceRunFn, installTracerouteF = oldLook, oldRun, oldInst })
+	have := map[string]bool{"mtr": true, "traceroute": true}
+	lookPath = func(n string) (string, error) {
+		if have[n] {
+			return "/usr/bin/" + n, nil
+		}
+		return "", errors.New("missing")
+	}
+	var ran []string
+	traceRunFn = func(_ context.Context, name string, args ...string) (string, error) {
+		ran = append(ran, name)
+		if name == "mtr" {
+			return "", errors.New("signal: aborted (core dumped)")
+		}
+		return " 1  10.0.0.1  1.0 ms  1.1 ms  1.0 ms\n 2  203.0.113.9  80.1 ms  80.5 ms  80.3 ms\n", nil
+	}
+	installTracerouteF = func() error { t.Fatal("traceroute is there: nothing to install"); return nil }
+	tg := docTarget{ID: "peer", Host: "203.0.113.9", Port: 7000}
+
+	res, err := runTrace(context.Background(), tg, "icmp", 0, true)
+	if err != nil || res.Tool != "traceroute" || len(res.Hops) != 2 || strings.Join(ran, ",") != "mtr,traceroute" {
+		t.Fatalf("traceroute should take over: %+v %v ran=%v", res, err, ran)
+	}
+
+	have["traceroute"] = false
+	installed := false
+	installTracerouteF = func() error { installed, have["traceroute"] = true, true; return nil }
+	if res, err := runTrace(context.Background(), tg, "icmp", 0, true); err != nil || res.Tool != "traceroute" || !installed {
+		t.Fatalf("install traceroute on request: %+v %v", res, err)
+	}
+
+	have["traceroute"], installed = false, false
+	installTracerouteF = func() error { return errors.New("offline") }
+	_, err = runTrace(context.Background(), tg, "icmp", 0, false)
+	if err == nil || !strings.Contains(err.Error(), "core dumped") || !strings.Contains(err.Error(), "traceroute") {
+		t.Fatalf("the error should name the crash and the missing fallback: %v", err)
+	}
+}
+
 func TestSummarizeStability(t *testing.T) {
 	r := &stabilityResult{Interval: 0.5, Samples: []float64{40, 41, 40, -1, -1, -1, -1, -1, -1, -1, 42, 40, 300, 41}}
 	summarizeStability(r)
