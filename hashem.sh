@@ -8370,10 +8370,10 @@ watchdog_check() {
     init_watchdog_json
     local PEER_GRE
     PEER_GRE=$(watchdog_get_peer_gre)
-    local GRE_OK=0
+    local GRE_OK=0 GRE_ICMP=0
     if [[ -n "$PEER_GRE" ]]; then
         if ping -c 1 -W 2 "$PEER_GRE" >/dev/null 2>&1; then
-            GRE_OK=1
+            GRE_OK=1; GRE_ICMP=1
         elif ss -tn state established 2>/dev/null | grep -q "$PEER_GRE"; then
             GRE_OK=1
         elif nc -z -w 2 "$PEER_GRE" 22 >/dev/null 2>&1 || nc -z -w 2 "$PEER_GRE" 7777 >/dev/null 2>&1 || nc -z -w 2 "$PEER_GRE" 5201 >/dev/null 2>&1; then
@@ -8438,6 +8438,24 @@ watchdog_check() {
         fi
     fi
 
+    # Iran hub: the same rule for frps. A client that holds a session on the
+    # control port, over GRE or over the public IP, is the proof the link works;
+    # an unanswered ping alone (ICMP dropped inside GRE) must not read as down.
+    if [[ $GRE_OK -eq 0 && "$FRP_NAME" == "frps" && $FRP_OK -eq 1 ]]; then
+        local _bp
+        _bp=$(autopool_live_toml_int "${CONFIG_DIR}/frps.toml" bindPort 2>/dev/null)
+        if [[ "$_bp" =~ ^[0-9]+$ ]] && [[ -n "$(ss -Htn state established "( sport = :${_bp} )" 2>/dev/null)" ]]; then
+            GRE_OK=1
+        fi
+    fi
+
+    # Any side: a GRE interface that is receiving packets is carrying traffic
+    # (TCP passes inside GRE while ICMP is dropped), the same test the restart
+    # path uses before it would touch the interface.
+    if [[ $GRE_OK -eq 0 && -n "$PEER_GRE" ]] && gre_if_healthy "$TUNNEL_NAME"; then
+        GRE_OK=1
+    fi
+
     local FAILS=0
     if [[ -f "$WATCHDOG_FILE" ]] && command -v python3 >/dev/null 2>&1; then
         FAILS=$(python3 -c '
@@ -8457,7 +8475,11 @@ except Exception:
         if [[ "$FRP_NAME" == backhaul-* ]]; then
             DETAIL="Backhaul ${FRP_NAME} session up"
         else
-            DETAIL="GRE ping OK ($PEER_GRE), ${FRP_NAME:-FRP} active"
+            if [[ $GRE_ICMP -eq 1 ]]; then
+                DETAIL="GRE ping OK ($PEER_GRE), ${FRP_NAME:-FRP} active"
+            else
+                DETAIL="GRE carries traffic (ping filtered), ${FRP_NAME:-FRP} active"
+            fi
         fi
     else
         local ERR_PARTS=()
