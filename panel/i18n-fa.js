@@ -3584,5 +3584,11 @@ window.FA_TEXT = {
   "Ready to make": "آماده‌ی ساخت",
   "This tunnel cannot be made yet": "این تانل هنوز ساخته نمی‌شود",
   "Enter at least one port users connect to.": "دست‌کم یک پورت برای اتصال کاربران وارد کنید.",
-  "Default": "پیش‌فرض"
+  "Default": "پیش‌فرض",
+  "Checks the tunnel every minute: the GRE link and the FRP service, or for Backhaul its control session. A link that answers no ping but carries traffic counts as working. Sends Telegram alerts and, if you turn it on, restarts the tunnel after consecutive failures.": "هر دقیقه تونل را بررسی می‌کند: لینک GRE و سرویس FRP، یا برای Backhaul نشست کنترلی آن. لینکی که به پینگ جواب نمی‌دهد ولی ترافیک رد می‌کند سالم حساب می‌شود. هشدار تلگرام می‌فرستد و اگر روشنش کنید، بعد از چند خطای پشت سر هم تونل را ری‌استارت می‌کند.",
+  "The Watchdog is off": "دیده‌بان خاموش است",
+  "The tunnel is healthy": "تونل سالم است",
+  "The tunnel is down": "تونل از کار افتاده است",
+  "Seen at the last check": "نتیجه‌ی آخرین بررسی",
+  "Off by default to prevent restart storms: it only sends alerts until you turn it on.": "پیش‌فرض خاموش است تا ری‌استارت پشت‌سرهم پیش نیاید: تا روشنش نکنید فقط هشدار می‌فرستد."
 };

@@ -8,6 +8,7 @@ Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 - **Nodes: a new New tunnel form.** The engine (FRP, Backhaul, Backhaul + GRE) and the transport (tcp, kcp, quic, websocket, wss; tcpmux, ws and the others for Backhaul) are picked from cards instead of typed, with the default marked. Quick port chips, a button to swap the two servers, and a checked plan that lists what would stop the tunnel before anything is made.
 - **Health: a peer bound to a private cluster address is no longer reported critical.** The data probe on a hub now tries the relay's own `lb-binds` address first, then loopback.
 - **Dashboard: the server count includes the main tunnel.** A hub with its main tunnel and two more servers said "2 servers" and "2 / 2 tunnels up" while the map drew three. The top bar, the status card and the GRE/FRP counters now count all three.
+- **Watchdog tab: a new look.** A status hero names the state (off, healthy, down) with a coloured shield, the failure count shows as a bar against the threshold, Auto-Restart is a switch, the Telegram route and backup schedule are segmented choices, Telegram and the restart schedule sit side by side, and each event has a coloured dot.
 - **Watchdog: a dropped ping inside GRE is not a dead tunnel.** On an Iran hub a client holding a session on the control port, and on either side a GRE interface that receives packets, now count as a working link. Before, only ping (or a socket to the GRE address) did, so a path that drops ICMP could raise a false "Tunnel DOWN" and a restart.
 
 ## v3.1.2 — 2026-11-13

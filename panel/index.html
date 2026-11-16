@@ -924,14 +924,46 @@
   .ns-empty { color:var(--dim); font-size:13px; padding:8px 0; }
   @media (max-width:480px) { .ns-row { grid-template-columns:auto minmax(0,1fr); } .ns-v { grid-column:2; justify-self:start; } }
   /* Watchdog & Backup styles */
-  .wd-hero-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-top:8px; }
-  .wd-stat-box { background:var(--sunk); border:1px solid var(--ln); border-radius:var(--r-md); padding:12px; display:flex; flex-direction:column; gap:4px; }
+  /* Watchdog: a status hero, then paired cards. Colour comes from the hero's data-state. */
+  #tab-watchdog:not([hidden]) { display:flex; flex-direction:column; gap:14px; }
+  .wd-hero-card { --wd-c:var(--dim); --wd-soft:var(--s3); position:relative; overflow:hidden; }
+  .wd-hero-card::before { content:""; position:absolute; inset-inline-start:0; top:0; bottom:0; width:3px; background:var(--wd-c); }
+  .wd-hero-card[data-state="ok"] { --wd-c:var(--ok); --wd-soft:var(--ok-soft); }
+  .wd-hero-card[data-state="bad"] { --wd-c:var(--er); --wd-soft:var(--er-soft); }
+  .wd-hero-top { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  .wd-shield { width:52px; height:52px; border-radius:16px; display:grid; place-items:center; flex:none; background:var(--wd-soft); color:var(--wd-c); border:1px solid color-mix(in srgb, var(--wd-c) 30%, transparent); }
+  .wd-shield svg { width:26px; height:26px; }
+  .wd-hero-card[data-state="ok"] .wd-shield { animation:wdBreathe 3s ease-in-out infinite; }
+  @keyframes wdBreathe { 0%,100% { box-shadow:0 0 0 0 color-mix(in srgb, var(--wd-c) 35%, transparent); } 50% { box-shadow:0 0 0 8px transparent; } }
+  @media (prefers-reduced-motion:reduce) { .wd-hero-card[data-state="ok"] .wd-shield { animation:none; } }
+  .wd-hero-txt { flex:1; min-width:200px; display:flex; flex-direction:column; gap:3px; }
+  .wd-hero-state { font-size:var(--fs-h3); font-weight:700; color:var(--wd-c); line-height:1.25; }
+  .wd-hero-card[data-state="off"] .wd-hero-state { color:var(--tx2); }
+  .wd-hero-act { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .wd-hero-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-top:4px; }
+  .wd-stat-box { background:var(--sunk); border:1px solid var(--ln); border-radius:var(--r-md); padding:14px; display:flex; flex-direction:column; gap:6px; }
   .wd-stat-label { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); font-weight:600; }
-  .wd-stat-val { font-size:18px; font-weight:700; color:var(--tx); }
+  .wd-stat-val { font-size:20px; font-weight:700; color:var(--tx); font-variant-numeric:tabular-nums; }
   .wd-stat-sub { font-size:var(--fs-small); color:var(--mu); }
-  .wd-radio-group { display:flex; gap:16px; flex-wrap:wrap; margin-top:6px; }
-  .wd-radio-opt { display:inline-flex; align-items:center; gap:8px; cursor:pointer; font-size:var(--fs-body); color:var(--tx2); }
-  .wd-radio-opt input { cursor:pointer; }
+  .wd-dot-off { background:var(--dim); }
+  #wdLastCheckVal { font-size:16px; }
+  .wd-pips { display:flex; gap:4px; }
+  .wd-pips i { flex:1; height:6px; border-radius:3px; background:var(--s3); }
+  .wd-pips i.on { background:var(--wr); }
+  .wd-pips i.full { background:var(--er); }
+  .wd-opt { border-top:1px solid var(--ln); border-bottom:0; padding:14px 0 0; margin-top:4px; }
+  .wd-cols { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap:14px; align-items:start; }
+  .wd-cols > .tunnel-card { min-width:0; }
+  .wd-lbl { display:block; font-size:var(--fs-small); font-weight:600; color:var(--tx2); margin-bottom:6px; }
+  .wd-seg { display:inline-flex; flex-wrap:wrap; gap:4px; padding:4px; border-radius:12px; border:1px solid var(--ln); background:var(--s2); max-width:100%; }
+  .wd-seg label { position:relative; cursor:pointer; display:block; }
+  .wd-seg input { position:absolute; inset:0; opacity:0; margin:0; cursor:pointer; }
+  .wd-seg span { display:block; padding:8px 14px; border-radius:8px; color:var(--mu); font-size:var(--fs-body); font-weight:600; transition:background .18s ease, color .18s ease; }
+  .wd-seg label:hover span { color:var(--tx2); }
+  .wd-seg input:checked + span { background:var(--ac-soft); color:var(--ac); box-shadow:inset 0 0 0 1px var(--ac-b30); }
+  .wd-seg input:focus-visible + span { outline:2px solid var(--ac); outline-offset:2px; }
+  .wd-sub { margin-top:6px; padding-top:16px; border-top:1px solid var(--ln); }
+  .wd-sub-h { font-weight:600; color:var(--tx); font-size:var(--fs-h4); margin-bottom:8px; }
   .wd-backup-list { display:flex; flex-direction:column; gap:8px; margin-top:8px; }
   .wd-backup-item { display:flex; justify-content:space-between; align-items:center; background:var(--sunk); border:1px solid var(--ln); border-radius:var(--r-md); padding:10px 14px; gap:10px; flex-wrap:wrap; }
   .wd-backup-meta { display:flex; flex-direction:column; gap:2px; min-width:0; }
@@ -939,7 +971,10 @@
   .wd-backup-info { font-size:var(--fs-small); color:var(--mu); }
   .wd-backup-acts { display:flex; gap:6px; flex-wrap:wrap; }
   .wd-event-log { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
-  .wd-event-item { display:flex; gap:10px; align-items:flex-start; padding:8px 10px; border-radius:var(--r-md); background:var(--sunk); border:1px solid var(--ln); font-size:var(--fs-small); }
+  .wd-event-item { display:flex; gap:10px; align-items:flex-start; position:relative; padding-block:8px; padding-inline:24px 12px; border-radius:var(--r-md); background:var(--sunk); border:1px solid var(--ln); font-size:var(--fs-small); }
+  .wd-event-item::before { content:""; position:absolute; inset-inline-start:10px; top:14px; width:7px; height:7px; border-radius:50%; background:var(--dim); }
+  .wd-event-item.ok::before { background:var(--ok); }
+  .wd-event-item.err::before { background:var(--er); }
   .wd-event-time { color:var(--mu); font-family:var(--font-mono); font-size:12px; flex:none; white-space:nowrap; }
   .wd-event-detail { color:var(--tx2); flex:1; word-break:break-word; }
   @media (max-width:480px) {
@@ -2781,31 +2816,31 @@
 
       </section>
       <section id="tab-watchdog" role="tabpanel" hidden>
-        <!-- Status hero card -->
-        <div class="tunnel-card wd-hero-card">
-          <div class="tc-header">
-            <p class="tc-title">Tunnel Watchdog</p>
-            <div class="u-flex-center-gap10">
+        <!-- Status hero: what the Watchdog sees right now -->
+        <div class="tunnel-card wd-hero-card" id="wdHero" data-state="off">
+          <div class="wd-hero-top">
+            <span class="wd-shield" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 4.5 3.2 8 8 9 4.8-1 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg></span>
+            <div class="wd-hero-txt">
+              <p class="tc-title">Tunnel Watchdog</p>
+              <div class="wd-hero-state" id="wdHeroState" aria-live="polite">The Watchdog is off</div>
+              <div class="wd-stat-sub" id="wdHealthDetail">Not checked yet</div>
+            </div>
+            <div class="wd-hero-act">
               <span class="status-indicator" id="wdStatusInd"><span class="dot"></span><span id="wdStatusTxt">—</span></span>
               <button class="hashem-btn hashem-btn-secondary" id="wdToggleBtn">Enable</button>
             </div>
           </div>
-          <div class="qs-hint">Checks the tunnel every minute: the GRE link and the FRP service, or for Backhaul its control session. Sends Telegram alerts and, if you turn it on, restarts the tunnel after consecutive failures.</div>
-          <div class="u-m-12x0x16x0">
-            <label class="u-flex u-ai-c u-gap-8 u-cursor-pointer u-fs-13">
-              <input type="checkbox" id="wdAutoRestart">
-              <span><b>Auto-Restart on Failure</b> (Disabled by default to prevent CPU spike storms; alerts only)</span>
-            </label>
-          </div>
+          <div class="qs-hint">Checks the tunnel every minute: the GRE link and the FRP service, or for Backhaul its control session. A link that answers no ping but carries traffic counts as working. Sends Telegram alerts and, if you turn it on, restarts the tunnel after consecutive failures.</div>
           <div class="wd-hero-grid">
             <div class="wd-stat-box">
               <span class="wd-stat-label">Tunnel Health</span>
               <div class="wd-stat-val" id="wdHealthVal">—</div>
-              <span class="wd-stat-sub" id="wdHealthDetail">Not checked yet</span>
+              <span class="wd-stat-sub">Seen at the last check</span>
             </div>
             <div class="wd-stat-box">
               <span class="wd-stat-label">Consecutive Fails</span>
               <div class="wd-stat-val mono" id="wdFailsVal">0 / 2</div>
+              <div class="wd-pips" id="wdPips" aria-hidden="true"></div>
               <span class="wd-stat-sub">Alert threshold: 2</span>
             </div>
             <div class="wd-stat-box">
@@ -2814,8 +2849,13 @@
               <span class="wd-stat-sub">Runs every 1 min</span>
             </div>
           </div>
+          <label class="ap-opt wd-opt">
+            <span><b>Auto-Restart on Failure</b><small>Off by default to prevent restart storms: it only sends alerts until you turn it on.</small></span>
+            <span class="ap-switch"><input type="checkbox" id="wdAutoRestart"><i></i></span>
+          </label>
         </div>
 
+        <div class="wd-cols">
         <!-- Telegram alerts card -->
         <div class="tunnel-card">
           <div class="tc-header">
@@ -2835,13 +2875,13 @@
             <input class="hashem-input" id="wdChatId" placeholder="e.g. 123456789 or -100123456789" autocomplete="off" spellcheck="false">
           </div>
           <div class="fg">
-            <label>Telegram Route</label>
-            <div class="wd-radio-group">
-              <label class="wd-radio-opt">
+            <span class="wd-lbl" id="wdRouteLbl">Telegram Route</span>
+            <div class="wd-seg" role="radiogroup" aria-labelledby="wdRouteLbl">
+              <label>
                 <input type="radio" name="wdRoute" value="direct" id="wdRouteDirect" checked>
                 <span>Direct (standard HTTPS)</span>
               </label>
-              <label class="wd-radio-opt">
+              <label>
                 <input type="radio" name="wdRoute" value="tunnel" id="wdRouteTunnel">
                 <span>Via Tunnel (SOCKS5 through tunnel port)</span>
               </label>
@@ -2859,7 +2899,7 @@
             <button class="hashem-btn hashem-btn-primary" id="wdSaveTgBtn">Save Telegram Settings</button>
             <button class="hashem-btn hashem-btn-secondary" id="wdTestTgBtn">Test Alert</button>
           </div>
-          <div class="qs-hint" id="wdTgMsg"></div>
+          <div class="qs-hint" id="wdTgMsg" aria-live="polite"></div>
         </div>
 
         <!-- Tunnel Auto-Restart Scheduler Card -->
@@ -2883,11 +2923,14 @@
                 <option value="custom">Custom Hours…</option>
               </select>
               <input type="number" class="hashem-input u-max-w-140 hidden" id="wdRestartCustomHours" aria-label="Restart interval in hours" min="1" max="720" placeholder="Hours (e.g. 4)">
-              <button class="hashem-btn hashem-btn-primary" id="wdSaveRestartSchedBtn" data-i18n="wd_restart_save">Save Schedule</button>
-              <button class="hashem-btn hashem-btn-secondary" id="wdRestartTunnelNowBtn" data-i18n="wd_restart_now">Restart Tunnel Now</button>
             </div>
           </div>
-          <div class="wd-stat-sub u-mt-8" id="wdRestartStatusSub">Next restart: Not scheduled</div>
+          <div class="qs-actions">
+            <button class="hashem-btn hashem-btn-primary" id="wdSaveRestartSchedBtn" data-i18n="wd_restart_save">Save Schedule</button>
+            <button class="hashem-btn hashem-btn-secondary" id="wdRestartTunnelNowBtn" data-i18n="wd_restart_now">Restart Tunnel Now</button>
+          </div>
+          <div class="wd-stat-sub" id="wdRestartStatusSub">Next restart: Not scheduled</div>
+        </div>
         </div>
 
         <!-- Encrypted Backups card -->
@@ -2902,17 +2945,17 @@
             <span class="qs-hint" id="wdBackupNowMsg"></span>
           </div>
           <div class="fg u-mt-12" >
-            <label>Backup Schedule</label>
-            <div class="wd-radio-group">
-              <label class="wd-radio-opt">
+            <span class="wd-lbl" id="wdSchedLbl">Backup Schedule</span>
+            <div class="wd-seg" role="radiogroup" aria-labelledby="wdSchedLbl">
+              <label>
                 <input type="radio" name="wdSchedMode" value="off" id="wdSchedOff" checked>
                 <span>Disabled</span>
               </label>
-              <label class="wd-radio-opt">
+              <label>
                 <input type="radio" name="wdSchedMode" value="interval" id="wdSchedInterval">
                 <span>Every N hours</span>
               </label>
-              <label class="wd-radio-opt">
+              <label>
                 <input type="radio" name="wdSchedMode" value="daily" id="wdSchedDaily">
                 <span>Daily at HH:MM</span>
               </label>
@@ -2931,15 +2974,15 @@
           </div>
 
           <!-- Stored Backups -->
-          <div class="u-mt-16">
-            <div class="u-fw-600 u-color-tx u-fs-14 u-mb-8">Stored Backups (/var/backups/hashem)</div>
+          <div class="wd-sub">
+            <div class="wd-sub-h">Stored Backups (/var/backups/hashem)</div>
             <div id="wdBackupList" class="wd-backup-list">
               <div class="qs-hint">No backups yet.</div>
             </div>
           </div>
           <!-- Backup key export: backups only open with this server's key -->
-          <div class="u-mt-16">
-            <div class="u-fw-600 u-color-tx u-fs-14 u-mb-8">Backup encryption key</div>
+          <div class="wd-sub">
+            <div class="wd-sub-h">Backup encryption key</div>
             <div class="qs-hint u-mb-8">Backups are encrypted with a key stored only on this server. Keep a copy elsewhere, or a downloaded backup cannot be opened if the server is lost.</div>
             <div class="u-flex-center-gap8">
               <input class="hashem-input u-max-w-180" id="wdKeyPass" aria-label="Panel password" type="password" autocomplete="current-password" placeholder="Panel password">

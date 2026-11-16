@@ -6809,7 +6809,12 @@ async function loadWatchdog() {
     const s = await api('/api/watchdog');
     wdState = s;
 
-    // Status hero card
+    // Status hero card: one state (off / ok / bad) colours the shield, the
+    // headline and the edge; the toggle and the numbers sit under it.
+    const heroState = !s.enabled ? 'off' : (s.status === 'up' ? 'ok' : 'bad');
+    const hero = $('wdHero');
+    if (hero) hero.dataset.state = heroState;
+    if ($('wdHeroState')) $('wdHeroState').textContent = tr('', { off: 'The Watchdog is off', ok: 'The tunnel is healthy', bad: 'The tunnel is down' }[heroState]);
     const ind = $('wdStatusInd');
     if (ind) {
       ind.className = 'status-indicator ' + (s.enabled ? 'active' : 'offline');
@@ -6823,17 +6828,20 @@ async function loadWatchdog() {
     const hVal = $('wdHealthVal');
     if (hVal) {
       if (!s.enabled) {
-        hVal.innerHTML = '<span class="u-c-dim">○ Disabled</span>';
+        hVal.innerHTML = '<span class="u-c-dim"><span class="dot wd-dot-off"></span>Disabled</span>';
       } else if (s.status === 'up') {
-        hVal.innerHTML = '<span class="u-c-ok">● Online</span>';
+        hVal.innerHTML = '<span class="u-c-ok"><span class="dot up"></span>Online</span>';
       } else {
-        hVal.innerHTML = '<span class="u-c-er">● Offline</span>';
+        hVal.innerHTML = '<span class="u-c-er"><span class="dot down"></span>Offline</span>';
       }
     }
     const hDet = $('wdHealthDetail');
-    if (hDet) hDet.textContent = s.check_result || s.status;
+    if (hDet) hDet.textContent = s.check_result || s.status || tr('', 'Not checked yet');
+    const fails = s.consec_fails || 0, limit = s.fail_threshold || 2;
     const fVal = $('wdFailsVal');
-    if (fVal) fVal.textContent = (s.consec_fails || 0) + ' / ' + (s.fail_threshold || 2);
+    if (fVal) fVal.textContent = fails + ' / ' + limit;
+    const pips = $('wdPips');
+    if (pips) pips.innerHTML = Array.from({ length: limit }, (_, i) => '<i class="' + (i < fails ? (fails >= limit ? 'full' : 'on') : '') + '"></i>').join('');
     const lVal = $('wdLastCheckVal');
     if (lVal) lVal.textContent = s.last_check || 'Never';
 
@@ -6982,7 +6990,7 @@ async function loadWatchdog() {
         eList.innerHTML = '';
         s.recent_events.forEach(ev => {
           const item = document.createElement('div');
-          item.className = 'wd-event-item';
+          item.className = 'wd-event-item ' + (ev.code === 'E-WD-00' ? 'ok' : 'err');
           item.innerHTML = `
             <span class="wd-event-time">${esc(ev.time)}</span>
             <span class="wd-event-detail">${esc(ev.detail || ev.code)}</span>
