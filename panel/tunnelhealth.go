@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -137,12 +138,29 @@ func thBinary(engine, unit string) string {
 	return "frps"
 }
 
+// thHubHosts is where a hub-side relay's forwarded ports can be reached. A
+// relay the cluster bound to a private address (lb-binds) listens only there,
+// nothing is on loopback, so that address comes first; loopback stays as the
+// fallback for relays on 0.0.0.0.
+func thHubHosts(unit string) []string {
+	hosts := []string{}
+	if b, err := os.ReadFile(lbBindsFile()); err == nil {
+		for _, ln := range strings.Split(string(b), "\n") {
+			if f := strings.Fields(ln); len(f) == 2 && f[0] == unit && net.ParseIP(f[1]) != nil {
+				hosts = append(hosts, f[1])
+				break
+			}
+		}
+	}
+	return append(hosts, "127.0.0.1")
+}
+
 // thTargets lists the base tunnel (when present) and every peer from one
-// snapshot. Hub-side checks reach forwarded ports on loopback; on a spoke the
-// base tunnel's ports live on the hub.
+// snapshot. Hub-side checks reach forwarded ports on the relay's private
+// address or loopback (thHubHosts); on a spoke the base tunnel's ports live
+// on the hub.
 func thTargets(s *HubSnapshot) []thTarget {
 	var out []thTarget
-	hub := []string{"127.0.0.1"}
 	add := func(l peerLive, role, unit string, hosts []string, ctrl int) {
 		t := thTarget{id: l.ID, name: l.Name, role: role, unit: unit, svcUp: l.FrpUp, linked: l.Linked,
 			icmpOK: l.ICMPOK, latMs: l.LatencyMs, latKind: l.LatencyKind, ctrlPort: ctrl, ports: l.Ports, hosts: hosts,
@@ -155,7 +173,7 @@ func thTargets(s *HubSnapshot) []thTarget {
 		out = append(out, t)
 	}
 	if s.Main != nil {
-		add(*s.Main, "hub", s.Local.FrpSvc, hub, s.Main.FrpPort)
+		add(*s.Main, "hub", s.Local.FrpSvc, thHubHosts(s.Local.FrpSvc), s.Main.FrpPort)
 	} else if strings.HasPrefix(s.Local.Role, "foreign") && s.Local.FrpSvc != "" {
 		st := s.Local
 		var hosts []string
@@ -176,7 +194,7 @@ func thTargets(s *HubSnapshot) []thTarget {
 		add(l, "spoke", st.FrpSvc, hosts, st.BindPort)
 	}
 	for _, p := range s.Peers {
-		add(p, "peer", p.FrpsSvc, hub, p.FrpPort)
+		add(p, "peer", p.FrpsSvc, thHubHosts(p.FrpsSvc), p.FrpPort)
 	}
 	return out
 }

@@ -374,3 +374,18 @@ func TestTunnelHealthSwitchHook(t *testing.T) {
 		t.Fatal("invalid engine must still be rejected")
 	}
 }
+
+func TestThHubHostsUsesLBBind(t *testing.T) {
+	old := configDir
+	configDir = t.TempDir()
+	defer func() { configDir = old }()
+	if err := os.WriteFile(lbBindsFile(), []byte("frps 169.254.77.1\nfrps-1 169.254.77.2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := thHubHosts("frps-1"); len(got) != 2 || got[0] != "169.254.77.2" || got[1] != "127.0.0.1" {
+		t.Fatalf("bound relay: got %v", got)
+	}
+	if got := thHubHosts("frps-7"); len(got) != 1 || got[0] != "127.0.0.1" {
+		t.Fatalf("unbound relay: got %v", got)
+	}
+}
