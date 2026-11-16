@@ -3,6 +3,13 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## v3.1.4 — 2026-11-16
+
+**The Telegram bot says why it was refused.** Run `hashem update` on every server, the central first.
+
+- **Telegram: the reason reaches you.** A wrong bot token now shows "Telegram said: Unauthorized" and a wrong chat id "chat not found", in the Test Alert button and in the alerts the panel sends itself. Before, only "HTTP 401" or "error: 404" showed. The token stays hidden in the message.
+- **Telegram: a refused send is no longer a "route" error.** Every failed test was filed as "telegram route unreachable" because the script's own hint says "route". That code now appears only when the Via Tunnel route never reached Telegram.
+
 ## v3.1.3 — 2026-11-16
 
 **A New tunnel form for the Nodes page, a Watchdog that trusts traffic over ping, and a few fixes.** Run `hashem update` on every server, the central first.
