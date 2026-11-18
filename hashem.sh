@@ -979,6 +979,41 @@ is_valid_port() {
     [[ "$1" =~ ^[0-9]+$ ]] && ((10#$1 >= 1 && 10#$1 <= 65535))
 }
 
+# expand_ports "443, 1051-1060 2083" -> "443 1051 1052 ... 1060 2083". FRP
+# forwards a port to the same port on the other server, so every port of a
+# range becomes its own proxy. Bad entries are dropped, a repeat is kept once,
+# and the list stops at 1000 ports (the panel's limit) with a warning.
+expand_ports() {
+    local __in=${1:-} __t __lo __hi __n __out="" __count=0 __max=1000
+    local -a __toks
+    local -A __seen=()
+    read -ra __toks <<< "${__in//,/ }"
+    for __t in "${__toks[@]}"; do
+        if [[ "$__t" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            __lo=${BASH_REMATCH[1]} __hi=${BASH_REMATCH[2]}
+            is_valid_port "$__lo" && is_valid_port "$__hi" || continue
+            __lo=$((10#$__lo)) __hi=$((10#$__hi))
+            ((__lo < __hi)) || continue
+        elif is_valid_port "$__t"; then
+            __lo=$((10#$__t)) __hi=$__lo
+        else
+            continue
+        fi
+        for ((__n = __lo; __n <= __hi; __n++)); do
+            [[ -n "${__seen[$__n]:-}" ]] && continue
+            if ((__count >= __max)); then
+                echo -e "${YELLOW:-}[!] More than ${__max} ports: only the first ${__max} are forwarded.${NC:-}" >&2
+                echo "${__out# }"
+                return 0
+            fi
+            __seen[$__n]=1
+            __out="$__out $__n"
+            __count=$((__count + 1))
+        done
+    done
+    echo "${__out# }"
+}
+
 panel_tls_issue() { # $1=domain [$2=email, "-" = none] — Let's Encrypt for the panel
     local DOMAIN=${1:-} EMAIL=${2:-}
     [[ -z "$DOMAIN" ]] && read -r -p "Panel domain (e.g. panel.example.com, must point to this server): " DOMAIN
@@ -1854,14 +1889,10 @@ prompt_token() { # $1=varname $2=label $3=default (empty accepts default)
 prompt_ports() { # $1=varname $2=label — at least one valid port
     local __var=$1 __label=$2 __in __ok p
     while true; do
-        read -p "$__label (e.g. 443, 2083, 8080): " __in
-        __ok=""
-        for p in $(echo "$__in" | tr ',' ' '); do
-            is_valid_port "$p" && __ok="$__ok $((10#$p))"
-        done
-        __ok=$(echo "$__ok" | xargs)
+        read -p "$__label (e.g. 443, 2083, 1051-1060): " __in
+        __ok=$(expand_ports "$__in")
         if [[ -n "$__ok" ]]; then printf -v "$__var" '%s' "$__ok"; return 0; fi
-        echo -e "${RED}[!] Enter at least one valid port (1-65535).${NC}"
+        echo -e "${RED}[!] Enter at least one valid port (1-65535) or range (1051-1060).${NC}"
     done
 }
 
@@ -4196,7 +4227,8 @@ frps_wss_front_remove() {
 setup_iran_server_noninteractive() {
     local IP_IRAN=$1 IP_FOREIGN=$2 BIND_PORT=$3 TOKEN=$4
     local LOCAL_GRE=${5:-$IRAN_GRE_IP} PEER_GRE=${6:-$FOREIGN_GRE_IP}
-    local PORTS_CLEANED="${7:-}"
+    local PORTS_CLEANED
+    PORTS_CLEANED=$(expand_ports "${7:-}")
     local FRP_TRANSPORT="${8:-tcp}"
     
     log_msg "tunnel" "INFO" "Starting IRAN server setup: GRE ${IP_IRAN} <-> ${IP_FOREIGN}, FRP port: ${BIND_PORT}"
@@ -4373,7 +4405,8 @@ setup_foreign_server_noninteractive() {
 # Called by the interactive menu, the CLI, and (via CLI) the web panel.
 _setup_foreign_full() {
     local IP_FOREIGN=$1 IP_IRAN=$2 SERVER_PORT=$3 TOKEN=$4
-    local LOCAL_GRE=$5 PEER_GRE=$6 PORTS_CLEANED=$7
+    local LOCAL_GRE=$5 PEER_GRE=$6 PORTS_CLEANED
+    PORTS_CLEANED=$(expand_ports "$7")
     local RELAY_IP=${8:-}
     local PROXY_PROTOCOL=${9:-off}
     local FRP_TRANSPORT=${10:-tcp}
@@ -5248,11 +5281,8 @@ cli_add_peer() {
         echo -e "${RED}[!] Foreign IP ${REMOTE_PUB} is already used by another tunnel. You cannot add multiple tunnels to the exact same server.${NC}"; return 1
     fi
     [[ -n "$TOKEN" ]] || { echo -e "${RED}[!] --token is required (generate one per peer).${NC}"; return 1; }
-    local CLEANED="" p
-    for p in $(echo "$PORTS" | tr ',' ' '); do
-        is_valid_port "$p" && CLEANED="$CLEANED $((10#$p))"
-    done
-    CLEANED=$(echo "$CLEANED" | xargs)
+    local CLEANED
+    CLEANED=$(expand_ports "$PORTS")
     [[ -n "$CLEANED" ]] || { echo -e "${RED}[!] --ports needs at least one valid port.${NC}"; return 1; }
     peer_init; peer_require_py || return 1
     peer_sweep_orphans
@@ -11284,11 +11314,8 @@ cli_setup_foreign() {
     validate_setup_common "$LOCAL_PUB" "$REMOTE_PUB" "$FRP_PORT" "$LOCAL_GRE" || return 1
     is_valid_ip "$PEER_GRE" || { echo -e "${RED}[!] Invalid peer GRE IP: '$PEER_GRE'${NC}"; return 1; }
     [[ -n "$TOKEN" ]] || { echo -e "${RED}[!] --token is required (copy it from the Iran side).${NC}"; return 1; }
-    local CLEANED="" p
-    for p in $(echo "$PORTS" | tr ',' ' '); do
-        is_valid_port "$p" && CLEANED="$CLEANED $((10#$p))"
-    done
-    CLEANED=$(echo "$CLEANED" | xargs)
+    local CLEANED
+    CLEANED=$(expand_ports "$PORTS")
     if [[ -z "$CLEANED" ]]; then
         # Bundle had empty ports segment — non-interactive path cannot prompt;
         # the panel must always pass --ports explicitly when bundle has none.
@@ -11712,7 +11739,7 @@ cli_bagher() {
                 ssh-keygen -t ed25519 -N "" -f /root/.ssh/hashem-fwd -C "hashem-ssh-carrier" >/dev/null 2>&1
             fi
             local PUBKEY=$(cat /root/.ssh/hashem-fwd.pub)
-            IFS=',' read -ra PORT_ARR <<< "$PORTS"
+            read -ra PORT_ARR <<< "$(expand_ports "$PORTS")"
 
             local PORT_OPT=""
             [[ "$SSH_PORT" != "22" && -n "$SSH_PORT" ]] && PORT_OPT="-p $SSH_PORT"

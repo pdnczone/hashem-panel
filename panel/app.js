@@ -9121,6 +9121,7 @@ document.addEventListener('keydown', e => {
 let _editPortsPeerId = null;
 let _editPortsList   = [];
 let _editPeerBundle  = '';
+let _editPeerEngine  = 'frp';
 
 function openEditPeer(peerId) {
   _editPortsPeerId = peerId;
@@ -9159,6 +9160,10 @@ function openEditPeer(peerId) {
   }
 
   _editPortsList = [...ports];
+  _editPeerEngine = engine;
+  if ($('editPortsNew')) {
+    $('editPortsNew').placeholder = editPortsBackhaul() ? 'e.g. 8080, 10000-10050, 2083=8443' : 'e.g. 443, 1051-1060';
+  }
 
   $('editPortsTitle').textContent = 'Edit Tunnel \u2014 ' + (name || tr('', 'Main tunnel'));
   $('editPortsSub').textContent   = tr('', 'Rename the tunnel or change its foreign IP and forwarded ports. To change how it travels, use Swap carrier.');
@@ -9213,50 +9218,60 @@ function removeEditPort(port) {
   renderEditPortsChips();
 }
 
+function editPortsBackhaul() {
+  return _editPeerEngine === 'backhaul' || _editPeerEngine === 'gre-backhaul';
+}
+
+// editPortEntryErr checks one forwarded-port entry the way the server does.
+// Backhaul takes 443, 10000-10050, 2083=8443 and 10000-10050=443, with an
+// optional IPv4: before either side. FRP forwards a port to the same port on
+// the other server, so it takes 443 and ranges like 1051-1060 (every port of
+// the range is forwarded). '' when the entry is fine.
+function editPortEntryErr(val, backhaul) {
+  const v4 = '(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)(?:\\.(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)){3}:)?';
+  const m = backhaul
+    ? val.match(new RegExp('^' + v4 + '(\\d{1,5})(?:-(\\d{1,5}))?(?:=' + v4 + '(\\d{1,5}))?$'))
+    : val.match(/^(\d{1,5})(?:-(\d{1,5}))?$/);
+  if (!m) {
+    return backhaul
+      ? 'Enter a port (8080), a range (10000-10050) or a mapping (2083=8443), with an optional IP: before either side.'
+      : 'FRP forwards a port to the same port: enter 443 or a range like 1051-1060. Mappings and IP: need Backhaul.';
+  }
+  const ok = n => n === undefined || (Number(n) >= 1 && Number(n) <= 65535);
+  if (!ok(m[1]) || !ok(m[2]) || !ok(m[3])) return 'Port must be between 1 and 65535.';
+  if (m[2] !== undefined && Number(m[1]) >= Number(m[2])) return 'Invalid port range: start must be less than end (1-65535).';
+  if (!backhaul && m[2] !== undefined && Number(m[2]) - Number(m[1]) + 1 > 1000) return 'FRP forwards at most 1000 ports: use a smaller range.';
+  return '';
+}
+
 function addEditPort() {
   const inp    = $('editPortsNew');
   const warnEl = $('editPortsWarn');
-  const val    = inp.value.trim();
   warnEl.classList.add('hidden');
-  const portRe = /^(\d{1,5}|\d{1,5}-\d{1,5}|\d{1,5}=\d{1,5})$/;
-  if (!portRe.test(val)) {
-    warnEl.textContent = 'Enter a valid port (e.g. 8080), range (10000-10050), or mapping (2083=8443).';
+  const warn = msg => {
+    warnEl.textContent = msg;
     warnEl.classList.remove('hidden');
     inp.focus();
+  };
+  // one entry or several: "443, 1051-1060 2083"
+  const entries = inp.value.trim().split(/[\s,]+/).filter(Boolean);
+  if (!entries.length) {
+    warn(editPortEntryErr('', editPortsBackhaul()));
     return;
   }
-  if (val.includes('-')) {
-    const [s, e] = val.split('-').map(Number);
-    if (s < 1 || s > 65535 || e < 1 || e > 65535 || s >= e) {
-      warnEl.textContent = 'Invalid port range: start must be less than end (1-65535).';
-      warnEl.classList.remove('hidden');
-      inp.focus();
-      return;
-    }
-  } else if (val.includes('=')) {
-    const [s, e] = val.split('=').map(Number);
-    if (s < 1 || s > 65535 || e < 1 || e > 65535) {
-      warnEl.textContent = 'Invalid port mapping: ports must be 1-65535.';
-      warnEl.classList.remove('hidden');
-      inp.focus();
-      return;
-    }
-  } else {
-    const n = Number(val);
-    if (n < 1 || n > 65535) {
-      warnEl.textContent = 'Port must be between 1 and 65535.';
-      warnEl.classList.remove('hidden');
-      inp.focus();
+  for (const val of entries) {
+    const err = editPortEntryErr(val, editPortsBackhaul());
+    if (err) {
+      warn('"' + val + '": ' + err);
       return;
     }
   }
-  if (_editPortsList.includes(val)) {
-    warnEl.textContent = 'Port/range "' + val + '" is already in the list.';
-    warnEl.classList.remove('hidden');
-    inp.focus();
+  const fresh = entries.filter((v, i) => !_editPortsList.includes(v) && entries.indexOf(v) === i);
+  if (!fresh.length) {
+    warn('Port/range "' + entries[0] + '" is already in the list.');
     return;
   }
-  _editPortsList.push(val);
+  _editPortsList.push(...fresh);
   inp.value = '';
   renderEditPortsChips();
   inp.focus();

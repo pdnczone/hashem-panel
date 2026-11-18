@@ -209,20 +209,67 @@ func peerDuplicateIPClash(remoteIP string, excludeID int) string {
 	return ""
 }
 
-func parsePorts(s string) []int {
-	var out []int
-	seen := map[int]bool{}
-	for _, p := range strings.FieldsFunc(s, func(r rune) bool {
+// maxForwardPorts caps how many ports one list may expand to. FRP makes a tcp
+// and a udp proxy for every port, so a stray 1-65535 would write a frpc.toml
+// with 131070 proxies.
+const maxForwardPorts = 1000
+
+// maxBundleLen fits a setup bundle that carries maxForwardPorts ports.
+const maxBundleLen = 8192
+
+func splitPortFields(s string) []string {
+	return strings.FieldsFunc(s, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '\t' || r == '\n'
-	}) {
-		n, err := strconv.Atoi(strings.TrimSpace(p))
-		if err != nil || n < 1 || n > 65535 || seen[n] {
+	})
+}
+
+// expandPortList reads single ports and A-B ranges ("443, 1051-1060") and
+// returns every port they cover, in order and without repeats. FRP forwards
+// a port to the same port on the other server, so a range becomes one proxy
+// per port. Entries that are neither (a mapping, an IP: prefix, a typo) come
+// back in bad; more than maxForwardPorts ports is an error.
+func expandPortList(s string) (ports []int, bad []string, err error) {
+	seen := map[int]bool{}
+	for _, f := range splitPortFields(s) {
+		lo, hi, ok := portRange(f)
+		if !ok {
+			bad = append(bad, f)
 			continue
 		}
-		seen[n] = true
-		out = append(out, n)
+		for p := lo; p <= hi; p++ {
+			if seen[p] {
+				continue
+			}
+			if len(ports) == maxForwardPorts {
+				return ports, bad, fmt.Errorf("more than %d ports: forward a smaller range", maxForwardPorts)
+			}
+			seen[p] = true
+			ports = append(ports, p)
+		}
 	}
-	return out
+	return ports, bad, nil
+}
+
+// portRange reads "443" as 443-443 and "1051-1060" as 1051-1060.
+func portRange(f string) (lo, hi int, ok bool) {
+	a, b, isRange := strings.Cut(strings.TrimSpace(f), "-")
+	if lo, ok = portNum(a); !ok {
+		return 0, 0, false
+	}
+	if !isRange {
+		return lo, lo, true
+	}
+	if hi, ok = portNum(b); !ok || hi <= lo {
+		return 0, 0, false
+	}
+	return lo, hi, true
+}
+
+// parsePorts is expandPortList for callers that skip what they cannot use:
+// bad entries are dropped and the list stops at maxForwardPorts.
+func parsePorts(s string) []int {
+	ports, _, _ := expandPortList(s)
+	return ports
 }
 
 // isValidPortOrRangeOrMapping accepts the port entries the Backhaul core
@@ -301,6 +348,40 @@ func parseRawPorts(s string) []string {
 		}
 	}
 	return out
+}
+
+// expandNumericPorts returns every listening port of the entries, ranges
+// expanded (the left side of a mapping, without its IP:), up to
+// maxForwardPorts. FRP needs this: it forwards each port on its own.
+func expandNumericPorts(rawPorts []string) []int {
+	var lefts []string
+	for _, rp := range rawPorts {
+		left, _, _ := strings.Cut(rp, "=")
+		if left, ok := stripIPv4Prefix(left); ok {
+			lefts = append(lefts, left)
+		}
+	}
+	return parsePorts(strings.Join(lefts, ","))
+}
+
+// numericPortsFor is the numeric port list a tunnel's engine forwards:
+// Backhaul keeps ranges and mappings in its own config, so the first port of
+// each entry names it; FRP forwards every port of a range.
+func numericPortsFor(engine string, rawPorts []string) []int {
+	if engine == "backhaul" || engine == "gre-backhaul" {
+		return extractNumericPorts(rawPorts)
+	}
+	return expandNumericPorts(rawPorts)
+}
+
+// frpPortEntryErr says why an entry cannot be an FRP forward: FRP serves a
+// port on the same port of the other server and on every address, so a
+// mapping (2083=8443) or an IP: belongs to Backhaul.
+func frpPortEntryErr(entry string) error {
+	if _, _, ok := portRange(entry); ok {
+		return nil
+	}
+	return fmt.Errorf("FRP forwards a port to the same port, so use 443 or a range like 1051-1060; %q (a mapping or an IP:) needs Backhaul", entry)
 }
 
 // extractNumericPorts returns the first listening port of each entry.

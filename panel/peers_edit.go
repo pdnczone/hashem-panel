@@ -229,6 +229,32 @@ func (p *peerPatchRequest) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// patchEngine is the engine whose port rules a patch follows: the one it
+// switches to, else the tunnel's own.
+func patchEngine(id int, requested string) string {
+	if requested != "" {
+		return strings.ToLower(requested)
+	}
+	if id == 0 {
+		if e := localStatus().Engine; e != "" {
+			return e
+		}
+		return "frp"
+	}
+	for _, p := range loadPeers() {
+		if p.ID == id {
+			return peerCarrier(p).Engine
+		}
+	}
+	return "frp"
+}
+
+// patchNumericPorts is the numeric port list stored with a patch's raw
+// ports, read for the tunnel's engine.
+func patchNumericPorts(req peerPatchRequest, engine string) []int {
+	return numericPortsFor(engine, *req.RawPorts)
+}
+
 func handlePeersPatch(w http.ResponseWriter, r *http.Request) {
 	var body peerPatchRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -263,14 +289,31 @@ func handlePeersPatch(w http.ResponseWriter, r *http.Request) {
 
 	// Validate raw ports if provided
 	if body.RawPorts != nil {
+		engine := patchEngine(body.ID, body.Engine)
+		frp := engine != "backhaul" && engine != "gre-backhaul"
 		for _, rp := range *body.RawPorts {
 			if !isValidPortOrRangeOrMapping(rp) {
 				writeAPIError(w, r, "E-PEER-07", fmt.Sprintf("invalid port/range/mapping: %s", rp))
 				return
 			}
+			if frp {
+				if err := frpPortEntryErr(rp); err != nil {
+					writeAPIError(w, r, "E-PEER-07", err.Error())
+					return
+				}
+			}
 		}
-		if body.Ports == nil {
-			extracted := extractNumericPorts(*body.RawPorts)
+		if frp {
+			if _, _, err := expandPortList(strings.Join(*body.RawPorts, ",")); err != nil {
+				writeAPIError(w, r, "E-PEER-07", err.Error())
+				return
+			}
+		}
+		// FRP forwards every port of a range, so its numeric list is read
+		// from the raw entries (the decoder keeps only plain numbers);
+		// Backhaul's config keeps the range and its first port names it.
+		if frp || body.Ports == nil {
+			extracted := numericPortsFor(engine, *body.RawPorts)
 			body.Ports = &extracted
 		}
 	}
@@ -522,7 +565,7 @@ func editPeerDirect(peer *peerRecord, req peerPatchRequest) (string, error) {
 			}
 			if req.RawPorts != nil {
 				peers[i].RawPorts = *req.RawPorts
-				peers[i].Ports = extractNumericPorts(*req.RawPorts)
+				peers[i].Ports = patchNumericPorts(req, peerCarrier(peers[i]).Engine)
 			} else if req.Ports != nil {
 				peers[i].Ports = *req.Ports
 				var rps []string
@@ -582,7 +625,7 @@ func editPeerDirect(peer *peerRecord, req peerPatchRequest) (string, error) {
 		if req.Ports != nil {
 			numList = *req.Ports
 		} else {
-			numList = extractNumericPorts(rawList)
+			numList = numericPortsFor(peerCarrier(*peer).Engine, rawList)
 		}
 
 		if peer.Engine == "backhaul" || peer.Engine == "gre-backhaul" {
@@ -647,7 +690,7 @@ func editMainTunnelDirect(req peerPatchRequest, legacyPeer *peerRecord) (string,
 				}
 				if req.RawPorts != nil {
 					peers[i].RawPorts = *req.RawPorts
-					peers[i].Ports = extractNumericPorts(*req.RawPorts)
+					peers[i].Ports = patchNumericPorts(req, peerCarrier(peers[i]).Engine)
 				} else if req.Ports != nil {
 					peers[i].Ports = *req.Ports
 					var rps []string

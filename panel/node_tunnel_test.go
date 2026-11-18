@@ -582,8 +582,16 @@ func TestNodeTunBundleTransport(t *testing.T) {
 	if err := nodeTunBundleCheck(MakeBundle("198.51.100.1", 7001, "10.12.0.2", "10.12.0.1", "tok", []int{443}, "kcp"), q, d); err == nil {
 		t.Fatal("another transport")
 	}
-	if (&nodeTunReq{Server: 1, Client: 0, Engine: "frp", Ports: "1000-1002"}).check() == nil {
-		t.Fatal("a port range for FRP")
+	if (&nodeTunReq{Server: 1, Client: 0, Engine: "frp", Ports: "8080=80"}).check() == nil {
+		t.Fatal("a port mapping for FRP")
+	}
+	// an FRP range is every port of it, in the bundle as in the plan
+	qr := nodeTunReq{Engine: "frp", Ports: "443, 1000-1002"}
+	if err := nodeTunBundleCheck(MakeBundle("198.51.100.1", 7001, "10.12.0.2", "10.12.0.1", "tok", []int{443, 1000, 1001, 1002}), qr, d); err != nil {
+		t.Fatalf("an FRP range: %v", err)
+	}
+	if err := nodeTunBundleCheck(MakeBundle("198.51.100.1", 7001, "10.12.0.2", "10.12.0.1", "tok", []int{443, 1000}), qr, d); err == nil {
+		t.Fatal("a bundle with part of the range")
 	}
 	if err := (&nodeTunReq{Server: 0, Client: 0, Engine: "backhaul", Ports: "8080=80"}).check(); err == nil || !strings.Contains(err.Error(), "two different") {
 		t.Fatalf("backhaul mapping: %v", err)
@@ -615,9 +623,11 @@ func TestNodeTunUDPAndPorts(t *testing.T) {
 			t.Errorf("%+v: %v", c.q, got)
 		}
 	}
-	for ports, ok := range map[string]bool{"443 2083": true, "443, 443": true, "443,2083": true, "1000-1002": false, "8080=80": false} {
+	// FRP takes single ports and ranges; a mapping or an IP: is Backhaul's
+	for ports, ok := range map[string]bool{"443 2083": true, "443, 443": true, "443,2083": true, "1000-1002": true,
+		"443, 1051-1060": true, "8080=80": false, "1-2000": false} {
 		err := (&nodeTunReq{Server: 0, Client: 1, Engine: "frp", Ports: ports}).check()
-		if got := err == nil || !strings.Contains(err.Error(), "single port"); got != ok {
+		if got := err == nil || !strings.Contains(err.Error(), "ports:"); got != ok {
 			t.Errorf("%q: %v", ports, err)
 		}
 	}

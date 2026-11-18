@@ -61,7 +61,7 @@ var errCatalog = map[string]errInfo{
 	"E-SETUP-06": {400, "invalid peer GRE IP", "Use the suggested 10.x address or another private IPv4."},
 	"E-SETUP-07": {400, "frp port must be 1-65535", "Use any free port 1-65535 (default is random 20000-60000)."},
 	"E-SETUP-08": {400, "token from Iran side is required", "Copy the token shown on the Iran panel into this form — or paste the whole hsh1_... bundle (it fills every field)."},
-	"E-SETUP-09": {400, "token too long (max 128, bundles longer than 256 rejected)", "Paste the token/bundle as-is; do not add extra text."},
+	"E-SETUP-09": {400, "token too long (max 128, bundles longer than 8192 rejected)", "Paste the token/bundle as-is; do not add extra text."},
 	"E-SETUP-10": {400, "at least one reverse port is required (e.g. 443, 2083)", "Add the ports clients will connect to. If your bundle has no ports (e.g. ends with __fou...), enter ports manually in the Reverse Ports field."},
 	// peers
 	"E-PEER-01":     {409, "peer table full (maximum foreign servers reached)", "Remove one peer card before adding another, or increase GRE_MAX_PEERS in environment variables."},
