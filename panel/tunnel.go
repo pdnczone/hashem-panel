@@ -944,6 +944,11 @@ func localStatusFrom(v *hostView) tunnelStatus {
 			}
 		}
 	}
+	// An Iran server's first FRP tunnel: its proxies live in the foreign
+	// frpc.toml, so take the ports frps listens on, less its own
+	if st.FrpSvc == "frps" && len(st.ProxyPorts) == 0 && len(v.frpsListen) > 0 {
+		st.ProxyPorts = frpsProxyPorts(v.frpsListen, filepath.Join(frpDir, "frps.toml"), st.BindPort)
+	}
 	// de-duplicate proxy ports (each proxy has local+remote for the same port)
 	st.ProxyPorts = uniqInts(st.ProxyPorts)
 	// ICMP to the GRE peer inner ip (metadata only; see health.go)

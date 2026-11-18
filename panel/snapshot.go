@@ -75,6 +75,7 @@ type hostView struct {
 	tunnelShow string
 	tunnelOK   bool
 	inner      map[string]string // ifname -> first inet CIDR
+	frpsListen []int             // TCP ports the main frps unit listens on (frpsUnitPorts)
 	active     map[string]bool   // unit -> active
 	devData    string            // raw /proc/net/dev
 	devAt      time.Time         // when devData and the carrier counters were read
@@ -232,6 +233,17 @@ func collectHost(recs []peerRecord, prev map[string]devCounters) *hostView {
 			v.active[u] = strings.TrimSpace(string(o)) == "active"
 		}
 	})
+	// The first tunnel's FRP ports on an Iran server: its proxies are in the
+	// foreign frpc.toml, so frps.toml lists none and the Tunnel card and
+	// Details showed "—". What frps listens on is the answer. Only while the
+	// unit runs; one small read (listening sockets, not connections).
+	if v.active["frps"] {
+		timedStep("frps_listen", func() {
+			if out, err := runCmdTimeoutOut(5*time.Second, "ss", "-Htlnp"); err == nil {
+				v.frpsListen = frpsUnitPorts(string(out), "frps.service")
+			}
+		})
+	}
 	timedStep("netdev", func() {
 		// The interface and the port counters are read together and stamped
 		// with one time, so every speed is bytes over the time between two reads.
