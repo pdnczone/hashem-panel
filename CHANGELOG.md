@@ -3,7 +3,9 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
-## Unreleased
+## v3.1.5 — 2026-11-18
+
+**Pick a tunnel for Telegram and Cloudflare, FRP port ranges, a clearer dashboard.** Run `hashem update` on every server, the central first: the tunnel route needs the new panel on the foreign servers too.
 
 - **Dashboard: the big latency is the average of all servers.** With more than one server the hero shows the average ping of every server (the main tunnel included, a server that does not answer left out) and a note such as "average of 2 / 3 servers". A single server shows its own ping as before. The Details card hint is now 12px.
 - **Dashboard: a clearer, more exact Details card.** Two columns (three or four when the card is wide) instead of three cramped ones, so no card is left alone on a row. Every address says whose it is: "This server" and the "Iran server" / "Foreign server" public IP, the GRE tunnel endpoints (this side, other side) and the inner addresses of both sides (the other side is shown too), where the old card showed endpoints under the labels "Local GRE IP" and "Interface". The forwarded ports show once, as chips with a count, not twice. The engine port says whether it listens or connects ("Iran server port" on a foreign server), latency is shown, and "Active since" is a duration ("1d 21h") with the date on hover. IPs and ports are copy pills; a card header shows a green or red dot; Autopilot "Off" is a neutral pill. Long IPv6 addresses wrap instead of being cut, and it works at phone width.
