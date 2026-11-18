@@ -2801,44 +2801,79 @@ async function refreshDash() {
     renderDashPeers(peers);
 
     // Details: what is configured, and nothing about parts that do not exist.
-    const dval = v => `<span class="det-v">${esc(v ?? NA)}</span>`;
-    const dmono = v => (!v || v === NA)
-      ? `<span class="det-v">—</span>`
-      : `<span class="u-flex u-ai-c u-gap-8 u-minw-0"><span class="det-v mono">${esc(v)}</span><button class="det-copy" data-copy="${esc(v)}" title="Copy" aria-label="Copy">⧉</button></span>`;
-    const dbadge = (txt, cls) => `<span class="det-v"><span class="badge ${cls || ''}"><span class="dot"></span>${esc(txt)}</span></span>`;
-    const detCard = (icon, title, rows) =>
-      `<div class="det-card"><div class="det-head"><span class="det-ico">${icon}</span>${esc(title)}</div><div class="det-rows">${rows}</div></div>`;
-    const detRow = (k, cell) => `<div class="det-row"><span class="det-k">${esc(k)}</span>${cell}</div>`;
-    const roleCell = iran ? dbadge(tr('', 'Iran server'), 'ok') : foreign ? dbadge(tr('', 'Foreign server'), '') : dval(tr('', 'Not configured'));
-    const bindPort = (f.port && f.port !== NA) ? String(f.port) : '';
-    const proxyPorts = (f.proxy_ports || []).filter(p => p && String(p) !== bindPort);
-    const isFrpc = (f.svc === 'frpc') || foreign;
-    const portLabel = isFrpc ? tr('lbl_control_port', 'Server Port') : tr('lbl_bind_port', 'Bind Port');
-    const proxyList = (f.proxy_ports && f.proxy_ports.length) ? f.proxy_ports.join(', ') : ((f.proxies || []).join(', ') || '—');
+    // Each value says whose it is (this server / the other one), and the same
+    // fact is shown once: the forwarded ports sit in the Server card only.
+    const ICO_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>';
+    const ICO_TICK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>';
     const ICO_BOLT = '<svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>';
-    const serverCard = detCard(ICO_SRV, tr('card_server_title', 'Server & Role'), detRow(tr('lbl_public_ip', 'Public IP'), dmono(d.local_pub)) + detRow(tr('lbl_role', 'Role'), roleCell)
-      + (unset ? '' : detRow(tr('lbl_forwarded_ports', 'Forwarded'), dval(proxyList))));
-    let det;
+    const noVal = v => !v || v === NA;
+    const dval = v => `<span class="det-v">${esc(v ?? NA)}</span>`;
+    const dpill = v => noVal(v)
+      ? `<span class="det-v det-na">—</span>`
+      : `<span class="det-pill"><span class="det-v mono">${esc(v)}</span><button type="button" class="det-copy" data-copy="${esc(v)}" title="${esc(tr('', 'Copy'))}" aria-label="${esc(tr('', 'Copy'))}">${ICO_COPY}</button></span>`;
+    const dbadge = (txt, cls) => `<span class="det-v"><span class="badge ${cls || ''}"><span class="dot"></span>${esc(txt)}</span></span>`;
+    const dchips = list => `<span class="det-chips">${list.map(p => `<span class="det-chip">${esc(String(p))}</span>`).join('')}</span>`;
+    const detCard = (icon, title, rows, state) =>
+      `<div class="det-card"><div class="det-head"><span class="det-ico">${icon}</span><span class="det-title">${esc(title)}</span>${state ? `<span class="det-dot ${state}" aria-hidden="true"></span>` : ''}</div><div class="det-rows">${rows}</div></div>`;
+    const detRow = (k, cell, hint) => `<div class="det-row"><span class="det-k">${esc(k)}${hint ? `<span class="det-hint">${esc(hint)}</span>` : ''}</span>${cell}</div>`;
+    const detStack = (k, count, cell) => `<div class="det-row stack"><span class="det-k">${esc(k)}${count ? `<span class="det-count">${count}</span>` : ''}</span>${cell}</div>`;
+    const roleCell = iran ? dbadge(tr('', 'Iran server'), 'ok') : foreign ? dbadge(tr('', 'Foreign server'), 'info') : dbadge(tr('', 'Not configured'), 'dim');
+    const otherLabel = iran ? tr('', 'Foreign server') : tr('', 'Iran server');
+    const otherIP = d.remote_pub || g.peer || '';
+    const bindPort = (f.port && f.port !== NA) ? String(f.port) : '';
+    const fwd = ((f.proxy_ports && f.proxy_ports.length) ? f.proxy_ports : (f.proxies || [])).filter(p => p !== '' && p != null);
+    const innerPeer = c => { const m = /^(\d+\.\d+\.\d+)\.(\d+)(?:\/\d+)?$/.exec(c || ''); if (!m) return ''; const n = +m[2]; return m[1] + '.' + (n % 2 === 0 ? n - 1 : n + 1); };
+    const serverCard = detCard(ICO_SRV, tr('card_server_title', 'Server & Role'),
+      detRow(tr('', 'Role'), roleCell)
+      + detRow(tr('', 'This server'), dpill(d.local_pub), tr('', 'public IP'))
+      + (otherIP ? detRow(otherLabel, dpill(otherIP), tr('', 'public IP')) : '')
+      + (!unset && fwd.length ? detStack(tr('lbl_forwarded_ports', 'Forwarded'), fwd.length, dchips(fwd)) : ''));
+    let det, n = 1;
     if (unset) {
       det = serverCard + `<div class="det-empty">${esc(tr('', 'Tunnel, engine and carrier details appear here after Setup.'))}</div>`;
     } else {
-      const engCell = f.up ? dbadge(tr('status_running', 'Running'), 'ok') : dbadge(tr('', 'Stopped'), 'err');
-      const failCell = d.auto_failover ? dbadge(tr('', 'On'), 'ok') : dbadge(tr('', 'Off'), '');
+      const parts = [serverCard];
+      if (g.exists || g.local || g.peer || g.inner) {
+        const ip2 = innerPeer(g.inner);
+        parts.push(detCard(ICO_GRE, tr('card_gre_title', 'GRE Tunnel'),
+          detRow(tr('', 'Interface'), dbadge(gre_name(g), g.exists ? 'ok' : 'err'))
+          + detRow(tr('', 'This side'), dpill(g.local), tr('', 'tunnel endpoint'))
+          + detRow(tr('', 'Other side'), dpill(g.peer), tr('', 'tunnel endpoint'))
+          + detRow(tr('', 'This side'), dpill(g.inner), tr('', 'inner address'))
+          + (ip2 ? detRow(tr('', 'Other side'), dpill(ip2), tr('', 'inner address')) : ''), g.exists ? 'ok' : 'err'));
+      }
+      if (f.svc || f.up || f.port) {
+        const lat = (typeof d.latency_ms === 'number' && d.latency_ms > 0) ? d.latency_ms : 0;
+        const latKind = { icmp: 'ping', tcp: 'TCP session', bagher: 'Bagher' }[d.latency_kind] || '';
+        const mm = /(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d) UTC/.exec(u.frp_since || '');
+        const t0 = mm ? Date.parse(mm[1] + 'T' + mm[2] + 'Z') : NaN;
+        const runFor = f.up && u.frp_since
+          ? (isNaN(t0) ? detRow(tr('lbl_uptime_since', 'Since'), dval(u.frp_since))
+            : detRow(tr('', 'Running for'), `<span class="det-v" title="${esc(u.frp_since)}">${esc(fmtSecs(Math.max(0, Math.floor((Date.now() - t0) / 1000))))}</span>`)) : '';
+        parts.push(detCard(ICO_FRP, tr('card_frp_title', 'Tunnel Engine'),
+          detRow(tr('x007', 'Engine'), dval(engine || f.svc || '—'))
+          + detRow(tr('lbl_frp_status', 'Status'), f.up ? dbadge(tr('status_running', 'Running'), 'ok') : dbadge(tr('', 'Stopped'), 'err'))
+          + detRow(foreign ? tr('', 'Iran server port') : tr('', 'Control port'), bindPort ? dpill(bindPort) : dval('—'), foreign ? tr('', 'it connects to') : tr('', 'it listens on'))
+          + (lat ? detRow(tr('', 'Latency'), `<span class="det-v">${esc(lat.toFixed(lat < 10 ? 1 : 0))} ms${latKind ? `<span class="det-hint">${esc(tr('', latKind))}</span>` : ''}</span>`) : '')
+          + runFor, f.up ? 'ok' : 'err'));
+      }
+      const failCell = d.auto_failover ? dbadge(tr('', 'On'), 'ok') : dbadge(tr('', 'Off'), 'dim');
       const diagCell = d.last_error
         ? `<span class="badge err" title="${esc(d.last_error.detail || '')}"><span class="dot"></span>${esc(d.last_error.code || 'ERR')} (${esc(String(d.last_error.time || '').slice(11, 19))})</span>`
-        : dbadge(tr('x006', 'No recent errors'), on ? 'ok' : '');
-      det = serverCard
-        + ((g.exists || g.local || g.peer || g.inner) ? detCard(ICO_GRE, tr('card_gre_title', 'GRE Tunnel'), detRow(tr('lbl_gre_local', 'Local'), dmono(g.local)) + detRow(tr('lbl_gre_peer', 'Peer'), dmono(g.peer)) + detRow(tr('lbl_gre_interface', 'Inner'), dmono(g.inner))) : '')
-        + ((f.svc || f.up || f.port) ? detCard(ICO_FRP, tr('card_frp_title', 'Tunnel Engine'), detRow(tr('x007', 'Engine'), dval(engine || f.svc || '—')) + detRow(tr('lbl_frp_status', 'Status'), engCell) + detRow(portLabel, bindPort ? dmono(bindPort) : dval('—'))
-          + (proxyPorts.length ? detRow(tr('lbl_tunnel_ports', 'Tunnel Ports'), `<span class="det-v det-ports">${proxyPorts.map(p => `<span class="det-v mono">${esc(String(p))}</span>`).join('')}</span>`) : '')
-          + (u.frp_since ? detRow(tr('lbl_uptime_since', 'Since'), dval(u.frp_since)) : '')) : '')
-        + detCard(ICO_BOLT, tr('', 'Carrier'), detRow(tr('x009', 'Active Carrier'), dmono(String(d.active_carrier || 'direct'))) + detRow(tr('', 'Autopilot'), failCell) + detRow(tr('x011', 'Diagnostics'), diagCell));
+        : dbadge(tr('x006', 'No recent errors'), on ? 'ok' : 'dim');
+      parts.push(detCard(ICO_BOLT, tr('', 'Carrier'),
+        detRow(tr('x009', 'Active Carrier'), dpill(String(d.active_carrier || 'direct')))
+        + detRow(tr('', 'Autopilot'), failCell)
+        + detRow(tr('x011', 'Diagnostics'), diagCell), d.last_error ? 'err' : ''));
+      n = parts.length;
+      det = parts.join('');
     }
+    { const grid = $('dashDetails'); if (grid) grid.dataset.n = String(n); }
     setHTML('dashDetails', det);
     // one-click copy for IP/port pills
     document.querySelectorAll('#dashDetails [data-copy]').forEach(b => { if (!b.dataset.cpBound) { b.dataset.cpBound = '1';
       b.onclick = () => { const v = b.dataset.copy; (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject())
-        .then(() => { b.textContent = '✓'; b.classList.add('ok'); setTimeout(() => { b.textContent = '⧉'; b.classList.remove('ok'); }, 1200); })
+        .then(() => { b.innerHTML = ICO_TICK; b.classList.add('ok'); setTimeout(() => { b.innerHTML = ICO_COPY; b.classList.remove('ok'); }, 1200); })
         .catch(() => toastWarn('copy failed', v)); }; } });
     { const dp = $('detPulse'); if (dp) dp.classList.toggle('off', !on); }
     const ck = d.checked ? new Date(d.checked) : null;
@@ -2846,6 +2881,8 @@ async function refreshDash() {
   } catch(e) { reportErr('dashboard', e); /* keep old values; N/A already default */ return false; }
   return true;
 }
+// gre_name: the GRE interface as shown in the Details card ("missing" when it does not exist).
+function gre_name(g) { return (g.name || 'gre-tunnel') + (g.exists ? '' : ' · ' + tr('', 'missing')); }
 function drawActivityChart(hist, isDown) {
   const cv = $('activityChart');
   if (!cv) return;

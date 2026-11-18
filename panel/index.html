@@ -575,6 +575,40 @@
   .det-row > :last-child { margin-inline-start:auto; max-width:100%; }
   .det-k { font-size:12px; color:var(--dim); font-weight:500; flex:0 1 auto; }
   .det-v.det-ports { flex:1 1 100%; } /* a port list gets its own line */
+  /* Dashboard Details: two columns (three or four when the card is wide), rows split by
+     hairlines, a value always says whose it is, IPs and ports are copy pills, ports are chips. */
+  .det-wrap { container:det / inline-size; }
+  #dashDetails { grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:14px; align-items:stretch; }
+  #dashDetails > .det-card:last-child:nth-child(odd) { grid-column:1 / -1; }
+  @container det (min-width:1020px) { #dashDetails[data-n="3"] { grid-template-columns:repeat(3,minmax(0,1fr)); } #dashDetails[data-n="3"] > .det-card:last-child { grid-column:auto; } }
+  @container det (min-width:1400px) { #dashDetails[data-n="4"] { grid-template-columns:repeat(4,minmax(0,1fr)); } }
+  @container det (max-width:560px) { #dashDetails { grid-template-columns:minmax(0,1fr); } }
+  #dashDetails .det-card { padding:16px 18px 8px; gap:6px; }
+  #dashDetails .det-head { gap:10px; padding-bottom:10px; border-bottom:1px solid var(--ln); font-size:14px; }
+  #dashDetails .det-title { min-width:0; overflow-wrap:anywhere; }
+  .det-dot { margin-inline-start:auto; width:8px; height:8px; border-radius:50%; background:var(--dim); flex:none; }
+  .det-dot.ok { background:var(--ok); box-shadow:0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent); }
+  .det-dot.err { background:var(--er); box-shadow:0 0 0 3px color-mix(in srgb, var(--er) 18%, transparent); }
+  #dashDetails .det-rows { gap:0; }
+  #dashDetails .det-row { padding:10px 0; min-height:44px; flex-wrap:wrap; gap:6px 12px; }
+  #dashDetails .det-row + .det-row { border-top:1px solid color-mix(in srgb, var(--ln) 65%, transparent); }
+  #dashDetails .det-k { display:flex; flex-direction:column; gap:1px; font-size:12.5px; line-height:1.25; white-space:nowrap; }
+  #dashDetails .det-hint { font-size:11px; color:var(--dim); font-weight:400; opacity:.85; }
+  #dashDetails .det-v > .det-hint { margin-inline-start:6px; }
+  #dashDetails .det-row.stack { flex-direction:column; align-items:stretch; gap:9px; }
+  #dashDetails .det-row.stack > :last-child { margin-inline-start:0; }
+  #dashDetails .det-row.stack .det-k { flex-direction:row; align-items:center; gap:8px; }
+  .det-na { color:var(--dim); font-weight:400; }
+  .det-pill { display:inline-flex; align-items:stretch; max-width:100%; background:var(--s2); border:1px solid var(--ln); border-radius:9px; overflow:hidden; transition:border-color .15s ease; }
+  .det-pill:hover { border-color:var(--ln2); }
+  .det-pill .det-v.mono { min-width:0; white-space:normal; overflow-wrap:anywhere; text-align:start; border:0; background:none; border-radius:0; padding:5px 10px; }
+  .det-pill .det-copy { display:grid; place-items:center; min-width:32px; min-height:0; padding:0 8px; border:0; border-inline-start:1px solid var(--ln); border-radius:0; background:transparent; }
+  .det-pill .det-copy svg { width:14px; height:14px; }
+  .det-pill .det-copy:hover { background:var(--ac-soft); color:var(--ac); }
+  .det-pill .det-copy.ok { background:var(--ok-soft); }
+  .det-chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .det-chip { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; font-weight:600; font-variant-numeric:tabular-nums;
+    padding:3px 9px; border-radius:7px; background:var(--s2); border:1px solid var(--ln); color:var(--tx); }
   /* Bagher card: one row per extra foreign server */
   #peer-card-bagher .det-grid { grid-template-columns:repeat(2,1fr); }
   @media (max-width:900px) { #peer-card-bagher .det-grid { grid-template-columns:1fr; } }
@@ -1968,7 +2002,7 @@
               <div id="dashPeersList" role="rowgroup"></div>
             </div>
           </div>
-          <div class="tunnel-card dash-span">
+          <div class="tunnel-card dash-span det-wrap">
             <div class="tc-header">
               <div class="det-head-live">
                 <span class="det-pulse" id="detPulse"></span>

@@ -3616,5 +3616,15 @@ window.FA_TEXT = {
   "Straight out from this server": "مستقیم از همین سرور",
   "A SOCKS5 port saved by an older version": "یک پورت SOCKS5 که نسخه‌ی قدیمی ذخیره کرده بود",
   "No longer on this server": "دیگر روی این سرور نیست",
-  "This server has no tunnels to choose from.": "این سرور تانلی برای انتخاب ندارد."
+  "This server has no tunnels to choose from.": "این سرور تانلی برای انتخاب ندارد.",
+  "public IP": "آی‌پی عمومی",
+  "This side": "این سمت",
+  "Other side": "سمت مقابل",
+  "tunnel endpoint": "سر تونل",
+  "inner address": "آدرس داخلی",
+  "Iran server port": "پورت سرور ایران",
+  "it connects to": "به این پورت وصل می‌شود",
+  "it listens on": "روی این پورت گوش می‌دهد",
+  "Running for": "مدت اجرا",
+  "TCP session": "نشست TCP"
 };

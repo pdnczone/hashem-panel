@@ -170,6 +170,7 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"last_error":      lastErr,
 		"gre": map[string]any{
 			"exists": st.Gre.Exists,
+			"name":   nilIfEmpty(st.Gre.Name),
 			"inner":  nilIfEmpty(st.Gre.Inner),
 			"local":  nilIfEmpty(st.Gre.Local),
 			"peer":   nilIfEmpty(peerOr(st)),
