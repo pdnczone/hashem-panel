@@ -677,3 +677,35 @@ func TestMeshPullStartsAOneWayCopy(t *testing.T) {
 		t.Fatalf("an unknown hub got %d", rec.Code)
 	}
 }
+
+// The first FRP tunnel of an Iran hub has its ports on the foreign server:
+// they are read from what its frps listens on, without its own ports.
+func TestFrpsServedPorts(t *testing.T) {
+	ls := []xrayListener{
+		{Proto: "tcp", Port: 34173, PID: 7}, // bindPort
+		{Proto: "udp", Port: 34174, PID: 7}, // kcpBindPort
+		{Proto: "tcp", Port: 5002, PID: 7},
+		{Proto: "tcp", Port: 5001, PID: 7},
+		{Proto: "udp", Port: 5001, PID: 7},
+		{Proto: "tcp", Port: 7778, PID: 9}, // the panel
+	}
+	got := frpsServedPorts(ls, 7, map[int]bool{34173: true, 34174: true})
+	if len(got) != 2 || got[0] != 5001 || got[1] != 5002 {
+		t.Fatalf("ports %v", got)
+	}
+}
+
+// A tunnel whose ports are not known is a failed step that says why, not a
+// tunnel that silently does not exist.
+func TestRunHubSyncUnknownPorts(t *testing.T) {
+	fake := &fakeSyncHub{list: syncList{Tunnels: []syncTunnel{{Name: "Tunnel · 198.51.100.1", Remote: "198.51.100.1", Engine: "frp"}}}}
+	c, done := twoWay(t, nil, fake)
+	defer done()
+	if err := runHubSync(c, c.Hubs[0], true); err != nil {
+		t.Fatal(err)
+	}
+	st := findStep(syncSnapshot(), "198.51.100.1")
+	if st.State != "failed" || !strings.Contains(st.Detail, "foreign server connected") || len(fake.got) != 0 {
+		t.Fatalf("step %+v", st)
+	}
+}

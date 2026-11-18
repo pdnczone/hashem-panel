@@ -43,6 +43,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"sort"
 	"strconv"
@@ -97,12 +98,21 @@ var syncLocalTunnels = func() []syncTunnel {
 	}
 	var out []syncTunnel
 	for _, l := range s.All() {
-		if l.RemotePub == "" || len(l.Ports) == 0 {
+		if l.RemotePub == "" {
 			continue
 		}
 		engine := l.Engine
 		if engine == "" {
 			engine = "frp"
+		}
+		if len(l.Ports) == 0 && engine == "frp" {
+			// The first FRP tunnel's ports are written on the foreign server
+			// (its frpc.toml), not here: read what its frps serves.
+			svc := l.FrpsSvc
+			if l.ID == mainTunnelID && svc == "" {
+				svc = s.Local.FrpSvc
+			}
+			l.Ports = syncFrpsServed(svc)
 		}
 		t := syncTunnel{Name: l.Name, Remote: l.RemotePub, Engine: engine, Transport: l.Transport,
 			FRPTransport: l.FRPTransport, ProxyProtocol: l.ProxyProtocol, UseEncryption: l.UseEncryption,
@@ -117,6 +127,46 @@ var syncLocalTunnels = func() []syncTunnel {
 		}
 	}
 	return out
+}
+
+// syncFrpsServed is the user ports the FRP server unit svc listens on: every
+// port its process holds but the ones its own config names (bindPort,
+// kcpBindPort, quicBindPort, the dashboard). A port appears only while the
+// foreign server is connected. A var for tests.
+var syncFrpsServed = func(svc string) []int {
+	path, engine := lbConfFor(svc)
+	if engine != "frp" {
+		return nil
+	}
+	out, err := runCmdTimeoutOut(5*time.Second, "systemctl", "show", "-p", "MainPID", "--value", svc)
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || pid <= 0 {
+		return nil
+	}
+	own := map[int]bool{}
+	if data, err := os.ReadFile(path); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			k, v, ok := strings.Cut(line, "=")
+			if ok && strings.Contains(strings.ToLower(k), "port") {
+				if p, err := strconv.Atoi(strings.Trim(strings.TrimSpace(v), `"'`)); err == nil {
+					own[p] = true
+				}
+			}
+		}
+	}
+	return frpsServedPorts(xrayListeners(), pid, own)
+}
+
+// frpsServedPorts picks the ports process pid listens on, without own.
+func frpsServedPorts(ls []xrayListener, pid int, own map[int]bool) []int {
+	var ports []int
+	for _, l := range ls {
+		if l.PID == pid && !own[l.Port] && !hasInt(ports, l.Port) {
+			ports = append(ports, l.Port)
+		}
+	}
+	sort.Ints(ports)
+	return ports
 }
 
 func syncLocalList() syncList {
@@ -643,6 +693,10 @@ func runHubSync(c ClusterConfig, hub HubPeer, both bool) error {
 	for _, t := range list.Tunnels {
 		if known[t.Remote] {
 			step(t, "skipped", "this hub already has a tunnel to it")
+			continue
+		}
+		if len(t.Ports) == 0 && len(t.RawPorts) == 0 {
+			step(t, "failed", hubLabel(hub)+" does not know the ports of this tunnel right now: is the foreign server connected to it? Press the button again when it is")
 			continue
 		}
 		if detail, err := syncOne(c, hub, t); err != nil {
