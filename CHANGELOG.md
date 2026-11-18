@@ -3,7 +3,9 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
-## Unreleased
+## v3.2.0 — 2026-11-18
+
+**Cluster: DNS failover run by one hub, a live map of every tunnel and its traffic, and Iran hubs that sync their tunnels.** Run `hashem update` on every server: each hub must run v3.2.0 for the map to draw its tunnels and for DNS failover and the tunnel sync to work between hubs.
 
 - **Iran server: the first FRP tunnel shows its forwarded ports.** Its ports are written in the foreign server's frpc.toml, so the Iran side showed "—" under Forwarded on the Tunnel tab, in Details and in the dashboard's Tunnels card. The snapshot now takes them from what its frps serves (`syncFrpsServed`, TCP and UDP), read at most once every 30 seconds, and only while the config names none.
 - **Details says which tunnel it shows, and lists the server's other addresses.** On an Iran server with more than one tunnel the Details title reads "First tunnel · <name>", since its cards describe that one. The Server card lists the server's other public IPv4 addresses under "Other IPs" (any of them can be a tunnel's Iran IP in Edit Tunnel) and its global IPv6 addresses on a separate "IPv6" row (used by the 6to4 and 4in6 carriers). Temporary, deprecated and private IPv6 addresses are left out.
