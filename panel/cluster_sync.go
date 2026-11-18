@@ -350,7 +350,7 @@ func handleMeshDeliver(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		msg := err.Error()
 		if strings.Contains(msg, "HTTP 404") {
-			msg = "the foreign server " + req.Remote + " does not know this request: run hashem update on it (and on its panel), then try again"
+			msg = "the foreign server " + req.Remote + " does not know this request: " + syncUpdateAdvice() + ", then try again"
 		}
 		fail(msg)
 		return
@@ -399,6 +399,16 @@ func handlePeerJoinHub(w http.ResponseWriter, r *http.Request) {
 
 // ---- the asking hub ----
 
+// syncUpdateAdvice says how to bring another server to this hub's version. A
+// plain "hashem update" would be wrong while this hub runs a dev build: the
+// stable channel is older and has no hub channel at all.
+func syncUpdateAdvice() string {
+	if strings.Contains(panelVersion, "dev") {
+		return "update it to this hub's version " + panelVersion + " (hashem update-channel dev, then hashem update)"
+	}
+	return "update it to this hub's version " + panelVersion + " (hashem update)"
+}
+
 // meshCall sends a signed request to another hub and decodes its signed answer.
 func meshCall(h HubPeer, secret, path string, in, out any, timeout time.Duration) error {
 	body, _ := json.Marshal(in)
@@ -416,7 +426,7 @@ func meshCall(h HubPeer, secret, path string, in, out any, timeout time.Duration
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
-		return errors.New("the other hub did not accept the request: update its panel to this version, or the hubs are not linked both ways")
+		return errors.New("the other hub did not accept the request: " + syncUpdateAdvice() + ", or the hubs are not linked both ways")
 	case resp.StatusCode != http.StatusOK:
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
@@ -657,7 +667,7 @@ func runHubSync(c ClusterConfig, hub HubPeer, both bool) error {
 		}
 	}
 	if both && lacking > 0 {
-		syncAskPull(c, hub)
+		syncAskPull(c, hub, list.Version)
 	}
 
 	snap := syncSnapshot()
@@ -681,6 +691,10 @@ func runHubSync(c ClusterConfig, hub HubPeer, both bool) error {
 			syncUpdate(func(s *syncState) { s.Info = "Both hubs already serve the same foreign servers: nothing to copy." })
 		}
 	}
+	if nHere == 0 && nThere == 0 && len(made) == 0 && snap.OtherErr != "" {
+		// nothing was made on either side: that is a failure, not a quiet success
+		return errors.New(snap.OtherErr)
+	}
 	clusterEventf("info", "Synced tunnels with Iran hub %s: %d made here, %d made there, %d pool(s).", hubLabel(hub), nHere, nThere, len(made))
 	return nil
 }
@@ -696,11 +710,15 @@ var syncPullWait = 30 * time.Minute
 
 // syncAskPull asks the other hub to copy this hub's tunnels, and follows its
 // progress into this job's "other" list.
-func syncAskPull(c ClusterConfig, hub HubPeer) {
+func syncAskPull(c ClusterConfig, hub HubPeer, theirVersion string) {
 	fail := func(msg string) { syncUpdate(func(s *syncState) { s.OtherErr = msg }) }
 	var ans syncPullAns
 	if err := meshCall(hub, c.Secret, "/pull", map[string]string{"id": c.NodeID}, &ans, syncListTO); err != nil {
-		fail("could not ask " + hubLabel(hub) + " to copy the tunnels of this hub: " + err.Error() + ". Update its panel (hashem update) and press the button again.")
+		ver := ""
+		if theirVersion != "" {
+			ver = " (it runs " + theirVersion + ", this hub " + panelVersion + ")"
+		}
+		fail("could not ask " + hubLabel(hub) + ver + " to copy the tunnels of this hub: " + err.Error() + ". Then press the button again.")
 		return
 	}
 	if !ans.OK {
@@ -709,6 +727,7 @@ func syncAskPull(c ClusterConfig, hub HubPeer) {
 	}
 	deadline := time.Now().Add(syncPullWait)
 	misses := 0
+	var lost time.Time // since when the peer shows another copy than the asked one
 	for time.Now().Before(deadline) {
 		time.Sleep(syncPollEvery)
 		var st syncState
@@ -721,8 +740,16 @@ func syncAskPull(c ClusterConfig, hub HubPeer) {
 		}
 		misses = 0
 		if st.Started != ans.Started || st.Hub != c.NodeID {
-			continue // not the copy this hub asked for (yet)
+			// not the copy this hub asked for (yet), or the peer restarted and forgot it
+			if lost.IsZero() {
+				lost = time.Now()
+			} else if time.Since(lost) > syncLostWait {
+				fail(hubLabel(hub) + " no longer shows the copy it started (its panel may have restarted): look at its Cluster tab")
+				return
+			}
+			continue
 		}
+		lost = time.Time{}
 		syncUpdate(func(s *syncState) { s.Other = st.Steps })
 		if !st.Running {
 			if st.Error != "" {
@@ -733,6 +760,10 @@ func syncAskPull(c ClusterConfig, hub HubPeer) {
 	}
 	fail(hubLabel(hub) + " is still copying: look at its Cluster tab")
 }
+
+// syncLostWait is how long the other hub may show another copy than the one it
+// was asked for before this hub stops waiting (a var for tests).
+var syncLostWait = 90 * time.Second
 
 // syncPollEvery is how often a hub looks at the other hub's copy (a var for tests).
 var syncPollEvery = 3 * time.Second

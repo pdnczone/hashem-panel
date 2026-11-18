@@ -603,15 +603,35 @@ func TestRunHubSyncOneWayEmptyPeer(t *testing.T) {
 	}
 }
 
-// An older panel on the other hub has no /pull: say what to do.
-func TestRunHubSyncTwoWayOldPeer(t *testing.T) {
-	c, done := twoWay(t, []syncTunnel{{Name: "de", Remote: "198.51.100.1", Engine: "frp", Ports: []int{443}}}, &fakeSyncHub{})
+// Nothing was made on either side and the other hub could not be asked: the
+// run fails, so the page shows a failure and not "tunnels synced".
+func TestRunHubSyncTwoWayOldPeerIsAFailure(t *testing.T) {
+	c, done := twoWay(t, []syncTunnel{{Name: "de", Remote: "198.51.100.1", Engine: "frp", Ports: []int{443}}}, &fakeSyncHub{list: syncList{Version: "v3.1.5"}})
 	defer done()
-	if err := runHubSync(c, c.Hubs[0], true); err != nil {
-		t.Fatal(err)
+	err := runHubSync(c, c.Hubs[0], true)
+	if err == nil || !strings.Contains(err.Error(), "hashem update") || !strings.Contains(err.Error(), "v3.1.5") {
+		t.Fatalf("error: %v", err)
 	}
-	if e := syncSnapshot().OtherErr; !strings.Contains(e, "hashem update") {
-		t.Fatalf("other error %q", e)
+	if s := syncSnapshot(); s.Info != "" || len(s.Steps) != 0 || len(s.Other) != 0 {
+		t.Fatalf("state: %+v", s)
+	}
+}
+
+// The other hub restarted in the middle of its copy and forgot it: this hub
+// stops waiting and says so.
+func TestRunHubSyncTwoWayPeerForgotTheCopy(t *testing.T) {
+	fake := &fakeSyncHub{
+		pull:  func() (int, syncPullAns) { return 200, syncPullAns{OK: true, Started: 900} },
+		state: func() syncState { return syncState{} },
+	}
+	c, done := twoWay(t, []syncTunnel{{Name: "de", Remote: "198.51.100.1", Engine: "frp", Ports: []int{443}}}, fake)
+	defer done()
+	old := syncLostWait
+	syncLostWait = 20 * time.Millisecond
+	defer func() { syncLostWait = old }()
+	err := runHubSync(c, c.Hubs[0], true)
+	if err == nil || !strings.Contains(err.Error(), "no longer shows the copy") {
+		t.Fatalf("error: %v", err)
 	}
 }
 
@@ -622,11 +642,9 @@ func TestRunHubSyncTwoWayPeerBusy(t *testing.T) {
 	}}
 	c, done := twoWay(t, []syncTunnel{{Name: "de", Remote: "198.51.100.1", Engine: "frp", Ports: []int{443}}}, fake)
 	defer done()
-	if err := runHubSync(c, c.Hubs[0], true); err != nil {
-		t.Fatal(err)
-	}
-	if e := syncSnapshot().OtherErr; !strings.Contains(e, "already running") {
-		t.Fatalf("other error %q", e)
+	err := runHubSync(c, c.Hubs[0], true)
+	if err == nil || !strings.Contains(err.Error(), "already running") || !strings.Contains(syncSnapshot().OtherErr, "already running") {
+		t.Fatalf("error %v, state %+v", err, syncSnapshot())
 	}
 }
 
