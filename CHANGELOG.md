@@ -9,7 +9,7 @@ Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 - **Nodes map: a tunnel on the server's second IP is drawn.** The map linked a foreign server to an Iran server only when it reached the Iran server's main address, so a tunnel moved to another of its IPs had no line. It now also accepts the address that tunnel uses; the shared-token check is unchanged.
 - **CI: `docs/API.md` lists `/api/peer/egress` and `/api/proxy/probe`.** They were added in v3.1.5 without regenerating the docs, so the "generated docs are current" step failed.
 - **The first tunnel's FRP ports show on the Iran server.** Its proxies are in the foreign server's frpc.toml, so the Iran side's frps.toml lists none and the Tunnel card, Edit Tunnel and Details showed "Forwarded —" while frps served the ports. They are now read from what the main frps unit listens on (its own control, KCP/QUIC, vhost and dashboard ports left out); the peers' frps units are told apart by their cgroup.
-- **Details says which tunnel it shows, and lists the server's other IPs.** On an Iran server with more than one tunnel the Details title reads "First tunnel · <name>", since its cards describe that one. The Server card lists every other public IPv4 of the server under "Other IPs", the addresses a tunnel can be moved to.
+- **Details says which tunnel it shows, and lists the server's other IPs.** On an Iran server with more than one tunnel the Details title reads "First tunnel · <name>", since its cards describe that one. The Server card lists every other public address of the server under "Other IPs", the addresses a tunnel can be moved to: IPv4 first, then global IPv6 (for 6to4 and 4in6), leaving out temporary and deprecated IPv6 addresses.
 
 ## v3.1.5 — 2026-11-18
 

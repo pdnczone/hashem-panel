@@ -7,7 +7,7 @@ package main
 //
 // Per tick the collector runs a fixed set of host commands, independent of the
 // peer count: one `ss -Htin state established` (parsed once, indexed by local
-// port), one `ip tunnel show`, one `ip -o -4 addr show`, one
+// port), one `ip tunnel show`, one `ip -o addr show`, one
 // `systemctl is-active <all units>`, one read of /proc/net/dev, and a streaming
 // count of /proc/net/{tcp,udp}[6]. Per-peer extras (active TCP connect probe
 // and background ICMP) run through a bounded worker pool with hard timeouts and
@@ -75,7 +75,7 @@ type hostView struct {
 	tunnelShow string
 	tunnelOK   bool
 	inner      map[string]string // ifname -> first inet CIDR
-	addrShow   string            // raw `ip -o -4 addr show` (every address, for publicIPv4s)
+	addrShow   string            // raw `ip -o addr show` (every address, for publicIPs)
 	frpsListen []int             // TCP ports the main frps unit listens on (frpsUnitPorts)
 	active     map[string]bool   // unit -> active
 	devData    string            // raw /proc/net/dev
@@ -120,7 +120,7 @@ func (v *hostView) carrierTraffic(tag string) (rx, tx *uint64) {
 
 // ---- parsing helpers ----
 
-// parseAddrShow parses `ip -o -4 addr show`: ifname -> first inet CIDR.
+// parseAddrShow parses `ip -o addr show`: ifname -> first inet (IPv4) CIDR.
 func parseAddrShow(out string) map[string]string {
 	m := map[string]string{}
 	for _, line := range strings.Split(out, "\n") {
@@ -218,7 +218,7 @@ func collectHost(recs []peerRecord, prev map[string]devCounters) *hostView {
 		}
 	})
 	timedStep("ip_addr", func() {
-		if out, err := runCmdTimeoutOut(5*time.Second, "ip", "-o", "-4", "addr", "show"); err == nil {
+		if out, err := runCmdTimeoutOut(5*time.Second, "ip", "-o", "addr", "show"); err == nil {
 			v.inner = parseAddrShow(string(out))
 			v.addrShow = string(out)
 		}
@@ -520,7 +520,7 @@ func buildSnapshot() *HubSnapshot {
 		s.LocalRx, s.LocalTx = localTraffic(local, v)
 	})
 	s.PublicIP = detectPublicIPCached()
-	s.PublicIPs = publicIPv4s(v.addrShow, s.PublicIP)
+	s.PublicIPs = publicIPs(v.addrShow, s.PublicIP)
 	s.FrpSince = frpSinceCached(local.FrpSvc)
 
 	snapIcmp.setTargets(icmpTargets(s))

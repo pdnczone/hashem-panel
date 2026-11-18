@@ -2834,7 +2834,7 @@ async function refreshDash() {
     const bindPort = (f.port && f.port !== NA) ? String(f.port) : '';
     const fwd = ((f.proxy_ports && f.proxy_ports.length) ? f.proxy_ports : (f.proxies || [])).filter(p => p !== '' && p != null);
     const innerPeer = c => { const m = /^(\d+\.\d+\.\d+)\.(\d+)(?:\/\d+)?$/.exec(c || ''); if (!m) return ''; const n = +m[2]; return m[1] + '.' + (n % 2 === 0 ? n - 1 : n + 1); };
-    // this server's other public IPv4 addresses (a tunnel can use any of them)
+    // this server's other public addresses, IPv4 then IPv6 (a tunnel can use any of them)
     const moreIPs = (d.public_ips || []).filter(ip => ip && ip !== d.local_pub);
     // on a hub with more tunnels, these cards describe the first one only
     { const sc = $('detScope');
