@@ -2809,7 +2809,7 @@ async function refreshDash() {
     set('kpiUp', u.system != null ? fmtSecs(u.system) : '—');
     set('kpiUpSub', tr('', 'Panel up') + ' ' + fmtSecs(u.panel));
 
-    renderDashPeers(peers);
+    renderDashPeers(peers, iran && !unset ? dashMainRow(d) : null);
 
     // Details: what is configured, and nothing about parts that do not exist.
     // Each value says whose it is (this server / the other one), and the same
@@ -3013,9 +3013,30 @@ function pingBadge(o) {
   return '<span class="badge ' + (p.ok ? 'ok' : 'err') + '"' + (tip ? ' title="' + tip + '"' : '') + '><span class="dot"></span>' + esc(p.ok ? p.txt : 'no answer') + '</span>' + p.chip;
 }
 function fleetMs(n) { return n.ping_ms >= 0 ? n.ping_ms : (n.latency_ms >= 0 ? n.latency_ms : -1); }
-function renderDashPeers(peers) {
+// dashMainRow is the first tunnel of an Iran server as a row of the
+// dashboard's Tunnels list (the same object shape as a peer), or null when
+// there is none. The list showed only the tunnels added after it, so a hub
+// with three foreign servers listed two.
+function dashMainRow(d) {
+  const st = window._lastLocal || {}, g = d.gre || {}, f = d.frp || {};
+  if (!(g.exists || f.up || f.svc)) return null;
+  const h = st.health_state ? st : d;
+  const eng = String(d.active_engine || '').toLowerCase();
+  return {
+    id: 'main', name: d.main_name || tr('', 'Main tunnel'), remote_pub: d.remote_pub || g.peer || '',
+    engine: /backhaul/.test(eng) || /^backhaul/.test(f.svc || '') ? (g.exists ? 'gre-backhaul' : 'backhaul') : 'frp',
+    ports: f.proxy_ports || [], gre_up: !!g.exists, frp_up: !!f.up, rx: st.rx, tx: st.tx,
+    ping_ok: h.ping_ok, ping_ms: h.ping_ms, health_state: h.health_state, latency_ms: h.latency_ms,
+    icmp_filtered: h.icmp_filtered, reasons: h.reasons,
+  };
+}
+
+function renderDashPeers(peers, main) {
   const card = $('dashPeersCard'), list = $('dashPeersList');
   if (!card || !list) return;
+  // the first tunnel only joins a list that has peers: alone, the hero map
+  // and the Details card already say everything about it
+  if (main && peers.length) peers = [main, ...peers];
   card.hidden = !peers.length;
   if (!peers.length) { list.innerHTML = ''; return; }
   const ttl = $('dashPeersTitle');
@@ -3035,7 +3056,7 @@ function renderDashPeers(peers) {
       + '</div>';
   }).join('');
   list.querySelectorAll('[data-goto-peer]').forEach(r => {
-    r.onclick = () => gotoPeerCard(parseInt(r.dataset.gotoPeer, 10));
+    r.onclick = () => gotoPeerCard(r.dataset.gotoPeer === 'main' ? 'main' : parseInt(r.dataset.gotoPeer, 10));
     r.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); r.click(); } };
   });
 }
