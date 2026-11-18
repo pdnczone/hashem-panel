@@ -9122,6 +9122,7 @@ let _editPortsPeerId = null;
 let _editPortsList   = [];
 let _editPeerBundle  = '';
 let _editPeerEngine  = 'frp';
+let _editPeerLocal   = '';
 
 function openEditPeer(peerId) {
   _editPortsPeerId = peerId;
@@ -9170,6 +9171,10 @@ function openEditPeer(peerId) {
   
   if ($('editPeerName'))   $('editPeerName').value = name;
   if ($('editPeerRemote')) $('editPeerRemote').value = remoteIp;
+  // the address a tunnel added after the first one uses on this server
+  _editPeerLocal = peerId > 0 ? String(p.local_pub || '') : '';
+  if ($('editPeerLocalWrap')) $('editPeerLocalWrap').hidden = !(peerId > 0);
+  if ($('editPeerLocal')) $('editPeerLocal').value = _editPeerLocal;
   if ($('editPeerProxyProtocol')) {
     $('editPeerProxyProtocol').checked = (p.proxy_protocol === 'v2');
   }
@@ -9288,6 +9293,7 @@ async function saveEditPorts() {
 
   const nameVal      = $('editPeerName') ? $('editPeerName').value.trim() : '';
   const remoteVal    = $('editPeerRemote') ? $('editPeerRemote').value.trim() : '';
+  const localVal     = $('editPeerLocal') && !$('editPeerLocalWrap').hidden ? $('editPeerLocal').value.trim() : '';
   const ppVal        = $('editPeerProxyProtocol') ? ($('editPeerProxyProtocol').checked ? 'v2' : 'off') : '';
   const encVal       = $('editPeerEncryption') && $('editPeerEncryption').checked;
   const compVal      = $('editPeerCompression') && $('editPeerCompression').checked;
@@ -9298,6 +9304,12 @@ async function saveEditPorts() {
       warnEl.classList.remove('hidden');
       return;
     }
+  }
+
+  if (localVal && localVal !== _editPeerLocal && (!isIPv4(localVal) || localVal.split('.').some(o => String(+o) !== o))) {
+    warnEl.textContent = tr('', 'Enter an IPv4 address of this server for Iran IP.');
+    warnEl.classList.remove('hidden');
+    return;
   }
 
   const btn  = $('editPortsSave');
@@ -9311,6 +9323,7 @@ async function saveEditPorts() {
     };
     if (nameVal) payload.name = nameVal;
     if (remoteVal) payload.remote_pub = remoteVal;
+    if (localVal && localVal !== _editPeerLocal) payload.local_pub = localVal;
     if (ppVal) payload.proxy_protocol = ppVal;
     if ($('editPeerEncryption')) payload.use_encryption = encVal;
     if ($('editPeerCompression')) payload.use_compression = compVal;

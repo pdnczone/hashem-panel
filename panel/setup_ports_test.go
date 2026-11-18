@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -415,5 +417,64 @@ func TestSwapToFRPForwardsWholeRange(t *testing.T) {
 	recordCarrier(&p, carrierChoice{Engine: "frp", Transport: "tcp"}, "frps-2")
 	if !slices.Equal(p.Ports, []int{1051, 1052, 1053}) {
 		t.Errorf("peer record after the swap: %v", p.Ports)
+	}
+}
+
+// Edit Peer moves a tunnel to another address of this server: it must be
+// one of its own IPv4 addresses, the first tunnel is Setup's, and the reply
+// says what the foreign server has to change.
+func TestHandlePeersPatchLocalPub(t *testing.T) {
+	old, oldHas := configDir, serverHasAddr
+	configDir = t.TempDir()
+	serverHasAddr = func(ip string) bool { return ip == "198.51.100.9" || ip == "1.2.3.4" }
+	defer func() { configDir, serverHasAddr = old, oldHas }()
+	doc := `{"peers": [{"id": 2, "name": "tr", "local_pub": "1.2.3.4", "remote_pub": "198.51.100.2", "frp_port": 25002,
+  "ports": [443], "token": "tok2", "gre_if": "gre-t2", "frps_svc": "frps-2", "local_gre": "10.11.0.2", "peer_gre": "10.11.0.1"}]}`
+	if err := os.WriteFile(peersFile(), []byte(doc), 0600); err != nil {
+		t.Fatal(err)
+	}
+	patch := func(body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		handlePeersPatch(w, httptest.NewRequest("PATCH", "/api/peers", bytes.NewBufferString(body)))
+		return w
+	}
+	for body, why := range map[string]string{
+		`{"id": 2, "local_pub": "203.0.113.5"}`:  "not an address of this server",
+		`{"id": 2, "local_pub": "2001:db8::1"}`:  "IPv4",
+		`{"id": 2, "local_pub": "nope"}`:         "IPv4",
+		`{"id": 0, "local_pub": "198.51.100.9"}`: "set by Setup",
+	} {
+		w := patch(body)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), why) {
+			t.Errorf("%s: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	w := patch(`{"id": 2, "local_pub": "198.51.100.9"}`)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "198.51.100.9") || !strings.Contains(w.Body.String(), "foreign server") {
+		t.Fatalf("move: %d %s", w.Code, w.Body.String())
+	}
+	if p := loadPeers()[0]; p.LocalPub != "198.51.100.9" || p.RemotePub != "198.51.100.2" {
+		t.Errorf("peer record: %+v", p)
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if b, _ := resp["bundle"].(string); !strings.HasPrefix(b, "hsh1_198.51.100.9_") {
+		t.Errorf("the bundle must carry the new address: %q", b)
+	}
+}
+
+func TestUpdateServiceLocalIP(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "gre-t2.service")
+	unit := "ExecStart=/sbin/ip tunnel add gre-t2 mode gre local 1.2.3.4 remote 1.2.3.45 ttl 255\n"
+	_ = os.WriteFile(f, []byte(unit), 0644)
+	updateServiceLocalIP(f, "1.2.3.4", "198.51.100.9")
+	if b, _ := os.ReadFile(f); string(b) != strings.Replace(unit, "local 1.2.3.4 ", "local 198.51.100.9 ", 1) {
+		t.Errorf("exact: %s", b)
+	}
+	// the record did not know the old address: the "local" argument
+	_ = os.WriteFile(f, []byte(unit), 0644)
+	updateServiceLocalIP(f, "", "198.51.100.9")
+	if b, _ := os.ReadFile(f); !strings.Contains(string(b), "local 198.51.100.9 remote 1.2.3.45") {
+		t.Errorf("fallback: %s", b)
 	}
 }
