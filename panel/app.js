@@ -1668,6 +1668,16 @@ function tunEngine(st) {
   if (svc.startsWith('backhaul')) return st.gre && st.gre.exists ? 'gre-backhaul' : 'backhaul';
   return (svc || (st.gre && st.gre.exists)) ? 'frp' : '';
 }
+// The other end of a /30 GRE pair ("10.10.10.2/30" -> "10.10.10.1"), as
+// grePeerInner in tunnel.go.
+function greMate(cidr) {
+  const p = String(cidr || '').split('/')[0].split('.');
+  if (p.length !== 4) return '';
+  const last = parseInt(p[3], 10);
+  if (isNaN(last)) return '';
+  p[3] = String(last % 2 === 0 ? last - 1 : last + 1);
+  return p.join('.');
+}
 function renderTunnel(st) {
   const gre = st.gre || {};
   const hasMain = hasBaseTunnel(st);
@@ -1699,6 +1709,16 @@ function renderTunnel(st) {
     gre: usesGre, lat: mainPing.ok ? mainPing.txt : null, rate: mainRate,
     ports: (st.proxy_ports && st.proxy_ports.length) ? st.proxy_ports : (st.proxies || []),
   });
+  // Rows shared with the peer cards: both public IPs (copyable), both GRE
+  // inner ends, the control port (copyable) and the traffic totals.
+  const copyBtn = v => `<button type="button" class="det-copy" data-copy="${esc(String(v))}" title="Copy" aria-label="Copy">⧉</button>`;
+  const herePub = st.local_pub || gre.local || '';
+  const otherPub = st.remote_pub || gre.peer_ip || st.gre_peer || '';
+  const ipRow = (k, v) => `<div class="det-row"><span class="det-k">${esc(tr('', k))}</span><span class="det-v mono">${esc(v || '—')}${v ? copyBtn(v) : ''}</span></div>`;
+  const innerHere = String(gre.inner || '').split('/')[0];
+  const innerPair = innerHere ? innerHere + ' ⇄ ' + (greMate(gre.inner) || '?') : '—';
+  const ctlPort = st.frp_port || st.bind_port || 0;
+  const mainTraffic = (st.rx != null && st.tx != null) ? ('↓ ' + fmtBytes(st.rx) + ' · ↑ ' + fmtBytes(st.tx)) : 'N/A';
   // Main tunnel card: the same detail rows as a peer card. GRE rows only where
   // the engine uses GRE (a standalone Backhaul server has no gre-tunnel).
   const mainCard = !hasMain ? '' : `
@@ -1708,30 +1728,35 @@ function renderTunnel(st) {
           <span class="status-indicator ${up ? 'active' : 'offline'}"><span class="dot"></span></span>
           <b class="u-fs-16-tx" data-no-i18n>${esc(title)}</b>
           ${eng ? '<span class="badge info" data-no-i18n>' + esc(LS_ENGINE[eng] || eng) + '</span>' : ''}
-          <span class="badge ${up ? 'ok' : 'err'}"><span class="dot"></span>${esc(tr('', up ? 'Active' : 'Down'))}</span>
-          ${(usesGre && !st.ping_ok && st.frp_up) ? '<span class="badge info"><span class="dot"></span>' + esc(tr('fleet_frp_only', 'FRP only')) + '</span>' : ''}
+          ${st.transport ? '<span class="badge dim" data-no-i18n>' + esc(st.transport) + '</span>' : ''}
+          ${(() => { // same as a peer card: the header follows the link's health
+            const v = vizState(st) || (up ? 'ok' : 'down');
+            return `<span class="badge ${v === 'ok' ? 'ok' : v === 'warn' ? 'warn' : 'err'}"><span class="dot"></span>${esc(tr('', v === 'ok' ? 'active' : v === 'warn' ? 'degraded' : 'down'))}</span>`;
+          })()}
+          ${(usesGre && !st.ping_ok && st.frp_up && st.health_state !== 'healthy') ? '<span class="badge info"><span class="dot"></span>' + esc(tr('fleet_frp_only', 'FRP only')) + '</span>' : ''}
           <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="renameLink('main', ${jsArg(st.name || '')})">${esc(tr('', 'Rename'))}</button>
         </div>
       </div>
       ${mainViz}
       <div class="det-grid">
         <div class="det-card">
-          <div class="det-card-head">${ICO_SRV} <span>${esc(tr('', 'Server'))}</span></div>
-          <div class="det-row"><span class="det-k">${esc(tr('', 'Role'))}</span><span class="det-v">${esc(tr('', isIran ? 'Iran' : 'Foreign'))}</span></div>
-          <div class="det-row"><span class="det-k">${esc(tr('', 'Other server'))}</span><span class="det-v mono">${esc(st.remote_pub || gre.peer_ip || st.gre_peer || '—')}</span></div>
+          <div class="det-card-head">${ICO_SRV} <span>${esc(tr('', isIran ? 'Foreign Server' : 'Iran Server'))}</span></div>
+          ${ipRow('Foreign IP', isIran ? otherPub : herePub)}
+          ${ipRow('Iran IP', isIran ? herePub : otherPub)}
           <div class="det-row"><span class="det-k">${esc(tr('', 'Forwarded'))}</span><span class="det-v" title="${esc(ports)}">${portCount(ports)}<button type="button" class="det-copy u-ml-5" onclick="editMainPortsClick()" title="Edit Ports" aria-label="Edit ports"><svg class="i" aria-hidden="true"><use href="#i-edit"/></svg></button></span></div>
         </div>
         ${usesGre ? `<div class="det-card">
           <div class="det-card-head">${ICO_GRE} <span>${esc(tr('', 'GRE Tunnel'))}</span></div>
           <div class="det-row"><span class="det-k">${esc(tr('', 'Interface'))}</span><span class="det-v"><span class="badge ${gre.exists ? 'ok' : 'err'}"><span class="dot"></span><bdi data-no-i18n>${esc(gre.name || 'gre-tunnel')}</bdi>${gre.exists ? '' : ' · ' + esc(tr('', 'missing'))}</span></span></div>
-          <div class="det-row"><span class="det-k">${esc(tr('', 'Inner address'))}</span><span class="det-v mono">${esc(gre.inner || '—')}</span></div>
+          <div class="det-row"><span class="det-k">${esc(tr('', 'GRE Inner'))}</span><span class="det-v mono">${esc(innerPair)}</span></div>
           <div class="det-row"><span class="det-k">${esc(tr('', 'Ping / Latency'))}</span><span class="det-v">${pingBadge(st)}</span></div>
         </div>` : ''}
         <div class="det-card">
-          <div class="det-card-head">${bhSvc ? '<svg class="i" aria-hidden="true"><use href="#i-bolt"/></svg>' : ICO_FRP} <span>${esc(tr('', bhSvc ? 'Backhaul Service' : 'FRP Service'))}</span></div>
+          <div class="det-card-head">${bhSvc ? '<svg class="i" aria-hidden="true"><use href="#i-bolt"/></svg>' : ICO_FRP} <span>${esc(tr('', bhSvc ? 'Backhaul & Traffic' : 'FRP & Traffic'))}</span></div>
           <div class="det-row"><span class="det-k">${esc(tr('', 'Service'))}</span><span class="det-v">${svcBadge}</span></div>
-          <div class="det-row"><span class="det-k">${esc(tr('', 'Control port'))}</span><span class="det-v mono">${esc(String(st.frp_port || st.bind_port || '—'))}</span></div>
-          ${st.transport ? `<div class="det-row"><span class="det-k">${esc(tr('', 'Transport'))}</span><span class="det-v mono">${esc(st.transport)}</span></div>` : ''}
+          <div class="det-row"><span class="det-k">${esc(tr('', 'Control Port'))}</span><span class="det-v mono">${esc(String(ctlPort || '—'))}${ctlPort ? copyBtn(ctlPort) : ''}</span></div>
+          <div class="det-row"><span class="det-k">${esc(tr('', 'Traffic'))}</span><span class="det-v mono">${esc(mainTraffic)}</span></div>
+          ${usesGre ? '' : `<div class="det-row"><span class="det-k">${esc(tr('', 'Ping / Latency'))}</span><span class="det-v">${pingBadge(st)}</span></div>`}
         </div>
       </div>
       <div class="peer-acts u-peer-acts-bar">
@@ -1746,6 +1771,14 @@ function renderTunnel(st) {
       <div id="peer-confirm-main" class="peer-confirm warnbox hidden"></div>
     </div>`;
   $('tunnel').innerHTML = mainCard;
+  $('tunnel').querySelectorAll('[data-copy]').forEach(b => {
+    b.onclick = () => {
+      const v = b.dataset.copy;
+      (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject())
+        .then(() => { b.textContent = '✓'; b.classList.add('ok'); setTimeout(() => { b.textContent = '⧉'; b.classList.remove('ok'); }, 1200); })
+        .catch(() => toastWarn('copy failed', v));
+    };
+  });
   window._lastLocal = st;
 
   // Server-wide actions only once a tunnel exists; Carrier only where GRE runs.
