@@ -250,7 +250,8 @@ func mountPeerRoutes(mux *http.ServeMux, base string) {
 		{"POST", "/api/peer/carrier-info", handlePeerCarrierInfo},
 		{"POST", "/api/peer/apply-engine", handlePeerApplyEngine},
 		{"POST", "/api/peer/ping", handlePeerPing},
-		{"POST", "/api/peer/egress", handlePeerEgress}, // a hub's Telegram/Cloudflare calls through this server (tunnel_egress.go)
+		{"POST", "/api/peer/join-hub", handlePeerJoinHub}, // a hub this server serves asks it to serve another hub too (cluster_sync.go)
+		{"POST", "/api/peer/egress", handlePeerEgress},    // a hub's Telegram/Cloudflare calls through this server (tunnel_egress.go)
 		{"POST", "/api/peer/revpath-probe", handlePeerRevPathProbe},
 		{"POST", "/api/peer/sshfwd-install-key", handlePeerSSHFwdInstallKey},
 		{"GET", "/api/peer/status", handlePeerStatus},

@@ -2280,6 +2280,7 @@
             </div>
             <label class="u-check-row u-mb-8"><input type="checkbox" id="clHubForward" onchange="clSettingsSave()"> Forward a pool to another hub when no foreign server here can serve it</label>
             <div id="clHubs"></div>
+            <div id="clSyncBox" class="ent-help u-mt-8" role="status" aria-live="polite" hidden></div>
           </div>
 
           <div class="tunnel-card" id="clDnsCard">
@@ -2623,8 +2624,9 @@
                   <div class="fg"><label for="pFrpPort">Control port (unique per peer)</label><input class="hashem-input" id="pFrpPort" inputmode="numeric" placeholder="e.g. 7001"></div>
                   <div class="fg"><label for="pPorts">Reverse ports (ranges &amp; mappings allowed)</label><input class="hashem-input" id="pPorts" placeholder="443, 10000-10050, 2083=8443"></div>
                   <div class="fg u-col-span-2 hidden" id="wrapPeerUdp"><label class="u-check-row"><input type="checkbox" id="pAcceptUdp"><span data-i18n="setup_bh_udp">Also forward UDP on these ports</span></label></div>
+                  <div class="fg u-col-span-2"><label class="u-check-row"><input type="checkbox" id="pPoolOnClash" checked><span>If another tunnel already serves one of these ports, put both servers in one failover pool</span></label><div class="ent-help u-m-0">A Hashem Pro feature (Cluster). The tunnel that has the port restarts once, for a few seconds. Without it, a port another tunnel serves is rejected.</div></div>
                 </div>
-                <div class="qs-hint">Each peer gets its own token. Ports already used by another tunnel are rejected — pick a different one.</div>
+                <div class="qs-hint">Each peer gets its own token. A port another tunnel already serves is rejected unless you keep the pool option above.</div>
                 <div id="peerWarn" class="warnbox hidden"></div>
                 <div id="peerToken" class="tokenbox hidden"></div>
                 <div class="qs-actions">
@@ -4708,6 +4710,8 @@
     <div class="ent-modal-b">
       <div class="ent-help">On the other Iran server open Cluster, Show Join Code, and paste it here. Both panels need the same version, the panel port open between them, and correct clocks.</div>
       <div class="fg"><label for="clHubCode">Join code</label><textarea class="hashem-input u-mono u-resize-none" id="clHubCode" rows="3" placeholder="hc1_…"></textarea></div>
+      <label class="u-check-row"><input type="checkbox" id="clHubSync" checked> Also copy this hub's tunnels here</label>
+      <div class="ent-help u-m-0">For every foreign server of the other hub, this server makes its own tunnel with the same ports, and the foreign server joins it by itself. Nothing to paste on the foreign servers. Their panels must run this version. Tunnels you already have are left as they are.</div>
     </div>
     <div class="ent-modal-f">
       <button type="button" class="hashem-btn hashem-btn-ghost" onclick="clHubAddClose()">Cancel</button>

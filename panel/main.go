@@ -778,6 +778,8 @@ func main() {
 	mux.HandleFunc("POST "+base+"/api/cluster/dns", requireAuth(requireCSRF(handleClusterDNS)))
 	mux.HandleFunc("POST "+base+"/api/proxy/probe", requireAuth(requireCSRF(handleProxyProbe)))
 	mux.HandleFunc("POST "+base+"/api/cluster/join-hub", requireAuth(requireCSRF(handleClusterJoinHub)))
+	mux.HandleFunc("POST "+base+"/api/cluster/hubs/sync", requireAuth(requireCSRF(handleClusterHubSync)))
+	mux.HandleFunc("GET "+base+"/api/cluster/hubs/sync", requireAuth(handleClusterHubSyncStatus))
 	mux.HandleFunc("POST "+base+"/api/cluster/leave-hub", requireAuth(requireCSRF(handleClusterLeaveHub)))
 	mountMeshRoutes(mux)
 	// Nodes: the central's list and join codes; the channel nodes dial

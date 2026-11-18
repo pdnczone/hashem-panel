@@ -382,6 +382,8 @@ func meshRemoveHub(id string) bool {
 func mountMeshRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+meshRoutePrefix+"/hello", meshHandler(true))
 	mux.HandleFunc("POST "+meshRoutePrefix+"/beat", meshHandler(false))
+	mux.HandleFunc("POST "+meshRoutePrefix+"/tunnels", handleMeshTunnels) // cluster_sync.go
+	mux.HandleFunc("POST "+meshRoutePrefix+"/deliver", handleMeshDeliver) // cluster_sync.go
 }
 
 func meshHandler(hello bool) http.HandlerFunc {
@@ -591,7 +593,8 @@ func handleClusterHubAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Code string `json:"code"`
+		Code        string `json:"code"`
+		SyncTunnels bool   `json:"sync_tunnels"` // also copy the hub's tunnels here (cluster_sync.go)
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<13)).Decode(&req) != nil {
 		writeAPIError(w, r, "E-CLUSTER-01", "")
@@ -606,7 +609,15 @@ func handleClusterHubAdd(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, "E-CLUSTER-08", err.Error())
 		return
 	}
-	writeJSON(w, map[string]any{"status": "ok", "hub": h})
+	out := map[string]any{"status": "ok", "hub": h}
+	if req.SyncTunnels {
+		if serr := startHubSync(h.ID); serr != nil {
+			out["sync_error"] = serr.Error()
+		} else {
+			out["sync"] = "started"
+		}
+	}
+	writeJSON(w, out)
 }
 
 func handleClusterHubDelete(w http.ResponseWriter, r *http.Request) {

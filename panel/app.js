@@ -439,6 +439,7 @@ function goTab(name) {
   if (name === 'setup' && !NV) loadNodes();
   if (name === 'cluster') {
     loadClusterStatus();
+    clSyncPoll(); // a copy of tunnels that runs, or the last result
   }
   if (name === 'perf') loadPerf();
   if (name === 'tunnel') { loadCarrier(); loadFleet(); loadTunnelHealth(); loadUsage(); loadLimits(); loadXray(true); }
@@ -1893,6 +1894,7 @@ $('addPeerBtn').onclick = async () => {
       frp_port: parseInt($('pFrpPort').value, 10),
       ports: $('pPorts').value,
       accept_udp: !!($('pAcceptUdp') && $('pAcceptUdp').checked && !$('wrapPeerUdp').classList.contains('hidden')),
+      pool_on_clash: !!($('pPoolOnClash') && $('pPoolOnClash').checked),
       autogen: true,
     };
     let r;
@@ -1927,6 +1929,7 @@ $('addPeerBtn').onclick = async () => {
     out.textContent = (r.steps || []).join('\n');
     if (r.bundle || r.token) renderBundleBox($('peerToken'), r.bundle || r.token);
     toastOk(tr('', 'Tunnel added'), $('pName').value.trim() || tr('', 'new server'));
+    if (r.pools_made && r.pools_made.length) toastOk(tr('', 'Pool made'), tr('', 'Failover pool on port') + ' ' + r.pools_made.join(', '));
     ['pName', 'pRemotePub', 'pPorts', 'pFrpPort', 'pLocalGre', 'pPeerGre'].forEach(id => { $(id).value = ''; });
     refresh();
   } catch(e) { toastErr(tr('', 'Could not add the tunnel'), e.message); }
@@ -11003,6 +11006,7 @@ function clJoinCodeCopy() { copyTextSafe(_clJoinCode, tr('', 'Join code copied')
 
 function clHubAddOpen() {
   $('clHubCode').value = '';
+  if ($('clHubSync')) $('clHubSync').checked = true;
   modalShow($('clHubAddModal'), clHubAddClose);
   setTimeout(() => $('clHubCode').focus(), 30);
 }
@@ -11014,12 +11018,54 @@ async function clHubAdd() {
   const btn = $('clHubAddBtn');
   btn.disabled = true;
   try {
-    const r = await api('/api/cluster/hubs/add', { code });
+    const r = await api('/api/cluster/hubs/add', { code, sync_tunnels: !!($('clHubSync') && $('clHubSync').checked) });
     toastOk(tr('', 'Hub linked'), (r.hub && (r.hub.name || r.hub.public_ip)) || '');
+    if (r.sync_error) toastWarn(tr('', 'Tunnels were not copied'), r.sync_error);
     clHubAddClose();
+    if (r.sync === 'started') clSyncWatch();
   } catch (e) { toastErr(tr('', 'Cannot link the hub'), e.message || String(e)); }
   finally { btn.disabled = false; }
   loadClusterStatus();
+}
+
+// ---- copy a linked hub's tunnels here (cluster_sync.go) ----
+
+let _clSyncTimer = null;
+function clSyncWatch() {
+  clearInterval(_clSyncTimer);
+  clSyncPoll();
+  _clSyncTimer = setInterval(clSyncPoll, 3000);
+}
+async function clSyncPoll() {
+  let s;
+  try { s = await api('/api/cluster/hubs/sync'); } catch (e) { return; }
+  clSyncRender(s);
+  if (s.running && !_clSyncTimer) _clSyncTimer = setInterval(clSyncPoll, 3000);
+  if (!s.running) {
+    clearInterval(_clSyncTimer);
+    _clSyncTimer = null;
+    if (s.ended) loadClusterStatus();
+  }
+}
+function clSyncRender(s) {
+  const box = $('clSyncBox');
+  if (!box) return;
+  if (!s || (!s.running && !s.started)) { box.hidden = true; return; }
+  const steps = s.steps || [];
+  const mark = { done: '\u2713', skipped: '\u2013', failed: '\u2717' };
+  const rows = steps.map(x => `<div>${mark[x.state] || ''} <b>${esc(x.name)}</b> (${esc(x.remote)}): ${esc(x.detail || x.state)}</div>`).join('');
+  let head;
+  if (s.running) head = tr('', 'Copying the tunnels of') + ' ' + (s.hub_name || '') + '\u2026';
+  else if (s.error) head = tr('', 'Could not copy the tunnels') + ': ' + s.error;
+  else head = tr('', 'Tunnels copied from') + ' ' + (s.hub_name || '') + ((s.pools && s.pools.length) ? ' (' + tr('', 'pools on ports') + ' ' + s.pools.join(', ') + ')' : '');
+  box.innerHTML = `<b>${esc(head)}</b>${rows}`;
+  box.hidden = false;
+}
+async function clHubSyncNow(id) {
+  try {
+    await api('/api/cluster/hubs/sync', { id });
+    clSyncWatch();
+  } catch (e) { toastErr(tr('', 'Cannot copy the tunnels'), e.message || String(e)); }
 }
 
 async function clHubRemove(id, name) {
@@ -11693,7 +11739,11 @@ function clInsForm(key, d) {
     return clInsHead(h.name || h.id, tr('', 'Linked Iran hub')) + `
       <div class="cl-ins-sec">
         <div class="ent-help u-m-0">${esc(tr('', 'When every foreign server of a pool is down here, its port is forwarded to a hub where the same pool works.'))}</div>
-        <div><button type="button" class="hashem-btn hashem-btn-ghost" onclick="clHubRemove(${jsArg(h.id)},${jsArg(h.name || h.id)}).then(clInsRefresh)">${esc(tr('', 'Unlink'))}</button></div>
+        <div class="ent-help u-m-0">${esc(tr('', 'Make this hub serve the same foreign servers as that one: tunnels are made here and the foreign servers join by themselves.'))}</div>
+        <div class="u-flex u-gap-8 u-wrap">
+          <button type="button" class="hashem-btn hashem-btn-secondary" onclick="clHubSyncNow(${jsArg(h.id)})">${esc(tr('', 'Copy Its Tunnels Here'))}</button>
+          <button type="button" class="hashem-btn hashem-btn-ghost" onclick="clHubRemove(${jsArg(h.id)},${jsArg(h.name || h.id)}).then(clInsRefresh)">${esc(tr('', 'Unlink'))}</button>
+        </div>
       </div>`;
   }
   if (k === 'dns') {

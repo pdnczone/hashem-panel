@@ -518,6 +518,7 @@ type setupRequest struct {
 	Token          string `json:"token"` // foreign/add-peer (manual or auto)
 	Ports          string `json:"ports"` // foreign/add-peer, e.g. "443, 2083, 8080"
 	Force          bool   `json:"force"`
+	PoolOnClash    bool   `json:"pool_on_clash,omitempty"`   // add-peer: a port another tunnel serves gets a failover pool instead of an error (setup_autopool.go)
 	Autogen        bool   `json:"autogen"`                   // add-peer: generate token server-side
 	ProxyProtocol  string `json:"proxy_protocol,omitempty"`  // "off" | "v2" | "v1"
 	FRPTransport   string `json:"frp_transport,omitempty"`   // "tcp" | "kcp" | "quic" | "websocket" | "wss"
@@ -656,12 +657,32 @@ func handleSetupPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// add-peer pre-check: reject ports another tunnel already serves (409 + peer name)
+	var autoPools []LBPool // pools made for this request: undone when the tunnel is not made
 	if body.Role == "add-peer" {
 		if clash := peerDuplicateIPClash(body.RemotePub, -1); clash != "" {
 			writeAPIError(w, r, "E-PEER-08", "Foreign IP is already used by tunnel '"+clash+"' — you cannot add multiple tunnels to the exact same server")
 			return
 		}
-		if clash := peerPortClash(ports, -1); clash != "" {
+		if clash := peerPortClash(ports, -1); clash != "" && body.PoolOnClash {
+			made, perr := autoPoolForClash(ports)
+			if perr != nil {
+				writeAPIError(w, r, "E-CLUSTER-03", perr.Error())
+				return
+			}
+			autoPools = made
+			if werr := waitPoolsBound(autoPools); werr != nil {
+				undoAutoPools(autoPools)
+				writeAPIError(w, r, "E-CLUSTER-03", werr.Error()+": nothing was added; try again in a minute")
+				return
+			}
+			clash = peerPortClash(ports, -1) // what is left after the pools
+			if clash != "" {
+				undoAutoPools(autoPools)
+				autoPools = nil
+				writeAPIError(w, r, "E-PEER-02", "port "+clash+" is already served by another tunnel — pick a different port")
+				return
+			}
+		} else if clash != "" {
 			writeAPIError(w, r, "E-PEER-02", "port "+clash+" is already served by another tunnel — pick a different port")
 			return
 		}
@@ -679,6 +700,7 @@ func handleSetupPost(w http.ResponseWriter, r *http.Request) {
 	// could restart this very process.
 	token, bundle, steps, err := runInstaller(body, ports, rawPorts)
 	if err != nil {
+		undoAutoPools(autoPools)
 		steps = append(steps, "FAILED: "+err.Error())
 		code := "E-INSTALL-02"
 		if strings.Contains(err.Error(), "not found") {
@@ -699,6 +721,13 @@ func handleSetupPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{"status": "ok", "steps": steps}
+	if len(autoPools) > 0 {
+		var ps []int
+		for _, p := range autoPools {
+			ps = append(ps, p.Port)
+		}
+		out["pools_made"] = ps
+	}
 	if token != "" {
 		out["token"] = token
 	}

@@ -46,6 +46,8 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/cluster/dns` | session + CSRF | `handleClusterDNS` |
 | `POST` | `/api/cluster/hubs/add` | session + CSRF | `handleClusterHubAdd` |
 | `POST` | `/api/cluster/hubs/delete` | session + CSRF | `handleClusterHubDelete` |
+| `GET` | `/api/cluster/hubs/sync` | session | `handleClusterHubSyncStatus` |
+| `POST` | `/api/cluster/hubs/sync` | session + CSRF | `handleClusterHubSync` |
 | `POST` | `/api/cluster/join-code` | session + CSRF | `handleClusterJoinCode` |
 | `POST` | `/api/cluster/join-hub` | session + CSRF | `handleClusterJoinHub` |
 | `POST` | `/api/cluster/leave-hub` | session + CSRF | `handleClusterLeaveHub` |
@@ -94,6 +96,7 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/peer/config` | session + CSRF | `handlePeerConfigPost` |
 | `POST` | `/api/peer/egress` | peer secret (or session) | `handlePeerEgress` |
 | `POST` | `/api/peer/handshake` | peer secret (or session) | `handlePeerHandshake` |
+| `POST` | `/api/peer/join-hub` | peer secret (or session) | `handlePeerJoinHub` |
 | `GET` | `/api/peer/node-offer` | peer secret (or session) | `handlePeerNodeOffer` |
 | `POST` | `/api/peer/pathtest-join` | peer secret (or session) | `handlePeerPathTestJoin` |
 | `POST` | `/api/peer/ping` | peer secret (or session) | `handlePeerPing` |
@@ -174,4 +177,4 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/xray` | session + CSRF | `handleXrayPost` |
 | `GET` | `/metrics` | none | `handleMetrics` |
 
-Total: 150 routes.
+Total: 153 routes.
