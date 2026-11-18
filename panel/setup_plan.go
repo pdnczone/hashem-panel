@@ -26,6 +26,7 @@ type setupPlanPeer struct {
 	RemotePub string `json:"remote_pub"`
 	LocalGre  string `json:"local_gre,omitempty"`
 	PeerGre   string `json:"peer_gre,omitempty"`
+	LocalPub  string `json:"local_pub,omitempty"` // this server's address the tunnel uses, when it is not Public
 	FrpPort   int    `json:"frp_port,omitempty"`
 	Engine    string `json:"engine,omitempty"`
 	Proof     string `json:"proof,omitempty"` // ?proof=nonce: setupPlanProof of its token
@@ -251,7 +252,7 @@ func buildSetupPlan(wanted string, relay int) setupPlan {
 	peers := loadPeers()
 	for _, x := range peers {
 		p.Peers = append(p.Peers, setupPlanPeer{ID: x.ID, Name: x.Name, RemotePub: x.RemotePub, LocalGre: x.LocalGre,
-			PeerGre: x.PeerGre, FrpPort: x.FrpPort, Engine: x.Engine})
+			PeerGre: x.PeerGre, LocalPub: x.LocalPub, FrpPort: x.FrpPort, Engine: x.Engine})
 		gre[x.LocalGre], gre[x.PeerGre] = true, true
 	}
 	// the first tunnel of an Iran server, unless a peer record is it

@@ -789,10 +789,15 @@ func nodeTunLinksPlans(ctx context.Context) ([]nodeTunLink, []string, map[int]se
 					continue
 				}
 				for _, u := range c.Uplinks {
+					// the foreign end reaches the server at its main address or,
+					// on a server with several, at the one this tunnel uses
+					if u.IranPub != s.Public && (p.LocalPub == "" || u.IranPub != p.LocalPub) {
+						continue
+					}
 					// both ends hold the same token: a claimed address alone is not enough
-					if u.IranPub == s.Public && p.Proof != "" && p.Proof == u.Proof {
+					if p.Proof != "" && p.Proof == u.Proof {
 						links = append(links, nodeTunLink{Server: sid, Client: cid, PeerID: p.ID, Hub: u.Hub, Name: p.Name,
-							Engine: p.Engine, ServerIP: s.Public, ClientIP: c.Public})
+							Engine: p.Engine, ServerIP: u.IranPub, ClientIP: c.Public})
 					}
 				}
 			}
