@@ -1404,6 +1404,19 @@ function tunViz(o) {
 }
 const vizState = o => o.health_state === 'down' ? 'down' : o.health_state === 'degraded' ? 'warn' : (o.health_state ? 'ok' : null);
 
+// Shared by the first tunnel's card and the peer cards, so both read the same.
+function engineBadge(eng) {
+  const cls = eng === 'backhaul' ? 'u-pill-sky' : eng === 'gre-backhaul' ? 'u-pill-violet' : eng === 'bagher' ? 'info' : 'warn';
+  return `<span class="badge ${cls}" data-no-i18n>${esc(LS_ENGINE[eng] || eng)}</span>`;
+}
+// GRE does not answer but the service runs and the link is not healthy.
+// A healthy link with filtered ICMP shows the ICMP-filtered chip instead.
+function frpOnly(usesGre, o) {
+  return !!(usesGre && !o.ping_ok && o.frp_up && o.health_state !== 'healthy');
+}
+function frpOnlyBadge() {
+  return '<span class="badge info"><span class="dot"></span>' + esc(tr('fleet_frp_only', 'FRP only')) + '</span>';
+}
 function renderPeers(peers) {
   const box = $('peerCards');
   if (!box) return;
@@ -1518,11 +1531,7 @@ function renderPeers(peers) {
       : 'N/A';
     const isBh = p.engine === 'backhaul' || (p.frps_svc && p.frps_svc.includes('backhaul') && p.no_gre);
     const isGreBh = p.engine === 'gre-backhaul' || (p.frps_svc && p.frps_svc.includes('backhaul') && !p.no_gre);
-    const engBadge = isBh
-      ? `<span class="badge u-pill-sky">Backhaul</span>`
-      : (isGreBh
-         ? `<span class="badge u-pill-violet">GRE+Backhaul</span>`
-         : `<span class="badge warn">FRP</span>`);
+    const engBadge = engineBadge(isBh ? 'backhaul' : isGreBh ? 'gre-backhaul' : 'frp');
     const transBadge = p.transport ? `<span class="badge dim">${esc(p.transport)}</span>` : '';
     const fwdPorts = [].concat(p.raw_ports || p.ports || []).join(', ') || '—';
     const greIfLabel = isBh ? 'N/A (Standalone)' : (p.gre_if || 'gre-t' + p.id);
@@ -1539,6 +1548,8 @@ function renderPeers(peers) {
             const v = vizState(p) || (up ? 'ok' : 'down');
             return `<span class="badge ${v === 'ok' ? 'ok' : v === 'warn' ? 'warn' : 'err'}"><span class="dot"></span>${esc(tr('', v === 'ok' ? 'active' : v === 'warn' ? 'degraded' : 'down'))}</span>`;
           })()}
+          ${frpOnly(!isBh, p) ? frpOnlyBadge() : ''}
+          <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="editPeerPortsClick(${p.id})">${esc(tr('', 'Rename'))}</button>
         </div>
       </div>
       ${tunViz({
@@ -1571,12 +1582,13 @@ function renderPeers(peers) {
         </div>
       </div>
       <div class="peer-acts u-peer-acts-bar">
-        ${isBh ? '' : `<button class="hashem-btn hashem-btn-secondary u-btn-30" data-peer-act="ping-${p.id}" onclick="peerAct('ping', ${p.id})">Ping</button>`}
+        ${isBh ? '' : `<button class="hashem-btn hashem-btn-secondary u-btn-30" data-peer-act="ping-${p.id}" onclick="peerAct('ping', ${p.id})">${esc(tr('', 'Ping'))}</button>`}
         <button class="hashem-btn hashem-btn-secondary u-btn-30" onclick="openSwap(${p.id})">${esc(tr('', 'Swap carrier'))}</button>
-        <button class="hashem-btn hashem-btn-secondary u-btn-30" onclick="editPeerPortsClick(${p.id})">Edit Peer</button>
-        <button class="hashem-btn hashem-btn-secondary u-btn-30" onclick="showPeerToken(${p.id}, ${jsArg(nm)})">Bundle</button>
-        <button class="hashem-btn hashem-btn-secondary u-btn-30" data-peer-act="restart-frps-${p.id}" onclick="peerAct('restart-frps', ${p.id})">Restart</button>
-        <button class="hashem-btn hashem-btn-danger peer-remove-btn u-btn-30" data-peer-remove="${p.id}" onclick="peerRemoveClick(${p.id}, ${jsArg(nm)})">Remove</button>
+        <button class="hashem-btn hashem-btn-secondary u-btn-30" onclick="editPeerPortsClick(${p.id})">${esc(tr('', 'Edit Tunnel'))}</button>
+        <button class="hashem-btn hashem-btn-secondary u-btn-30" onclick="showPeerToken(${p.id}, ${jsArg(nm)})">${esc(tr('', 'Copy Bundle'))}</button>
+        ${isBh ? '' : `<button class="hashem-btn hashem-btn-secondary u-btn-30" data-peer-act="restart-gre-${p.id}" onclick="peerAct('restart-gre', ${p.id})">${esc(tr('', 'Restart GRE'))}</button>`}
+        <button class="hashem-btn hashem-btn-secondary u-btn-30" data-peer-act="restart-engine-${p.id}" onclick="peerAct('restart-engine', ${p.id})">${esc(tr('', 'Restart Service'))}</button>
+        <button class="hashem-btn hashem-btn-danger peer-remove-btn u-btn-30" data-peer-remove="${p.id}" onclick="peerRemoveClick(${p.id}, ${jsArg(nm)})">${esc(tr('', 'Remove'))}</button>
       </div>
       <div id="peer-confirm-${p.id}" class="peer-confirm warnbox hidden"></div>
     </div>`;
@@ -1727,13 +1739,13 @@ function renderTunnel(st) {
         <div class="u-flex-center-gap10">
           <span class="status-indicator ${up ? 'active' : 'offline'}"><span class="dot"></span></span>
           <b class="u-fs-16-tx" data-no-i18n>${esc(title)}</b>
-          ${eng ? '<span class="badge info" data-no-i18n>' + esc(LS_ENGINE[eng] || eng) + '</span>' : ''}
+          ${eng ? engineBadge(eng) : ''}
           ${st.transport ? '<span class="badge dim" data-no-i18n>' + esc(st.transport) + '</span>' : ''}
           ${(() => { // same as a peer card: the header follows the link's health
             const v = vizState(st) || (up ? 'ok' : 'down');
             return `<span class="badge ${v === 'ok' ? 'ok' : v === 'warn' ? 'warn' : 'err'}"><span class="dot"></span>${esc(tr('', v === 'ok' ? 'active' : v === 'warn' ? 'degraded' : 'down'))}</span>`;
           })()}
-          ${(usesGre && !st.ping_ok && st.frp_up && st.health_state !== 'healthy') ? '<span class="badge info"><span class="dot"></span>' + esc(tr('fleet_frp_only', 'FRP only')) + '</span>' : ''}
+          ${frpOnly(usesGre, st) ? frpOnlyBadge() : ''}
           <button type="button" class="hashem-btn hashem-btn-ghost u-btn-30" onclick="renameLink('main', ${jsArg(st.name || '')})">${esc(tr('', 'Rename'))}</button>
         </div>
       </div>
