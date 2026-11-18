@@ -3,6 +3,10 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## Unreleased
+
+- **Xray Tunnel: Xray-core v26.10.21** (was v26.3.27), the latest stable release, for the panel's own Xray, the customer installer and CI. Both archives' sha256 match the release's own `.dgst` files.
+
 ## v3.2.0 — 2026-11-18
 
 **Cluster: DNS failover run by one hub, a live map of every tunnel and its traffic, and Iran hubs that sync their tunnels.** Run `hashem update` on every server: each hub must run v3.2.0 for the map to draw its tunnels and for DNS failover and the tunnel sync to work between hubs.
