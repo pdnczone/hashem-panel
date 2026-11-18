@@ -11022,7 +11022,7 @@ async function clHubAdd() {
     toastOk(tr('', 'Hub linked'), (r.hub && (r.hub.name || r.hub.public_ip)) || '');
     if (r.sync_error) toastWarn(tr('', 'Tunnels were not copied'), r.sync_error);
     clHubAddClose();
-    if (r.sync === 'started') clSyncWatch();
+    if (r.sync === 'started') { _clSyncSawRunning = true; clSyncWatch(); }
   } catch (e) { toastErr(tr('', 'Cannot link the hub'), e.message || String(e)); }
   finally { btn.disabled = false; }
   loadClusterStatus();
@@ -11036,15 +11036,25 @@ function clSyncWatch() {
   clSyncPoll();
   _clSyncTimer = setInterval(clSyncPoll, 3000);
 }
+let _clSyncSawRunning = false;
 async function clSyncPoll() {
   let s;
   try { s = await api('/api/cluster/hubs/sync'); } catch (e) { return; }
   clSyncRender(s);
-  if (s.running && !_clSyncTimer) _clSyncTimer = setInterval(clSyncPoll, 3000);
-  if (!s.running) {
-    clearInterval(_clSyncTimer);
-    _clSyncTimer = null;
-    if (s.ended) loadClusterStatus();
+  if (s.running) {
+    _clSyncSawRunning = true;
+    if (!_clSyncTimer) _clSyncTimer = setInterval(clSyncPoll, 3000);
+    return;
+  }
+  clearInterval(_clSyncTimer);
+  _clSyncTimer = null;
+  if (s.ended) loadClusterStatus();
+  if (_clSyncSawRunning) { // it ran while this page watched: say how it ended, whatever view is open
+    _clSyncSawRunning = false;
+    const steps = s.steps || [], done = steps.filter(x => x.state === 'done').length, bad = steps.filter(x => x.state === 'failed').length;
+    if (s.error) toastErr(tr('', 'Could not copy the tunnels'), s.error);
+    else if (bad) toastWarn(tr('', 'Tunnels copied with errors'), done + ' ' + tr('', 'made') + ', ' + bad + ' ' + tr('', 'failed'));
+    else toastOk(tr('', 'Tunnels copied from') + ' ' + (s.hub_name || ''), done + ' ' + tr('', 'made'));
   }
 }
 function clSyncRender(s) {
@@ -11064,6 +11074,8 @@ function clSyncRender(s) {
 async function clHubSyncNow(id) {
   try {
     await api('/api/cluster/hubs/sync', { id });
+    _clSyncSawRunning = true;
+    toastOk(tr('', 'Copying the tunnels'), tr('', 'Progress shows at the top of the Cluster tab.'));
     clSyncWatch();
   } catch (e) { toastErr(tr('', 'Cannot copy the tunnels'), e.message || String(e)); }
 }
