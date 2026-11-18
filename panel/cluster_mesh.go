@@ -71,6 +71,13 @@ type meshBeat struct {
 
 	Weight int  `json:"weight,omitempty"` // this hub's share of users (1..100)
 	Master bool `json:"master,omitempty"` // this hub is DNS failover's master
+
+	// DNSBy is the hub whose DNS failover settings this hub uses: its own id
+	// when it controls them, the controller's when it follows (cluster_dns.go).
+	// DNSVer is the version of those settings, so the controller sees who has
+	// the latest ones.
+	DNSBy  string `json:"dns_by,omitempty"`
+	DNSVer int64  `json:"dns_ver,omitempty"`
 }
 
 // hubRT is what this hub knows about another one right now.
@@ -216,26 +223,35 @@ func meshSelfBeat(c ClusterConfig) meshBeat {
 			b.Pools[proto+"/"+strconv.Itoa(p.Port)] = meshPoolState{State: pl.State, Healthy: healthy, Members: len(p.Members)}
 		}
 	}
-	if len(c.Pools) == 0 {
-		for _, lr := range clusterRT.links {
-			if lr.Up {
-				anyOK = true
-			}
-		}
-		if len(clusterRT.links) == 0 {
-			if s := lbSnapshot(); s != nil && s.Main != nil && s.Main.HealthState == stateHealthy {
-				anyOK = true
-			}
-		}
-	}
 	clusterRT.mu.Unlock()
+	if len(c.Pools) == 0 {
+		// Without pools the cluster monitor is idle and its link list stops
+		// being updated (it keeps what it had when the last pool went): the
+		// live snapshot says whether a tunnel works.
+		anyOK = snapAnyLinkWorks(lbSnapshot())
+	}
 	b.Healthy = anyOK
 	if c.DNS.Enabled {
 		b.DNS = c.DNS.Name
+		b.DNSBy, b.DNSVer = dnsControllerID(c), c.DNS.Version
 	}
 	b.Weight = dnsWeight(c.DNS.Weight)
 	b.Master = c.DNS.Enabled && c.DNS.Master
 	return b
+}
+
+// snapAnyLinkWorks: one of the tunnels of the snapshot is healthy or degraded
+// (degraded still carries users). No snapshot or no tunnel: false.
+func snapAnyLinkWorks(s *HubSnapshot) bool {
+	if s == nil {
+		return false
+	}
+	for _, l := range s.All() {
+		if l.HealthState == stateHealthy || l.HealthState == stateDegraded {
+			return true
+		}
+	}
+	return false
 }
 
 // ---- join ----
@@ -386,6 +402,7 @@ func mountMeshRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+meshRoutePrefix+"/deliver", handleMeshDeliver)     // cluster_sync.go
 	mux.HandleFunc("POST "+meshRoutePrefix+"/pull", handleMeshPull)           // cluster_sync.go
 	mux.HandleFunc("POST "+meshRoutePrefix+"/syncstate", handleMeshSyncState) // cluster_sync.go
+	mux.HandleFunc("POST "+meshRoutePrefix+"/dnsconf", handleMeshDNSConf)     // cluster_dns_ctl.go
 }
 
 func meshHandler(hello bool) http.HandlerFunc {
@@ -506,7 +523,6 @@ func startMeshLoop() {
 			}(h)
 		}
 		wg.Wait()
-		dnsTick(c)
 	}
 }
 

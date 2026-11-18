@@ -234,9 +234,16 @@ The forwarded traffic leaves Tehran with Tehran's own address (MASQUERADE). User
 Users connect to `vpn.example.com` instead of an IP. The domain always holds the public IPs of the Iran hubs that work.
 
 1. Link the hubs (4.11).
-2. On each hub, go to **Cluster → DNS Failover**:
-   - **Cloudflare:** set the record name `vpn.example.com`, an API token (*Zone → DNS → Edit*) and TTL `60`. Press **Test**, tick **Keep the record pointed at the working hubs**, then **Save**. The record must be **DNS only** (grey cloud); a proxied record is refused because Cloudflare's proxy does not carry tunnels.
-   - **Webhook:** use this for any other DNS provider (ArvanCloud, your own API…). See [9.2](#92-webhook).
+2. On **one** hub (the one you want in charge, say Iran 1) open **Cluster → DNS Failover**. The card draws it: users, then your domain, then every Iran hub, each with its state and share of users.
+3. Write **Your domain** (`vpn.example.com`) and paste the **Cloudflare key** (*How do I get the key?* under the field: Cloudflare → My Profile → API Tokens → Create Token → template *Edit zone DNS* → your domain's zone). Press **Turn on for all N servers**. The key is checked first (the answer stays under the button: the zone it found, where the name points now); only then is it turned on.
+4. That hub now **controls** the domain: it sends the domain, the key, the TTL and every hub's share to all linked hubs (sealed with the cluster secret, over the signed hub channel), and they **follow** it. A hub linked later, or one that was down, gets the settings as soon as it answers. On a following hub the card is read-only and says which hub controls it; **Control from this server** moves the control there (the others, the old controller included, follow the new one).
+5. While the controller answers, it writes the record: A records for every hub that works, so users are shared between all of them. When it stops answering for 30 s, the following hub with the lowest id writes in its place, with the same shares. A hub that stops working is taken out of the domain within about 30 s and put back when it works again; records that point anywhere else are never touched, and the last record is never removed.
+6. **Change shares** sets each hub's share with a slider. Shares are approximate: equal shares keep every working hub in the record (DNS round robin); different shares make the record point to one hub at a time, in turns of about the TTL. **Settings** changes the domain, the key, the TTL, the provider and how this server reaches Cloudflare (each hub keeps its own route: its tunnels are its own). **Turn off** turns it off on every hub; the domain keeps the addresses it has.
+7. The card warns, on each hub, when a hub needs a panel update, cannot reach Cloudflare (it could not take over), or does not serve a port this hub serves (users sent there on that port would fail: press **Sync Tunnels**).
+
+- The record must be **DNS only** (grey cloud); a proxied record is refused because Cloudflare's proxy does not carry tunnels.
+- **Webhook:** for any other DNS provider (ArvanCloud, your own API…) pick it under **More options**. See [9.2](#92-webhook).
+- Two hubs that cannot reach each other at all (the link between them is cut, both still work) both write the record, each without the other: nothing on two hubs alone can tell that from a dead hub. Short breaks do not change the record (the 30 s wait).
 
 ### 4.13 Full mesh
 

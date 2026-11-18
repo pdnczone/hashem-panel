@@ -277,7 +277,14 @@ func saveClusterConfig(c ClusterConfig) error {
 }
 
 // updateClusterConfig applies fn to the latest config and saves it.
+// clusterUpdMu makes each load-change-save one step: the DNS loop, the hub
+// channel and the API change cluster.json at the same time, and without it one
+// of two changes made together was lost.
+var clusterUpdMu sync.Mutex
+
 func updateClusterConfig(fn func(c *ClusterConfig) error) (ClusterConfig, error) {
+	clusterUpdMu.Lock()
+	defer clusterUpdMu.Unlock()
 	c := loadClusterConfig()
 	if err := fn(&c); err != nil {
 		return c, err

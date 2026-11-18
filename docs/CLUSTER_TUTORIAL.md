@@ -210,7 +210,7 @@ hashem hubs
    - **API token:** the token from step 1;
    - **TTL:** `60`.
 
-   Press **Test**, tick **Keep the record pointed at the working hubs**, and **Save**.
+   Do this on Iran 1 only: write the domain, paste the key and press **Turn on for all 2 servers**. Iran 1 controls the domain and Iran 2 follows it by itself (its card says so).
 3. Give your users `vpn.example.com` instead of an IP. The record now lists both hubs. Stop Iran 2's panel, and within about a minute, `dig +short vpn.example.com` shows only Iran 1.
 
 Another DNS provider? Choose **Webhook** and let your own script set the record. See the [Cluster guide](CLUSTER.md#92-webhook).

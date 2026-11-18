@@ -11181,114 +11181,325 @@ async function routeProbe(v, el, what) {
     return !!r.ok;
   } catch (e) { el.textContent = e.message || String(e); return false; }
 }
-function clDnsProbe() { return routeProbe(rtValue($('clDnsRoutePick')), $('clDnsProbeOut'), 'cloudflare'); }
+// ---- DNS failover: one widget for the list card and the map panel ----
+// One domain for users. The hub where it is turned on controls it: its
+// settings go to every linked hub (cluster_dns_ctl.go). The widget draws who
+// gets the users and asks for two things only: the domain and the key.
+// Both places can be in the page at once, so it never uses fixed ids: each
+// root has its own prefix and every lookup goes through the root.
 
+// A hub as a person tells it apart: two hubs can have the same host name.
+function clHubLbl(name, ip) { return name && ip && name.indexOf(ip) < 0 ? name + ' (' + ip + ')' : (name || ip || ''); }
+// bdi keeps a host name or an address in one piece inside Persian text.
+function bdi(s) { return '<bdi>' + esc(s) + '</bdi>'; }
+
+const DNSW_ICON = {
+  users: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3 19.5c0-3.4 2.7-5.6 6-5.6s6 2.2 6 5.6"/><circle cx="17" cy="9" r="2.5"/><path d="M15.6 13.8c3 .2 5.4 2.2 5.4 5.4"/></svg>',
+  globe: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 3.8 5.6 3.8 9s-1.2 6.4-3.8 9c-2.6-2.6-3.8-5.6-3.8-9S9.4 5.6 12 3z"/></svg>',
+  server: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="7" rx="2"/><rect x="4" y="13" width="16" height="7" rx="2"/><path d="M8 7.5h.01M8 16.5h.01"/></svg>',
+  arrow: '<svg viewBox="0 0 40 16" aria-hidden="true"><path d="M2 8h33M29 3l6 5-6 5"/></svg>',
+};
+
+function dnswRole(dns) { return dns.role || (dns.enabled ? (dns.master ? 'controller' : 'solo') : 'off'); }
+
+// What each hub looks like in the picture.
+function dnswHubs(dns) {
+  const recs = dns.records || [], on = !!dns.enabled, role = dnswRole(dns), pct = {};
+  (dns.shares || []).forEach(s => { pct[s.ip] = s.percent; });
+  return (dns.members || []).map(m => {
+    const inRec = !!m.ip && recs.indexOf(m.ip) >= 0;
+    let st, text;
+    if (!on) { st = m.up && m.healthy ? 'idle' : 'bad'; text = !m.up ? 'Unreachable' : m.healthy ? 'Ready' : 'No working tunnel'; }
+    else if (!m.up) { st = 'bad'; text = inRec ? 'Unreachable, being taken out' : 'Unreachable, taken out'; }
+    else if (!m.healthy) { st = 'bad'; text = inRec ? 'Not working, being taken out' : 'Not working, taken out'; }
+    else if (inRec) { st = 'ok'; text = 'Gets users'; }
+    else { st = 'wait'; text = dns.leader && (dns.shares || []).length > 1 && (dns.want || []).indexOf(m.ip) >= 0 ? 'Waiting for its turn' : 'Being added'; }
+    const notes = [];
+    const ctl = (m.self && role === 'controller') || (!m.self && role === 'follower' && m.id === dns.managed_by);
+    if (on && ctl) notes.push(['ctl', 'Controls the domain']);
+    if (role === 'controller' && !m.self && m.up) {
+      if (m.follows) notes.push(['ok', 'Follows']);
+      else if (m.old) notes.push(['err', 'Needs a panel update']);
+      else if (m.follow_err) notes.push(['err', m.follow_err, true]);
+      else notes.push(['wait', 'Getting the settings…']);
+      if (m.reach_err) notes.push(['warn', 'Cannot reach Cloudflare: it could not take over']);
+    }
+    if (on && m.self && dns.leader) notes.push(['dim', 'Writes the domain now']);
+    return { m, st, text, pct: on && st === 'ok' && pct[m.ip] != null ? pct[m.ip] : null, notes, missing: m.missing_ports || [] };
+  });
+}
+
+function dnswHeadline(dns, hubs) {
+  const role = dnswRole(dns);
+  if (dns.error) return ['err', tr('', 'The domain could not be updated:') + ' ' + dns.error];
+  if (role === 'off') return ['off', tr('', 'Off. Users reach each server by its own IP.')];
+  if (!(dns.records || []).length) return ['wait', tr('', 'Starting: the domain is set in about 30 seconds.')];
+  const ok = hubs.filter(h => h.st === 'ok').length, bad = hubs.filter(h => h.st === 'bad').length;
+  if (bad) return ['warn', tr('', 'A server is not working: its users go to the working ones.')];
+  if (ok > 1) return ['ok', tr('', 'Working. Users are shared between') + ' ' + ok + ' ' + tr('', 'servers.')];
+  return ['ok', tr('', 'Working. All users go to one server.')];
+}
+
+function dnswPicture(dns) {
+  const hubs = dnswHubs(dns), [cls, head] = dnswHeadline(dns, hubs), on = !!dns.enabled;
+  const card = h => {
+    const notes = h.notes.map(n => `<div class="dnsw-note is-${n[0]}">${esc(n[2] ? n[1] : tr('', n[1]))}</div>`).join('')
+      + (h.missing.length ? `<div class="dnsw-note is-warn">${esc(tr('', 'Does not serve port'))} ${h.missing.map(p => bdi(String(p))).join(', ')}`
+        + ` <button type="button" class="dnsw-link" data-act="sync" data-hub="${esc(h.m.id)}">${esc(tr('', 'Sync Tunnels'))}</button></div>` : '');
+    return `<div class="dnsw-hub is-${h.st}">
+      <div class="dnsw-hub-top">${DNSW_ICON.server}<b title="${esc(h.m.name || '')}">${bdi(h.m.name || h.m.ip || h.m.id)}</b>${h.m.self ? `<span class="badge dim">${esc(tr('', 'this server'))}</span>` : ''}</div>
+      ${h.m.ip ? `<div class="dnsw-hub-ip u-mono">${esc(h.m.ip)}</div>` : ''}
+      <div class="dnsw-hub-state"><span class="dnsw-dot"></span>${esc(tr('', h.text))}</div>
+      ${h.pct != null ? `<div class="dnsw-share" role="img" aria-label="${h.pct}%"><span style="width:${Math.max(2, h.pct)}%"></span></div><div class="dnsw-pct"><b>${h.pct}%</b> ${esc(tr('', 'of users'))}</div>` : ''}
+      ${notes}</div>`;
+  };
+  return `<div class="dnsw-head is-${cls}" role="status"><span class="dnsw-dot"></span><b>${esc(head)}</b></div>
+    <div class="dnsw-flow">
+      <div class="dnsw-node dnsw-users">${DNSW_ICON.users}<span>${esc(tr('', 'Users'))}</span></div>
+      <div class="dnsw-arrow">${DNSW_ICON.arrow}</div>
+      <div class="dnsw-node dnsw-domain${on ? '' : ' is-off'}">${DNSW_ICON.globe}<span>${dns.name ? bdi(dns.name) : esc(tr('', 'your domain'))}</span></div>
+      <div class="dnsw-arrow">${DNSW_ICON.arrow}</div>
+      <div class="dnsw-hubs">${hubs.map(card).join('') || `<div class="ent-help u-m-0">${esc(tr('', 'No Iran server yet.'))}</div>`}</div>
+    </div>
+    ${on && dns.last_run ? `<div class="ent-help u-m-0">${esc(tr('', 'Last check') + ': ' + dns.last_run)}</div>` : ''}`;
+}
+
+// The fields: the domain and the key up front, the rest under More options.
+function dnswFields(p, dns, more) {
+  const hook = dns.provider === 'webhook';
+  return `<div class="dnsw-fields">
+    <div class="fg"><label for="${p}Name">${esc(tr('', 'Your domain'))}</label>
+      <input class="hashem-input u-mono" id="${p}Name" data-f="name" value="${esc(dns.name || '')}" placeholder="vpn.example.com" autocomplete="off" spellcheck="false" inputmode="url">
+      <div class="ent-help u-m-0">${esc(tr('', 'Users put this name in their app instead of an IP. The panel makes its records.'))}</div></div>
+    <div class="fg${hook ? ' hidden' : ''}" data-cf>
+      <label for="${p}Tok">${esc(tr('', 'Cloudflare key'))}</label>
+      <input class="hashem-input u-mono" id="${p}Tok" data-f="token" type="password" autocomplete="off" placeholder="${esc(tr('', dns.has_token && !hook ? 'Saved; paste a new one to replace it' : 'Paste the key'))}">
+      <details class="dnsw-how"><summary>${esc(tr('', 'How do I get the key?'))}</summary><ol>
+        <li>${esc(tr('', 'Open dash.cloudflare.com, then My Profile, then API Tokens.'))}</li>
+        <li>${esc(tr('', 'Create Token, and use the template “Edit zone DNS”.'))}</li>
+        <li>${esc(tr('', 'Under Zone Resources pick your domain, then Continue, Create Token, and copy the key here.'))}</li></ol></details></div>
+    <div class="fg${hook ? '' : ' hidden'}" data-hook><label for="${p}URL">${esc(tr('', 'Webhook URL'))}</label>
+      <input class="hashem-input u-mono" id="${p}URL" data-f="url" value="${esc(dns.url || '')}" placeholder="https://example.com/hashem-dns" autocomplete="off">
+      <label for="${p}Sec" class="u-mt-8">${esc(tr('', 'Secret (optional, sent as Authorization: Bearer)'))}</label>
+      <input class="hashem-input u-mono" id="${p}Sec" data-f="secret" type="password" autocomplete="off" placeholder="${esc(tr('', dns.has_token && hook ? 'Saved; paste a new one to replace it' : 'Optional'))}">
+      <div class="ent-help u-m-0">${esc(tr('', 'The hub that writes the domain POSTs {"name", "ips", "ips6", "weights", "ttl"} to it whenever the working servers change, and every 30 seconds. Any 2xx answer counts as done.'))}</div></div>
+    ${more ? `<details class="dnsw-more"><summary>${esc(tr('', 'More options'))}</summary>
+      <div class="fg"><label for="${p}Prov">${esc(tr('', 'DNS provider'))}</label><select class="hashem-input" id="${p}Prov" data-f="provider">
+        <option value="cloudflare"${hook ? '' : ' selected'}>Cloudflare</option><option value="webhook"${hook ? ' selected' : ''}>${esc(tr('', 'Webhook (any DNS provider or script)'))}</option></select></div>
+      <div class="fg"><label for="${p}TTL">${esc(tr('', 'TTL (seconds)'))}</label><input class="hashem-input cl-num" id="${p}TTL" data-f="ttl" type="number" min="60" max="3600" value="${dns.ttl || 60}">
+        <div class="ent-help u-m-0">${esc(tr('', 'How long phones keep the old answer. 60 moves users fastest.'))}</div></div>
+      ${dnswRoute(p, dns)}</details>` : ''}
+  </div>`;
+}
+
+// How this server reaches Cloudflare: each server's own choice (its tunnels).
+function dnswRoute(p, dns) {
+  return `<div class="fg${dns.provider === 'webhook' ? ' hidden' : ''}" data-cf><div class="wd-lbl" id="${p}RouteL">${esc(tr('', 'How this server reaches Cloudflare'))}</div>
+    <div class="rt-pick" id="${p}Route" role="radiogroup" aria-labelledby="${p}RouteL"></div>
+    <div class="u-flex-center-wrap8"><button type="button" class="hashem-btn hashem-btn-secondary u-btn-xs" data-act="probe">${esc(tr('', 'Check connection'))}</button>
+      <span class="ent-help u-m-0" data-probe aria-live="polite"></span></div>
+    <div class="ent-help u-m-0">${esc(tr('', 'Keep Direct unless this server cannot reach Cloudflare. With a tunnel, the call goes out from that tunnel’s foreign server.'))}</div></div>`;
+}
+
+function dnswShares(p, dns) {
+  const ms = dns.members || [];
+  // the sliders start in the middle for equal shares (weights are relative)
+  const top = Math.max(1, ...ms.map(m => m.weight || 1));
+  const pos = m => Math.min(100, Math.max(1, Math.round(50 * (m.weight || 1) / top)));
+  return `<div class="dnsw-panel hidden" data-panel="shares">
+    <div class="dnsw-sliders">${ms.map(m => `<div class="dnsw-sl"><label for="${p}W${esc(m.id)}">${bdi(clHubLbl(m.name, m.ip) || m.id)}</label>
+      <input type="range" min="1" max="100" id="${p}W${esc(m.id)}" data-w="${esc(m.id)}" value="${pos(m)}"><b data-pct="${esc(m.id)}"></b></div>`).join('')}</div>
+    <div class="ent-help u-m-0">${esc(tr('', 'Shares are approximate: a DNS name cannot split users exactly. With different shares the domain points to one server at a time, in turns of about the TTL.'))}</div>
+    <div class="u-flex u-gap-8 u-wrap"><button type="button" class="hashem-btn hashem-btn-primary" data-act="save-shares">${esc(tr('', 'Save shares'))}</button>
+      <button type="button" class="hashem-btn hashem-btn-ghost" data-act="equal">${esc(tr('', 'Make them equal'))}</button></div></div>`;
+}
+
+function dnswBody(p, dns) {
+  const role = dnswRole(dns), n = (dns.members || []).length || 1;
+  const out = `<div class="dns-test hidden" data-out role="status" aria-live="polite"></div>`;
+  if (role === 'follower') {
+    return `<div class="cl-alert dnsw-follow"><b>${esc(tr('', 'This server follows'))}</b><span class="u-mono" dir="ltr">${esc(dns.managed_name || '')}</span><span>${esc(tr('', 'The domain, the key and the shares are changed there. If that server stops, this one keeps the domain up to date by itself.'))}</span></div>
+      <div class="dnsw-actions"><button type="button" class="hashem-btn hashem-btn-secondary" data-act="takeover">${esc(tr('', 'Control from this server'))}</button></div>
+      <details class="dnsw-more"><summary>${esc(tr('', 'How this server reaches Cloudflare'))}</summary>${dnswRoute(p, dns)}
+        <button type="button" class="hashem-btn hashem-btn-primary u-btn-xs" data-act="save-route">${esc(tr('', 'Save'))}</button></details>${out}`;
+  }
+  if (role === 'controller' || role === 'solo') {
+    return (role === 'solo' ? `<div class="cl-alert">${esc(tr('', 'On only on this server (set up by an older version): the other servers do not get its settings.'))}</div>` : '')
+      + `<div class="dnsw-actions">
+        ${role === 'solo' ? `<button type="button" class="hashem-btn hashem-btn-primary" data-act="claim">${esc(tr('', 'Control all servers from here'))}</button>` : ''}
+        ${n > 1 ? `<button type="button" class="hashem-btn hashem-btn-secondary" data-act="toggle" data-to="shares">${esc(tr('', 'Change shares'))}</button>` : ''}
+        <button type="button" class="hashem-btn hashem-btn-secondary" data-act="toggle" data-to="settings">${esc(tr('', 'Settings'))}</button>
+        <button type="button" class="hashem-btn hashem-btn-ghost" data-act="off">${esc(tr('', 'Turn off'))}</button></div>
+      ${n > 1 ? dnswShares(p, dns) : ''}
+      <div class="dnsw-panel hidden" data-panel="settings">${dnswFields(p, dns, true)}
+        <div class="u-flex u-gap-8 u-wrap"><button type="button" class="hashem-btn hashem-btn-secondary" data-act="test">${esc(tr('', 'Test'))}</button>
+          <button type="button" class="hashem-btn hashem-btn-primary" data-act="save">${esc(tr('', 'Save'))}</button></div></div>${out}`;
+  }
+  return `<div class="dnsw-setup">${dnswFields(p, dns, true)}
+    <div class="dnsw-go"><button type="button" class="hashem-btn hashem-btn-primary dnsw-big" data-act="on">${esc(n > 1 ? tr('', 'Turn on for all') + ' ' + n + ' ' + tr('', 'servers') : tr('', 'Turn on'))}</button>
+      <span class="ent-help u-m-0">${esc(tr('', n > 1 ? 'The key is checked first. This server will control the domain and the others follow it.' : 'The key is checked first.'))}</span></div>${out}</div>`;
+}
+
+// dnsWRender draws the widget in root. The picture is redrawn every time;
+// the form only when the role or the servers change (typing is never lost).
+function dnsWRender(root, dns) {
+  if (!root) return;
+  root._dns = dns;
+  const p = root.id + '-';
+  const sig = dnswRole(dns) + '|' + (dns.members || []).map(m => m.id).join(',');
+  if (root.dataset.sig !== sig) {
+    root.dataset.sig = sig;
+    root.innerHTML = `<div class="dnsw-live" data-live></div><div class="dnsw-body" data-body>${dnswBody(p, dns)}</div>`;
+    if (!root._wired) { root._wired = true; dnswWire(root); }
+    const rp = root.querySelector('.rt-pick');
+    if (rp) rtRender(rp, dns.tunnels || [], { route: dns.route, tunnel_id: dns.tunnel_id, tunnel_port: dns.tunnel_port });
+    dnswPct(root);
+  }
+  root.querySelector('[data-live]').innerHTML = dnswPicture(dns);
+}
+
+function dnswPct(root) {
+  const ins = [...root.querySelectorAll('input[data-w]')];
+  const sum = ins.reduce((a, i) => a + (Number(i.value) || 1), 0) || 1;
+  ins.forEach(i => { const b = root.querySelector(`[data-pct="${CSS.escape(i.dataset.w)}"]`); if (b) b.textContent = Math.round(100 * (Number(i.value) || 1) / sum) + '%'; });
+}
+
+function dnswOut(root, cls, html) {
+  const o = root.querySelector('[data-out]');
+  if (!o) return;
+  o.className = 'dns-test ' + cls;
+  o.innerHTML = html;
+}
+
+// The form's values as the API takes them.
+function dnswBodyOf(root) {
+  const f = k => root.querySelector(`[data-f="${k}"]`);
+  const prov = f('provider') ? f('provider').value : ((root._dns || {}).provider === 'webhook' ? 'webhook' : 'cloudflare');
+  const b = { provider: prov, name: f('name') ? f('name').value.trim() : (root._dns || {}).name };
+  if (f('ttl')) b.ttl = Number(f('ttl').value) || 60;
+  if (prov === 'webhook') {
+    b.url = f('url') ? f('url').value.trim() : '';
+    if (f('secret') && f('secret').value.trim()) b.token = f('secret').value.trim();
+  } else if (f('token') && f('token').value.trim()) b.token = f('token').value.trim();
+  const rp = root.querySelector('.rt-pick');
+  if (rp && prov !== 'webhook') {
+    const v = rtValue(rp);
+    b.route = v.route;
+    if (v.tunnel_id != null) b.tunnel_id = v.tunnel_id; else if (v.tunnel_port) b.tunnel_port = v.tunnel_port;
+  }
+  return b;
+}
+
+function dnswTestHtml(ok, provider, name, r, err) {
+  if (!ok) return `<b>✗ ${esc(tr('', 'It did not work'))}</b><span>${esc(err || '')}</span>`;
+  const recs = (r && r.records) || [], list = recs.map(bdi).join(', ');
+  if (provider === 'webhook') return `<b>✓ ${esc(tr('', 'The webhook answered.'))}</b>`;
+  return `<b>✓ ${esc(tr('', 'The key works.'))}${r.zone ? ' ' + esc(tr('', 'Domain found:')) + ' ' + bdi(r.zone) : ''}</b>`
+    + `<span>${recs.length ? bdi(name) + ' ' + esc(tr('', 'points to')) + ' ' + list : bdi(name) + ' ' + esc(tr('', 'has no address yet: it is made when you turn it on.'))}</span>`
+    + (r.proxied ? `<span>${esc(tr('', 'The record is proxied (orange cloud): set it to DNS only (grey cloud) in Cloudflare, tunnels do not pass the proxy.'))}</span>` : '');
+}
+
+async function dnswSend(root, btn, body, busyText) {
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = tr('', busyText); }
+  try { return await api('/api/cluster/dns', body); }
+  finally { if (btn && document.body.contains(btn)) { btn.disabled = false; btn.textContent = label; } }
+}
+
+// After a change the widgets are drawn again from the new state.
+function dnswReload() {
+  document.querySelectorAll('.dnsw').forEach(r => { r.dataset.sig = ''; });
+  _clInsKey = null;
+  loadClusterStatus();
+}
+
+function dnswWire(root) {
+  root.addEventListener('input', e => {
+    if (e.target.matches('input[data-w]')) dnswPct(root);
+  });
+  root.addEventListener('change', e => {
+    if (e.target.matches('[data-f="provider"]')) {
+      const hook = e.target.value === 'webhook';
+      root.querySelectorAll('[data-cf]').forEach(x => x.classList.toggle('hidden', hook));
+      root.querySelectorAll('[data-hook]').forEach(x => x.classList.toggle('hidden', !hook));
+    }
+  });
+  root.addEventListener('click', async e => {
+    const b = e.target.closest('[data-act]');
+    if (!b || !root.contains(b)) return;
+    const act = b.dataset.act, dns = root._dns || {};
+    try {
+      if (act === 'toggle') {
+        root.querySelectorAll('[data-panel]').forEach(x => x.classList.toggle('hidden', x.dataset.panel !== b.dataset.to || !x.classList.contains('hidden')));
+        return;
+      }
+      if (act === 'sync') { clHubSyncNow(b.dataset.hub); return; }
+      if (act === 'probe') {
+        const rp = root.querySelector('.rt-pick');
+        if (rp) await routeProbe(rtValue(rp), root.querySelector('[data-probe]'), 'cloudflare');
+        return;
+      }
+      if (act === 'equal') {
+        root.querySelectorAll('input[data-w]').forEach(i => { i.value = 50; });
+        dnswPct(root);
+        return;
+      }
+      if (act === 'save-shares') {
+        const hw = {};
+        root.querySelectorAll('input[data-w]').forEach(i => { hw[i.dataset.w] = Math.min(100, Math.max(1, Math.round(Number(i.value)) || 1)); });
+        await dnswSend(root, b, { hub_weights: hw }, 'Saving…');
+        toastOk(tr('', 'Shares saved'), tr('', 'The other servers get them in a few seconds.'));
+        dnswReload();
+        return;
+      }
+      if (act === 'off') {
+        if (!await entConfirm(tr('', 'Turn off DNS failover'), tr('', 'It turns off on every server. The domain keeps the addresses it has now, and is not changed any more.'), tr('', 'Turn off'))) return;
+        await dnswSend(root, b, { enabled: false }, 'Saving…');
+        toastOk(tr('', 'DNS failover is off'));
+        dnswReload();
+        return;
+      }
+      if (act === 'takeover' || act === 'claim') {
+        if (act === 'takeover' && !await entConfirm(tr('', 'Control from this server'), tr('', 'This server will control the domain and the shares, and the other servers follow it, including the one that controls it now.'), tr('', 'Control from here'))) return;
+        await dnswSend(root, b, act === 'takeover' ? { take_over: true } : { enabled: true }, 'Saving…');
+        toastOk(tr('', 'This server controls the domain now'));
+        dnswReload();
+        return;
+      }
+      if (act === 'save-route') {
+        const rp = root.querySelector('.rt-pick'), v = rtValue(rp);
+        await dnswSend(root, b, v.tunnel_id != null ? { route: v.route, tunnel_id: v.tunnel_id } : v.tunnel_port ? { route: v.route, tunnel_port: v.tunnel_port } : { route: v.route }, 'Saving…');
+        toastOk(tr('', 'Saved'));
+        dnswReload();
+        return;
+      }
+      const body = dnswBodyOf(root);
+      if (!body.name) { dnswOut(root, 'err', `<b>✗ ${esc(tr('', 'Write your domain first, such as vpn.example.com.'))}</b>`); return; }
+      if (act === 'test' || act === 'on') {
+        dnswOut(root, '', esc(tr('', 'Checking the key and the domain…')));
+        let r;
+        try { r = await dnswSend(root, b, Object.assign({}, body, { test: true }), 'Checking…'); }
+        catch (err) { dnswOut(root, 'err', dnswTestHtml(false, body.provider, body.name, null, err.message || String(err))); return; }
+        dnswOut(root, r.proxied ? 'err' : 'ok', dnswTestHtml(true, body.provider, body.name, r));
+        if (act === 'test' || r.proxied) return;
+      }
+      // turn on (after a passed test) or save the settings: this server controls
+      await dnswSend(root, b, Object.assign(body, { enabled: true }), 'Turning on…');
+      toastOk(tr('', act === 'on' ? 'DNS failover is on' : 'Saved'), (dns.members || []).length > 1 ? tr('', 'The other servers get the settings in a few seconds.') : body.name);
+      dnswReload();
+    } catch (err) {
+      dnswOut(root, 'err', `<b>✗ ${esc(tr('', 'It did not work'))}</b><span>${esc(err.message || String(err))}</span>`);
+    }
+  });
+}
+
+// The list view's card.
 function clRenderDNS(dns) {
   const b = $('clDnsBadge');
+  const role = dnswRole(dns);
   b.className = 'badge ' + (!dns.enabled ? 'dim' : dns.error ? 'err' : 'ok');
-  b.textContent = tr('', !dns.enabled ? 'Off' : dns.error ? 'Error' : 'On');
-  if (!_clDnsFilled) {
-    _clDnsFilled = true;
-    $('clDnsName').value = dns.name || '';
-    $('clDnsTTL').value = dns.ttl || 60;
-    $('clDnsWeight').value = dns.weight || 1;
-    $('clDnsMaster').checked = !!dns.master;
-    $('clDnsEnabled').checked = !!dns.enabled;
-    $('clDnsProvider').value = dns.provider === 'webhook' ? 'webhook' : 'cloudflare';
-    $('clDnsURL').value = dns.url || '';
-    _clDnsSaved = { provider: dns.provider === 'webhook' ? 'webhook' : 'cloudflare', hasToken: !!dns.has_token };
-    clDnsProviderChanged();
-  }
-  rtRender($('clDnsRoutePick'), dns.tunnels || [], { route: dns.route, tunnel_id: dns.tunnel_id, tunnel_port: dns.tunnel_port });
-  clDnsRouteChanged();
-  clDnsRenderMembers(dns.members || []);
-  clDnsMasterChanged();
-  clDnsRenderShares(dns.shares || []);
-  const kpi = (k, v, cls) => `<div class="cl-kpi ${cls || ''}"><span>${esc(tr('', k))}</span><b class="u-fs-14">${v}</b></div>`;
-  const kp = $('clDnsKpis');
-  kp.classList.toggle('hidden', !dns.enabled);
-  if (dns.enabled) {
-    kp.innerHTML = kpi('Points to', esc((dns.records || []).join(', ') || '—'), (dns.records || []).length ? 'ok' : '')
-      + kpi('Writes the record', esc(tr('', dns.leader ? 'This hub' : 'Another hub')))
-      + kpi('Last check', esc(dns.last_run || '—'));
-  }
-  const er = $('clDnsErr');
-  er.classList.toggle('hidden', !dns.error);
-  er.textContent = dns.error ? tr('', 'Error:') + ' ' + dns.error : '';
-}
-
-// A bar of who gets what share, drawn like a pool's bar.
-function clDnsRenderShares(shares) {
-  const box = $('clDnsShareViz');
-  box.classList.toggle('hidden', shares.length < 2);
-  if (shares.length < 2) { box.innerHTML = ''; return; }
-  box.innerHTML = `<div class="cl-bar" role="img" aria-label="${esc(tr('', 'Share of users'))}">`
-    + shares.map((h, i) => `<span class="cl-c${i % 6}" style="width:${h.percent}%"></span>`).join('') + '</div>'
-    + '<div class="cl-share-leg">' + shares.map((h, i) => `<span><span class="cl-sw cl-c${i % 6}"></span>${esc(h.name || h.ip)} <b>${h.percent}%</b></span>`).join('') + '</div>';
-}
-
-function clDnsRouteChanged() {
-  $('clDnsProbeRow').classList.toggle('hidden', rtValue($('clDnsRoutePick')).route !== 'tunnel');
-}
-$('clDnsRoutePick').addEventListener('change', () => {
-  clDnsRouteChanged();
-  $('clDnsProbeOut').textContent = '';
-  if (rtValue($('clDnsRoutePick')).route === 'tunnel') clDnsProbe();
-});
-
-// The master's table of shares. Redrawn only when the hubs change, so typing is not lost.
-let _clDnsMemSig = '';
-function clDnsRenderMembers(members) {
-  const sig = members.map(m => m.id).join(',');
-  if (sig === _clDnsMemSig && $('clDnsMembers').children.length) return;
-  _clDnsMemSig = sig;
-  $('clDnsMembers').innerHTML = `<div class="wd-lbl">${esc(tr('', 'Share of users for each hub (1-100)'))}</div>` + members.map(m => `<div class="u-flex-gap-8 u-mb-8 u-ai-c"><span class="u-flex-1">${esc(m.name || m.id)}${m.self ? ' <span class="badge dim">' + esc(tr('', 'this hub')) + '</span>' : ''}${m.up ? '' : ' <span class="badge warn">' + esc(tr('', 'down')) + '</span>'}</span><input class="hashem-input cl-num" type="number" min="1" max="100" data-hub="${esc(m.id)}" data-self="${m.self ? 1 : 0}" value="${m.weight || 1}" aria-label="${esc(m.name || m.id)}"></div>`).join('');
-}
-function clDnsMasterChanged() {
-  const on = $('clDnsMaster').checked;
-  $('clDnsMembersRow').classList.toggle('hidden', !on);
-  $('clDnsWeightRow').classList.toggle('hidden', on);
-}
-
-// The token saved for one provider is never used by the other one.
-let _clDnsSaved = { provider: 'cloudflare', hasToken: false };
-function clDnsProviderChanged() {
-  const prov = $('clDnsProvider').value, hook = prov === 'webhook';
-  $('clDnsURLRow').classList.toggle('hidden', !hook);
-  $('clDnsTokenLabel').textContent = tr('', hook ? 'Secret (optional, sent as Authorization: Bearer)' : 'Cloudflare API token (Zone, DNS, Edit)');
-  $('clDnsHookHelp').classList.toggle('hidden', !hook);
-  $('clDnsRouteSub').classList.toggle('hidden', hook);
-  $('clDnsCfWeightHelp').classList.toggle('hidden', hook);
-  const saved = _clDnsSaved.provider === prov && _clDnsSaved.hasToken;
-  $('clDnsToken').placeholder = tr('', saved ? 'Saved; paste a new one to replace it' : hook ? 'Optional' : 'API token');
-}
-
-async function clDnsSave(test) {
-  const provider = $('clDnsProvider').value;
-  const body = { provider, url: $('clDnsURL').value.trim(), name: $('clDnsName').value.trim(), ttl: Number($('clDnsTTL').value) || 60, weight: Math.min(100, Math.max(1, Math.round(Number($('clDnsWeight').value)) || 1)), enabled: $('clDnsEnabled').checked, master: $('clDnsMaster').checked, test: !!test };
-  if (provider !== 'webhook') {
-    const v = rtValue($('clDnsRoutePick'));
-    body.route = v.route;
-    if (v.tunnel_id != null) body.tunnel_id = v.tunnel_id;
-    else if (v.tunnel_port) body.tunnel_port = v.tunnel_port;
-  }
-  if (body.master) {
-    const hw = {};
-    document.querySelectorAll('#clDnsMembers input[data-hub]').forEach(i => {
-      const w = Math.min(100, Math.max(1, Math.round(Number(i.value)) || 1));
-      if (i.dataset.self === '1') body.weight = w; else hw[i.dataset.hub] = w;
-    });
-    body.hub_weights = hw;
-  }
-  const tok = $('clDnsToken').value.trim();
-  if (tok) body.token = tok;
-  try {
-    const r = await api('/api/cluster/dns', body);
-    $('clDnsRoutePick').dataset.touched = '';
-    if (test) toastOk(tr('', provider === 'webhook' ? 'The webhook answered' : 'Cloudflare answered'), tr('', provider === 'webhook' ? 'Working hubs sent:' : 'The record points to:') + ' ' + ((r.records || []).join(', ') || '—'));
-    else { toastOk(tr('', 'DNS failover saved')); $('clDnsToken').value = ''; _clDnsFilled = false; }
-  } catch (e) { toastErr(tr('', test ? 'The test failed' : 'Cannot save'), e.message || String(e)); }
-  if (!test) loadClusterStatus();
+  b.textContent = tr('', !dns.enabled ? 'Off' : dns.error ? 'Error' : role === 'follower' ? 'On, follows' : 'On');
+  dnsWRender($('clDnsW'), dns);
 }
 
 // ---- foreign server ----
@@ -11580,6 +11791,8 @@ function clInspect(d) {
   }
   const live = $('clInsLive');
   if (live) live.innerHTML = clInsLive(key, d);
+  const w = $('clInsDnsW');
+  if (w) dnsWRender(w, d.dns || {});
 }
 
 // clInsRefresh rebuilds the inspector's forms on the next render (after a save).
@@ -11634,12 +11847,7 @@ function clInsLive(key, d) {
     return clKV([['Status', st, true], ['Error', h.error || ''], ['Public IP', h.public_ip || '—'], ['Latency', clMs(h.up ? h.latency_ms : -1)],
       ['Last seen', h.last_seen || '—'], ['Version', (esc(h.version || '') + ' ' + clHubVerBadge(h)).trim(), true], ['Hub id', h.id], ['Pools There', pools, true]]);
   }
-  if (k === 'dns') {
-    const dns = d.dns || {};
-    const st = !dns.enabled ? clSt('off', 'Off') : dns.error ? clSt('err', 'Error') : clSt('on', 'On');
-    return clKV([['Status', st, true], ['Points to', (dns.records || []).join(', ') || '—'], ['Working hubs', (dns.want || []).join(', ') || '—'],
-      ['Writer', dns.enabled ? tr('', dns.leader ? 'this hub' : 'another hub (the lowest id)') : ''], ['Last check', dns.last_run || ''], ['Error', dns.error || '']]);
-  }
+  if (k === 'dns') return ''; // the widget draws it (dnsWRender)
   if (k === 'users') {
     let n = 0, known = false;
     (d.pools || []).forEach(p => (p.member_status || []).forEach(s => { if (s.conns >= 0) { n += s.conns; known = true; } }));
@@ -11771,24 +11979,8 @@ function clInsForm(key, d) {
       </div>`;
   }
   if (k === 'dns') {
-    const dns = d.dns || {}, hook = dns.provider === 'webhook';
-    return clInsHead(tr('', 'DNS Failover'), tr('', 'A domain that always points to the Iran hubs that work.')) + `
-      <div class="cl-ins-sec">
-        <div class="fg"><label for="clIDnsProv">${esc(tr('', 'Provider'))}</label><select class="hashem-input" id="clIDnsProv" onchange="clInsDnsProv()">
-          <option value="cloudflare" ${hook ? '' : 'selected'}>Cloudflare</option><option value="webhook" ${hook ? 'selected' : ''}>${esc(tr('', 'Webhook (any DNS provider or script)'))}</option></select></div>
-        ${clIn('clIDnsName', 'Record name', dns.name || '', 'placeholder="vpn.example.com" autocomplete="off"')}
-        <div class="${hook ? '' : 'hidden'}" id="clIDnsURLRow">${clIn('clIDnsURL', 'Webhook URL', dns.url || '', 'placeholder="https://example.com/hashem-dns" autocomplete="off"')}</div>
-        <div class="ent-grid-2">
-          ${clIn('clIDnsTTL', 'TTL (seconds)', dns.ttl || 60, 'type="number" min="60" max="3600"')}
-          <div class="fg"><label for="clIDnsTok" id="clIDnsTokL">${esc(tr('', hook ? 'Secret (optional, sent as Authorization: Bearer)' : 'Cloudflare API token (Zone, DNS, Edit)'))}</label>
-            <input class="hashem-input" id="clIDnsTok" type="password" autocomplete="off" placeholder="${esc(tr('', dns.has_token ? 'Saved; paste a new one to replace it' : hook ? 'Optional' : 'API token'))}"></div>
-        </div>
-        <label class="u-check-row"><input type="checkbox" id="clIDnsOn" ${dns.enabled ? 'checked' : ''}> ${esc(tr('', 'Keep the record pointed at the working hubs'))}</label>
-        <div class="u-flex u-gap-8 u-wrap">
-          <button type="button" class="hashem-btn hashem-btn-secondary" onclick="clInsDnsSave(true)">${esc(tr('', 'Test'))}</button>
-          <button type="button" class="hashem-btn hashem-btn-primary" onclick="clInsDnsSave(false)">${esc(tr('', 'Save'))}</button>
-        </div>
-      </div>`;
+    return clInsHead(tr('', 'DNS Failover'), tr('', 'One domain for all Iran servers: when one stops, its users go to the others by themselves.'))
+      + `<div class="cl-ins-sec"><div class="dnsw" id="clInsDnsW"></div></div>`;
   }
   if (k === 'users') {
     return clInsHead(tr('', 'Users'), tr('', 'Who connects to this hub')) + `
@@ -11872,26 +12064,6 @@ async function clInsRules() {
     box.textContent = (await r.text()) || tr('', 'No rules: no pool and no forwarding.');
   } catch (e) { box.textContent = String(e); }
   box.classList.remove('hidden');
-}
-
-function clInsDnsProv() {
-  const hook = $('clIDnsProv').value === 'webhook', dns = (_clusterData && _clusterData.dns) || {};
-  $('clIDnsURLRow').classList.toggle('hidden', !hook);
-  $('clIDnsTokL').textContent = tr('', hook ? 'Secret (optional, sent as Authorization: Bearer)' : 'Cloudflare API token (Zone, DNS, Edit)');
-  const saved = dns.has_token && (dns.provider === 'webhook') === hook;
-  $('clIDnsTok').placeholder = tr('', saved ? 'Saved; paste a new one to replace it' : hook ? 'Optional' : 'API token');
-}
-
-async function clInsDnsSave(test) {
-  const provider = $('clIDnsProv').value;
-  const body = { provider, url: $('clIDnsURL').value.trim(), name: $('clIDnsName').value.trim(), ttl: Number($('clIDnsTTL').value) || 60, enabled: $('clIDnsOn').checked, test: !!test };
-  const tok = $('clIDnsTok').value.trim();
-  if (tok) body.token = tok;
-  try {
-    const r = await api('/api/cluster/dns', body);
-    if (test) toastOk(tr('', provider === 'webhook' ? 'The webhook answered' : 'Cloudflare answered'), tr('', provider === 'webhook' ? 'Working hubs sent:' : 'The record points to:') + ' ' + ((r.records || []).join(', ') || '—'));
-    else { toastOk(tr('', 'DNS failover saved')); _clDnsFilled = false; clInsRefresh(); }
-  } catch (e) { toastErr(tr('', test ? 'The test failed' : 'Cannot save'), e.message || String(e)); }
 }
 
 // ---- events ----

@@ -422,7 +422,8 @@ func TestDNSMaster(t *testing.T) {
 	if rr.Code != 200 {
 		t.Fatalf("%d %s", rr.Code, rr.Body)
 	}
-	if d := loadClusterConfig().DNS; !d.Master || len(d.HubWeights) != 1 || d.HubWeights["hub-a"] != 30 {
+	// (the shares are kept; "master" alone no longer makes a controller: turning it on does)
+	if d := loadClusterConfig().DNS; len(d.HubWeights) != 1 || d.HubWeights["hub-a"] != 30 {
 		t.Fatalf("%+v", d)
 	}
 	rr = httptest.NewRecorder()

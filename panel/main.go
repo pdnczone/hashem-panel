@@ -827,6 +827,7 @@ func main() {
 	go startRescueMonitor()
 	go startClusterMonitor()
 	go startMeshLoop()
+	go startDNSLoop() // cluster_dns_ctl.go: also on a hub with no linked hub
 	go startNodeLoop()
 	go startNodeMigrateWatch()
 	go startNodeBackups()

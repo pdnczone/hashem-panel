@@ -55,7 +55,31 @@ type DNSConfig struct {
 	Route      string `json:"route,omitempty"`
 	TunnelPort int    `json:"tunnel_port,omitempty"` // the local SOCKS5 port; set by the panel for a chosen tunnel
 	TunnelID   *int   `json:"tunnel_id,omitempty"`
+
+	// Version is when these settings were last saved on the hub that controls
+	// them (Unix ms). The controller sends its settings to every linked hub
+	// (cluster_dns_ctl.go); a hub that follows keeps ManagedBy (the
+	// controller's id) and ManagedName, and its settings change only through
+	// the controller.
+	Version     int64  `json:"version,omitempty"`
+	ManagedBy   string `json:"managed_by,omitempty"`
+	ManagedName string `json:"managed_name,omitempty"`
 }
+
+// dnsControllerID is the hub whose settings this hub uses: the controller it
+// follows, itself when it controls, "" when it does neither.
+func dnsControllerID(c ClusterConfig) string {
+	switch {
+	case c.DNS.ManagedBy != "":
+		return c.DNS.ManagedBy
+	case c.DNS.Master:
+		return c.NodeID
+	}
+	return ""
+}
+
+// dnsClampTTL keeps a TTL Cloudflare and the failover can use: 60..3600 s.
+func dnsClampTTL(t int) int { return min(max(t, 60), 3600) }
 
 var (
 	dnsMu      sync.Mutex
@@ -65,14 +89,19 @@ var (
 	dnsWant    []string
 	dnsLastSig string // what the webhook last got: working hubs and their weights
 	dnsEvery   = 30 * time.Second
-	cfAPI      = "https://api.cloudflare.com/client/v4"
-	cfClient   = &http.Client{Timeout: 15 * time.Second}
+	// dnsTakeoverAfter: how long the master must be silent before another hub
+	// writes the record (a short break of the link between hubs is no reason
+	// to change the record twice). Two hubs that cannot reach each other at
+	// all both write: nothing on two hubs alone can tell that from a dead one.
+	dnsTakeoverAfter = 30 * time.Second
+	cfAPI            = "https://api.cloudflare.com/client/v4"
+	cfClient         = &http.Client{Timeout: 15 * time.Second}
 )
 
 // dnsHubWeight is hub id's share: the master's own setting for it, else what
 // the hub reports in its heartbeat.
 func dnsHubWeight(c ClusterConfig, id string, reported int) int {
-	if c.DNS.Master {
+	if c.DNS.Master || c.DNS.ManagedBy != "" { // the controller's shares travel with its settings
 		if w := c.DNS.HubWeights[id]; w > 0 {
 			return dnsWeight(w)
 		}
@@ -115,7 +144,15 @@ func dnsHealthyGroups(c ClusterConfig) (groups []dnsGroup, leader bool) {
 	meshMu.Lock()
 	for _, h := range c.Hubs {
 		st := meshState[h.ID]
-		if st == nil || !st.Up {
+		if st == nil {
+			continue
+		}
+		if !st.Up {
+			// A master that stopped answering a moment ago may be back at once:
+			// the others wait dnsTakeoverAfter before they write in its place.
+			if st.Beat.Master && st.Beat.DNS == c.DNS.Name && !c.DNS.Master && time.Since(st.LastSeen) < dnsTakeoverAfter {
+				leader = false
+			}
 			continue
 		}
 		if st.Beat.DNS == c.DNS.Name {
@@ -276,7 +313,7 @@ func dnsTick(c ClusterConfig) {
 	dnsLeader, dnsWant = leader, ips
 	due := time.Since(dnsLastRun) >= dnsEvery || strings.Join(want, ",") != strings.Join(c.DNS.Records, ",") || (hook && sig != dnsLastSig)
 	dnsMu.Unlock()
-	if !leader || !due || len(want) == 0 {
+	if !leader || !due || len(want) == 0 || !dnsSettled(c) {
 		return
 	}
 	hubIPs := map[string]bool{}
@@ -322,6 +359,25 @@ func dnsTick(c ClusterConfig) {
 		clusterEventf("info", "DNS failover: %s now points to %s.", c.DNS.Name, strings.Join(got, ", "))
 		_, _ = updateClusterConfig(func(x *ClusterConfig) error { x.DNS.Records = got; return nil })
 	}
+}
+
+// dnsSettled: this hub knows enough to write the record. Right after the panel
+// starts its own health is not known yet (no snapshot) and a linked hub has
+// not answered or missed enough beats to count as down: writing then would
+// take working hubs out of the record.
+func dnsSettled(c ClusterConfig) bool {
+	if s := lbSnapshot(); s == nil || s.AgeMs() < 0 {
+		return false
+	}
+	meshMu.Lock()
+	defer meshMu.Unlock()
+	for _, h := range c.Hubs {
+		st := meshState[h.ID]
+		if st == nil || (!st.Up && st.Misses < meshFall) {
+			return false
+		}
+	}
+	return true
 }
 
 // dnsReady: DNS failover is on and has what its provider needs.
@@ -474,19 +530,25 @@ func cfCall(d DNSConfig, method, path string, body any) (json.RawMessage, error)
 
 // cfZone finds the zone that holds name by trying its parent domains.
 func cfZone(d DNSConfig, name string) (string, error) {
+	id, _, err := cfZoneFind(d, name)
+	return id, err
+}
+
+// cfZoneFind is cfZone with the zone's name (blackoc.ir for vpn.blackoc.ir).
+func cfZoneFind(d DNSConfig, name string) (id, zone string, err error) {
 	parts := strings.Split(strings.TrimSuffix(name, "."), ".")
 	for i := 0; i+2 <= len(parts); i++ {
 		zone := strings.Join(parts[i:], ".")
 		res, err := cfCall(d, "GET", "/zones?name="+url.QueryEscape(zone), nil)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		var zs []struct{ ID string }
 		if json.Unmarshal(res, &zs) == nil && len(zs) > 0 {
-			return zs[0].ID, nil
+			return zs[0].ID, zone, nil
 		}
 	}
-	return "", fmt.Errorf("no Cloudflare zone holds %s for this token", name)
+	return "", "", fmt.Errorf("no Cloudflare zone holds %s for this token: add the domain to this Cloudflare account, or give the token access to its zone", name)
 }
 
 type cfRecord struct {
@@ -596,32 +658,87 @@ type dnsViewT struct {
 	TunnelID   *int           `json:"tunnel_id"`
 	TunnelPort int            `json:"tunnel_port"` // an older version's manual port (no TunnelID)
 	Tunnels    []tunnelChoice `json:"tunnels"`
+
+	// Role: "controller" (its settings go to every hub), "follower" (it uses
+	// ManagedName's), "solo" (on, from an older version, not sent to the
+	// others) or "off".
+	Role        string `json:"role"`
+	ManagedName string `json:"managed_name,omitempty"`
+	ManagedBy   string `json:"managed_by,omitempty"`
+	SelfID      string `json:"self_id"`
 }
 
 // dnsMember is a hub of the cluster as the master's share table lists it.
 type dnsMember struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`
+	IP     string `json:"ip,omitempty"`
 	Weight int    `json:"weight"`
 	Self   bool   `json:"self,omitempty"`
 	Up     bool   `json:"up"`
+	// DNSOn: the hub keeps the same record (DNS failover on there, with this
+	// name), so it takes over the writes when the writing hub goes down.
+	DNSOn   bool `json:"dns_on"`
+	Healthy bool `json:"healthy"` // its foreign servers work: it belongs in the record
+
+	// On the controller: how the hub takes this hub's settings.
+	Follows  bool   `json:"follows,omitempty"`    // its beat shows this hub's settings, latest version
+	FollowEr string `json:"follow_err,omitempty"` // why it did not take them
+	Old      bool   `json:"old,omitempty"`        // its panel needs an update first
+	ReachErr string `json:"reach_err,omitempty"`  // it cannot reach the provider with its own route
+	// MissingPorts: ports this hub serves and that hub does not: users sent
+	// there on them would fail (Sync Tunnels fixes it).
+	MissingPorts []int  `json:"missing_ports,omitempty"`
+	Version      string `json:"version,omitempty"`
 }
 
 // dnsMembers lists this hub and every linked hub with the share the master
 // has for it (a hub that is down keeps its last known share).
 func dnsMembers(c ClusterConfig) []dnsMember {
-	out := []dnsMember{{ID: c.NodeID, Name: c.Name, Weight: dnsWeight(c.DNS.Weight), Self: true, Up: true}}
+	self := meshSelfBeat(c)
+	out := []dnsMember{{ID: c.NodeID, Name: c.Name, IP: self.IP, Weight: dnsWeight(c.DNS.Weight), Self: true, Up: true,
+		DNSOn: dnsReady(c.DNS), Healthy: self.Healthy}}
 	meshMu.Lock()
 	defer meshMu.Unlock()
 	for _, h := range c.Hubs {
-		m := dnsMember{ID: h.ID, Name: h.Name, Weight: dnsHubWeight(c, h.ID, 0)}
+		m := dnsMember{ID: h.ID, Name: h.Name, IP: h.PublicIP, Weight: dnsHubWeight(c, h.ID, 0)}
 		if st := meshState[h.ID]; st != nil {
 			m.Up = st.Up
 			m.Weight = dnsHubWeight(c, h.ID, st.Beat.Weight)
+			m.DNSOn = st.Up && c.DNS.Name != "" && st.Beat.DNS == c.DNS.Name
+			m.Healthy = st.Up && st.Beat.Healthy
+			m.Follows = st.Up && st.Beat.DNSBy == c.NodeID && st.Beat.DNSVer == c.DNS.Version && dnsIsController(c)
+			m.Version = st.Beat.Version
 		}
 		out = append(out, m)
 	}
 	return out
+}
+
+// dnsMembersFollow adds, on the controller, how each hub took its settings and
+// the ports it lacks. Called without meshMu held.
+func dnsMembersFollow(c ClusterConfig, ms []dnsMember) {
+	missing := dnsPortsFor(c)
+	dnsFollowMu.Lock()
+	defer dnsFollowMu.Unlock()
+	for i := range ms {
+		m := &ms[i]
+		if m.Self {
+			continue
+		}
+		m.MissingPorts = missing[m.ID]
+		if !dnsIsController(c) {
+			continue
+		}
+		if f := dnsFollow[m.ID]; f != nil && f.Ver == c.DNS.Version {
+			if !m.Follows {
+				m.FollowEr, m.Old = f.Err, f.Old
+			}
+			if f.OK || m.Follows {
+				m.ReachErr = f.ReachErr
+			}
+		}
+	}
 }
 
 // dnsShare is one working hub and the share of users its weight gives it.
@@ -660,11 +777,25 @@ func dnsShares(c ClusterConfig) []dnsShare {
 func dnsView(c ClusterConfig) dnsViewT {
 	// all of these read other state (the mesh, the snapshot): built before dnsMu is held
 	shares, members, tunnels := dnsShares(c), dnsMembers(c), tunnelChoices()
+	dnsMembersFollow(c, members)
+	role := "off"
+	switch {
+	case c.DNS.ManagedBy != "":
+		role = "follower"
+	case c.DNS.Enabled && c.DNS.Master:
+		role = "controller"
+	case c.DNS.Enabled:
+		role = "solo"
+	}
 	dnsMu.Lock()
 	defer dnsMu.Unlock()
 	v := dnsViewT{Enabled: c.DNS.Enabled, Provider: c.DNS.Provider, URL: c.DNS.URL, Name: c.DNS.Name, TTL: c.DNS.TTL,
 		HasToken: c.DNS.Token != "", Records: c.DNS.Records, Want: dnsWant, Leader: dnsLeader, Error: dnsLastErr, Weight: dnsWeight(c.DNS.Weight), Shares: shares, Master: c.DNS.Master, Members: members,
-		Route: dnsRoute(c.DNS), TunnelID: c.DNS.TunnelID, TunnelPort: c.DNS.TunnelPort, Tunnels: tunnels}
+		Route: dnsRoute(c.DNS), TunnelID: c.DNS.TunnelID, TunnelPort: c.DNS.TunnelPort, Tunnels: tunnels,
+		Role: role, ManagedName: dnsManagedLabel(c), ManagedBy: c.DNS.ManagedBy, SelfID: c.NodeID}
+	if role != "follower" {
+		v.ManagedName = ""
+	}
 	if !dnsLastRun.IsZero() {
 		v.LastRun = dnsLastRun.Format("2006-01-02 15:04:05")
 	}
@@ -690,6 +821,11 @@ func validDNSName(n string) bool {
 
 // handleClusterDNS saves the DNS failover settings; "test": true checks the
 // token and the zone without writing anything.
+//
+// Turning it on makes this hub the controller: its settings (and every hub's
+// share) go to every linked hub, which then follows them (cluster_dns_ctl.go).
+// A hub that follows changes nothing here but "take_over": true, which makes
+// it the controller instead.
 func handleClusterDNS(w http.ResponseWriter, r *http.Request) {
 	if proRequired(w, r, "cluster", "Cluster") {
 		return
@@ -705,9 +841,10 @@ func handleClusterDNS(w http.ResponseWriter, r *http.Request) {
 		Route      *string        `json:"route"`
 		TunnelPort int            `json:"tunnel_port"`
 		TunnelID   *int           `json:"tunnel_id"`
-		Master     *bool          `json:"master"`
+		Master     *bool          `json:"master"` // older pages; turning it on makes the controller anyway
 		HubWeights map[string]int `json:"hub_weights"`
 		Test       bool           `json:"test"`
+		TakeOver   bool           `json:"take_over"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<13)).Decode(&req) != nil {
 		writeAPIError(w, r, "E-CLUSTER-01", "")
@@ -715,6 +852,19 @@ func handleClusterDNS(w http.ResponseWriter, r *http.Request) {
 	}
 	c := loadClusterConfig()
 	d := c.DNS
+	following := d.ManagedBy != ""
+	if following && !req.Test && !req.TakeOver {
+		// only the route to the provider is this hub's own
+		if req.Enabled != nil || req.Provider != nil || req.Token != nil || req.URL != nil || req.Name != nil || req.TTL > 0 || req.Weight > 0 || req.HubWeights != nil {
+			writeAPIError(w, r, "E-CLUSTER-02", "this hub follows the DNS failover settings of "+dnsManagedLabel(c)+": change them there, or take over here")
+			return
+		}
+	}
+	if req.TakeOver {
+		d.ManagedBy, d.ManagedName = "", ""
+		on := true
+		req.Enabled = &on
+	}
 	if req.Token != nil && strings.TrimSpace(*req.Token) != "" {
 		d.Token = strings.TrimSpace(*req.Token)
 	}
@@ -722,7 +872,10 @@ func handleClusterDNS(w http.ResponseWriter, r *http.Request) {
 		d.Name = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(*req.Name), "."))
 	}
 	if req.TTL > 0 {
-		d.TTL = req.TTL
+		d.TTL = dnsClampTTL(req.TTL)
+	}
+	if d.TTL == 0 {
+		d.TTL = 60
 	}
 	if req.Weight > 0 {
 		d.Weight = dnsWeight(req.Weight)
@@ -752,16 +905,21 @@ func handleClusterDNS(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, "E-CLUSTER-02", "choose a tunnel, or choose Direct")
 		return
 	}
-	if req.Master != nil {
-		d.Master = *req.Master
-	}
-	if req.HubWeights != nil {
+	if req.HubWeights != nil && !following {
 		known := map[string]bool{}
 		for _, h := range c.Hubs {
 			known[h.ID] = true
 		}
 		d.HubWeights = map[string]int{}
 		for id, share := range req.HubWeights {
+			if id == c.NodeID {
+				if share < 1 || share > 100 {
+					writeAPIError(w, r, "E-CLUSTER-02", "a share is a number from 1 to 100")
+					return
+				}
+				d.Weight = share
+				continue
+			}
 			if !known[id] {
 				continue // not a hub of this cluster
 			}
@@ -775,7 +933,7 @@ func handleClusterDNS(w http.ResponseWriter, r *http.Request) {
 	if req.Enabled != nil {
 		d.Enabled = *req.Enabled
 	}
-	if req.Provider != nil {
+	if req.Provider != nil && !following {
 		if *req.Provider != d.Provider {
 			d.Token = "" // a secret is never carried to another provider
 			if req.Token != nil {
@@ -784,14 +942,14 @@ func handleClusterDNS(w http.ResponseWriter, r *http.Request) {
 		}
 		d.Provider = *req.Provider
 	}
-	if req.URL != nil {
+	if req.URL != nil && !following {
 		d.URL = strings.TrimSpace(*req.URL)
 	}
 	if d.Provider != "webhook" {
 		d.Provider = "cloudflare"
 	}
 	if (d.Enabled || req.Test) && !validDNSName(d.Name) {
-		writeAPIError(w, r, "E-CLUSTER-02", "the record must be a full name such as vpn.example.com")
+		writeAPIError(w, r, "E-CLUSTER-02", "the domain must be a full name such as vpn.example.com")
 		return
 	}
 	if d.Provider == "webhook" {
@@ -800,7 +958,7 @@ func handleClusterDNS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if (d.Enabled || req.Test) && d.Token == "" {
-		writeAPIError(w, r, "E-CLUSTER-02", "a Cloudflare API token is needed (Zone > DNS > Edit)")
+		writeAPIError(w, r, "E-CLUSTER-02", "a Cloudflare API token is needed (template Edit zone DNS)")
 		return
 	}
 	if req.Test && d.Provider == "webhook" {
@@ -814,7 +972,7 @@ func handleClusterDNS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Test {
-		zone, err := cfZone(d, d.Name)
+		zone, zoneName, err := cfZoneFind(d, d.Name)
 		if err != nil {
 			writeAPIError(w, r, "E-CLUSTER-10", err.Error())
 			return
@@ -824,12 +982,22 @@ func handleClusterDNS(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, r, "E-CLUSTER-10", err.Error())
 			return
 		}
-		ips := []string{}
+		ips, proxied := []string{}, false
 		for _, x := range recs {
 			ips = append(ips, x.Content)
+			proxied = proxied || x.Proxied
 		}
-		writeJSON(w, map[string]any{"status": "ok", "records": ips})
+		writeJSON(w, map[string]any{"status": "ok", "zone": zoneName, "records": ips, "proxied": proxied})
 		return
+	}
+	if !following || req.TakeOver {
+		// This hub controls its settings: on, it is the controller and every
+		// linked hub follows; off, the hubs that followed it stop too.
+		d.Master = d.Enabled
+		d.Version = time.Now().UnixMilli()
+		if d.Version <= c.DNS.Version {
+			d.Version = c.DNS.Version + 1
+		}
 	}
 	if _, err := updateClusterConfig(func(x *ClusterConfig) error { x.DNS = d; return nil }); err != nil {
 		writeAPIError(w, r, "E-CLUSTER-06", err.Error())
@@ -838,5 +1006,9 @@ func handleClusterDNS(w http.ResponseWriter, r *http.Request) {
 	dnsMu.Lock()
 	dnsLastRun = time.Time{}
 	dnsMu.Unlock()
+	if req.TakeOver {
+		clusterEventf("info", "DNS failover: this hub took over the settings; the other hubs follow it now.")
+	}
+	dnsWake()
 	writeJSON(w, map[string]any{"status": "ok"})
 }
