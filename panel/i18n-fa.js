@@ -3626,5 +3626,7 @@ window.FA_TEXT = {
   "it connects to": "به این پورت وصل می‌شود",
   "it listens on": "روی این پورت گوش می‌دهد",
   "Running for": "مدت اجرا",
-  "TCP session": "نشست TCP"
+  "TCP session": "نشست TCP",
+  "Average latency": "میانگین تأخیر",
+  "average of": "میانگین"
 };

@@ -2573,16 +2573,27 @@ async function refreshDash() {
         };
       });
     }
-    let ms = null;
+    // With several servers the big number is the average of their pings (the
+    // best one hid a slow server); each server counts once, the main tunnel too.
+    let ms = null, pingN = 0;
+    const lat1 = o => (o.ping_ok && o.ping_ms) ? parseFloat(o.ping_ms) : (o.health_state === 'healthy' && o.latency_ms >= 0 ? o.latency_ms : null);
+    const avgOf = vals => { const v = vals.filter(x => x != null && isFinite(x)); pingN = v.length; return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
     if (multi) {
-      peers.forEach(p => { const v = (p.ping_ok && p.ping_ms) ? parseFloat(p.ping_ms) : (p.health_state === 'healthy' && p.latency_ms >= 0 ? p.latency_ms : null); if (v != null && (ms == null || v < ms)) ms = v; });
+      const vals = peers.map(lat1);
+      if (hasMain) vals.push((d.ping_ok && d.ping) ? parseFloat(d.ping) : (d.health_state === 'healthy' && d.latency_ms >= 0 ? d.latency_ms : null));
+      ms = avgOf(vals);
     } else {
       ms = d.ping_ok && d.ping ? parseFloat(d.ping) : (d.health_state === 'healthy' && d.latency_ms >= 0 ? d.latency_ms : null);
       if (ms == null && bagherUp && bObj.latency_ms > 0) ms = bObj.latency_ms;
     }
     const hasMs = ms != null && isFinite(ms);
+    const avgMode = multi && nSrv > 1;
+    { const lb = $('kpiPingLbl'); if (lb) {
+      if (avgMode) { lb.removeAttribute('data-i18n'); lb.textContent = tr('', 'Average latency'); }
+      else { lb.setAttribute('data-i18n', 'kpi_latency'); lb.textContent = tr('kpi_latency', 'Latency'); } } }
     set('kpiPing', hasMs ? Math.round(ms) + ' ms' : '—');
-    setHTML('kpiPingSub', hasMs ? latBadge(ms) + (d.icmp_filtered ? icmpChip() : '') : esc(tr('', unset ? 'No tunnel yet' : 'No answer')));
+    const avgNote = avgMode && hasMs ? `<span class="qs-hint u-ml-8 u-o-70">${esc(tr('', 'average of') + ' ' + pingN + (pingN < nSrv ? ' / ' + nSrv : '') + ' ' + tr('', 'servers'))}</span>` : '';
+    setHTML('kpiPingSub', hasMs ? latBadge(ms) + (d.icmp_filtered ? icmpChip() : avgNote) : esc(tr('', unset ? 'No tunnel yet' : 'No answer')));
 
     // Live traffic
     const t = d.traffic || {};

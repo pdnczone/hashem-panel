@@ -593,7 +593,7 @@
   #dashDetails .det-row { padding:10px 0; min-height:44px; flex-wrap:wrap; gap:6px 12px; }
   #dashDetails .det-row + .det-row { border-top:1px solid color-mix(in srgb, var(--ln) 65%, transparent); }
   #dashDetails .det-k { display:flex; flex-direction:column; gap:1px; font-size:12.5px; line-height:1.25; white-space:nowrap; }
-  #dashDetails .det-hint { font-size:11px; color:var(--dim); font-weight:400; opacity:.85; }
+  #dashDetails .det-hint { font-size:12px; color:var(--dim); font-weight:400; opacity:.85; }
   #dashDetails .det-v > .det-hint { margin-inline-start:6px; }
   #dashDetails .det-row.stack { flex-direction:column; align-items:stretch; gap:9px; }
   #dashDetails .det-row.stack > :last-child { margin-inline-start:0; }
@@ -1931,7 +1931,7 @@
               </div>
             </div>
             <div class="hero-lat">
-              <span class="kpi-label" data-i18n="kpi_latency">Latency</span>
+              <span class="kpi-label" id="kpiPingLbl" data-i18n="kpi_latency">Latency</span>
               <div class="hero-val" id="kpiPing">—</div>
               <div class="kpi-sub" id="kpiPingSub">—</div>
             </div>
