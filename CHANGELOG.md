@@ -3,6 +3,10 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## Unreleased
+
+- **CI: the Xray tunnel lab says why parallel connections failed.** When "16 parallel connections" fails (seen on `reality-reverse`), it now lists each failed connection with what happened (refused, timed out, closed after N of M bytes, or wrong bytes) and how long it took, and prints the last Xray log lines of both ends. Before it only said that one of the 16 failed.
+
 ## v3.2.0 — 2026-11-18
 
 **Cluster: DNS failover run by one hub, a live map of every tunnel and its traffic, and Iran hubs that sync their tunnels.** Run `hashem update` on every server: each hub must run v3.2.0 for the map to draw its tunnels and for DNS failover and the tunnel sync to work between hubs.

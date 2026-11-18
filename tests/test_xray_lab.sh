@@ -146,11 +146,40 @@ def one(host, port, n):
 def tcp(host, port, n):
     sys.exit(0 if one(host, port, n) else 1)
 
+def one_why(host, port, n):
+    # one() that says why a connection failed: "" when it worked
+    t0 = time.time()
+    try:
+        c = socket.create_connection((host, port), timeout=60)
+    except Exception as e:
+        return "connect: %s after %.1f s" % (type(e).__name__, time.time() - t0)
+    try:
+        data = os.urandom(n)
+        c.sendall(struct.pack("!Q", n) + data)
+        r = recvn(c, 64 + n)
+    except Exception as e:
+        return "%s after %.1f s" % (type(e).__name__, time.time() - t0)
+    finally:
+        c.close()
+    if len(r) != 64 + n:
+        return "closed after %d of %d bytes back, %.1f s" % (len(r), 64 + n, time.time() - t0)
+    if r[:32] != hashlib.sha256(data).digest():
+        return "the service got other bytes than were sent"
+    if r[32:64] != hashlib.sha256(r[64:]).digest():
+        return "other bytes came back than the service sent"
+    return ""
+
 def par(host, port, k, n):
-    res = []
-    ts = [threading.Thread(target=lambda: res.append(one(host, port, n))) for _ in range(k)]
+    # k connections at once; on failure, print which failed and how
+    why = [None] * k
+    def run(i):
+        why[i] = one_why(host, port, n)
+    ts = [threading.Thread(target=run, args=(i,)) for i in range(k)]
     [t.start() for t in ts]; [t.join() for t in ts]
-    sys.exit(0 if len(res) == k and all(res) else 1)
+    bad = ["#%d %s" % (i + 1, w) for i, w in enumerate(why) if w]
+    if bad:
+        print("%d of %d failed: %s" % (len(bad), k, "; ".join(bad)))
+    sys.exit(1 if bad else 0)
 
 def load(host, port, secs):
     c = socket.create_connection((host, port), timeout=10)
@@ -293,7 +322,10 @@ while read -r name; do
     fi
     sent=ok
     py $USR tcp $IR_U $PORT $((8 << 20)) || { bad "$name: 8 MiB each way through the tunnel (sha256)"; sent=; }
-    py $USR par $IR_U $PORT 16 $((256 << 10)) || { bad "$name: 16 parallel connections"; sent=; }
+    if ! why=$(py $USR par $IR_U $PORT 16 $((256 << 10)) 2>&1); then
+        bad "$name: 16 parallel connections: ${why:-no answer}"; sent=
+        echo "--- Iran:"; tail -n 25 "$TMP/iran-$name.log"; echo "--- foreign:"; tail -n 25 "$TMP/fo-$name.log"
+    fi
     n=$(py $USR udp $IR_U $PORT 30 1200) || { bad "$name: UDP, $n of 30 datagrams came back"; sent=; }
     [[ -n $sent ]] && ok "$name: probe, 8 MiB each way (sha256), 16 parallel connections, UDP $n/30$([[ $mode == reverse ]] && echo ', with Iran -> foreign blocked')"
     if [[ $name == reality-direct ]]; then
