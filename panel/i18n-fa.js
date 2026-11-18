@@ -1657,6 +1657,7 @@ window.FA_TEXT = {
 "FRP forwards a port to the same port: enter 443 or a range like 1051-1060. Mappings and IP: need Backhaul.": "FRP هر پورت را به همان پورت سرور مقابل می‌فرستد: 443 یا بازه‌ای مثل 1051-1060 وارد کنید. نگاشت و IP: فقط با Backhaul کار می‌کنند.",
 "Iran IP (this server)": "IP ایران (همین سرور)",
 "For a server with more than one IP: the address this tunnel uses. Set the same address as the Iran IP on the foreign server.": "برای سروری که بیش از یک IP دارد: آدرسی که این تانل از آن استفاده می‌کند. همین آدرس را روی سرور خارج هم به‌عنوان IP ایران بگذارید.",
+"This server's main address (default)": "آدرس اصلی همین سرور (پیش‌فرض)",
 "Enter an IPv4 address of this server for Iran IP.": "برای IP ایران یک آدرس IPv4 از همین سرور وارد کنید.",
 "FRP forwards at most 1000 ports: use a smaller range.": "FRP حداکثر ۱۰۰۰ پورت را فوروارد می‌کند: بازه‌ی کوچک‌تری بگذارید.",
 "e.g. 443, 1051-1060": "مثلاً 443، 1051-1060",

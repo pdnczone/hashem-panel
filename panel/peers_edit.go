@@ -358,6 +358,10 @@ func handlePeersPatch(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, r, "E-PEER-07", "Iran IP: enter an IPv4 address of this server")
 			return
 		}
+		if ip := net.ParseIP(body.LocalPub); ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsMulticast() {
+			writeAPIError(w, r, "E-PEER-07", "Iran IP "+body.LocalPub+" cannot carry a tunnel (loopback, unspecified, link-local or multicast); use a public or private address of this server")
+			return
+		}
 		if !serverHasAddr(body.LocalPub) {
 			writeAPIError(w, r, "E-PEER-07", "Iran IP "+body.LocalPub+" is not an address of this server")
 			return
@@ -636,11 +640,29 @@ func editPeerDirect(peer *peerRecord, req peerPatchRequest) (string, error) {
 	// foreign server has to follow
 	if req.LocalPub != "" && req.LocalPub != peer.LocalPub {
 		if !peer.NoGre && peer.Engine != "backhaul" {
-			_, _ = exec.Command("ip", "tunnel", "change", greIf, "local", req.LocalPub).CombinedOutput()
+			// the unit is what survives a reboot and a restart rebuilds the
+			// interface from it; the live change only saves a gap. Say so
+			// when the tunnel did not come back on the new address.
+			liveErr := ""
+			if out, err := exec.Command("ip", "tunnel", "change", greIf, "local", req.LocalPub).CombinedOutput(); err != nil {
+				liveErr = strings.TrimSpace(string(out))
+				if liveErr == "" {
+					liveErr = err.Error()
+				}
+			}
 			svcFile := fmt.Sprintf("/etc/systemd/system/%s.service", greIf)
 			updateServiceLocalIP(svcFile, peer.LocalPub, req.LocalPub)
 			_ = runSystemctl("daemon-reload")
-			_ = runSystemctl("restart", greIf+".service")
+			if err := runSystemctl("restart", greIf+".service"); err != nil {
+				msg := fmt.Sprintf("The GRE tunnel %s could not be restarted on %s (%v); restart it from the Tunnel tab.", greIf, req.LocalPub, err)
+				if liveErr != "" {
+					msg += " The live change said: " + liveErr + "."
+				}
+				if warning != "" {
+					warning += " "
+				}
+				warning += msg
+			}
 		}
 		was := peer.LocalPub
 		if was == "" {

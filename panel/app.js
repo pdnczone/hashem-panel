@@ -9175,6 +9175,7 @@ function openEditPeer(peerId) {
   _editPeerLocal = peerId > 0 ? String(p.local_pub || '') : '';
   if ($('editPeerLocalWrap')) $('editPeerLocalWrap').hidden = !(peerId > 0);
   if ($('editPeerLocal')) $('editPeerLocal').value = _editPeerLocal;
+  if ($('editPeerLocal')) $('editPeerLocal').placeholder = _editPeerLocal ? '' : tr('', "This server's main address (default)");
   if ($('editPeerProxyProtocol')) {
     $('editPeerProxyProtocol').checked = (p.proxy_protocol === 'v2');
   }

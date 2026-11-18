@@ -426,7 +426,9 @@ func TestSwapToFRPForwardsWholeRange(t *testing.T) {
 func TestHandlePeersPatchLocalPub(t *testing.T) {
 	old, oldHas := configDir, serverHasAddr
 	configDir = t.TempDir()
-	serverHasAddr = func(ip string) bool { return ip == "198.51.100.9" || ip == "1.2.3.4" }
+	serverHasAddr = func(ip string) bool {
+		return ip == "198.51.100.9" || ip == "1.2.3.4" || ip == "127.0.0.1" || ip == "169.254.1.1"
+	}
 	defer func() { configDir, serverHasAddr = old, oldHas }()
 	doc := `{"peers": [{"id": 2, "name": "tr", "local_pub": "1.2.3.4", "remote_pub": "198.51.100.2", "frp_port": 25002,
   "ports": [443], "token": "tok2", "gre_if": "gre-t2", "frps_svc": "frps-2", "local_gre": "10.11.0.2", "peer_gre": "10.11.0.1"}]}`
@@ -442,6 +444,9 @@ func TestHandlePeersPatchLocalPub(t *testing.T) {
 		`{"id": 2, "local_pub": "203.0.113.5"}`:  "not an address of this server",
 		`{"id": 2, "local_pub": "2001:db8::1"}`:  "IPv4",
 		`{"id": 2, "local_pub": "nope"}`:         "IPv4",
+		`{"id": 2, "local_pub": "127.0.0.1"}`:    "cannot carry a tunnel",
+		`{"id": 2, "local_pub": "0.0.0.0"}`:      "cannot carry a tunnel",
+		`{"id": 2, "local_pub": "169.254.1.1"}`:  "cannot carry a tunnel",
 		`{"id": 0, "local_pub": "198.51.100.9"}`: "set by Setup",
 	} {
 		w := patch(body)
