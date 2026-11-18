@@ -539,7 +539,10 @@ func livePeersFrom(v *hostView, recs []peerRecord) []peerLive {
 		}
 		ic := v.icmpFor(l.icmpTarget)
 		if !p.NoGre {
-			l.Rx, l.Tx = v.traffic(p.GreIf)
+			// plus FRP's port when it runs over the public route instead
+			gr, gt := v.traffic(p.GreIf)
+			cr, ct := v.carrierTraffic(p.FrpsSvc)
+			l.Rx, l.Tx = sumCounters(gr, gt, cr, ct)
 			sig.TrafficFlowing = v.flowing[p.GreIf]
 		} else {
 			// Backhaul without GRE has no interface: its unit's port counters

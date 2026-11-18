@@ -48,9 +48,9 @@ func TestBackhaulCarrierEnd(t *testing.T) {
 // Every Backhaul config counts: the main one, peer and hub configs beside it,
 // and the UDP companions.
 func TestCarrierEndsReadsAllConfigs(t *testing.T) {
-	old := backhaulDir
-	backhaulDir = t.TempDir()
-	t.Cleanup(func() { backhaulDir = old })
+	old, oldFrp := backhaulDir, frpDir
+	backhaulDir, frpDir = t.TempDir(), t.TempDir()
+	t.Cleanup(func() { backhaulDir, frpDir = old, oldFrp })
 	write := func(rel, body string) {
 		p := filepath.Join(backhaulDir, rel)
 		_ = os.MkdirAll(filepath.Dir(p), 0o755)
@@ -473,4 +473,48 @@ func TestCarrierCountersFamilyFlap(t *testing.T) {
 	read("rebuilt for a new tunnel: the last 60 bytes kept", 11_000_000_260)
 	v4, v6 = save(10), save(20) // the new chains of both families
 	read("then from 0 again", 11_000_000_290)
+}
+
+// FRP over the public route is counted on its own port: frps's bindPort (and
+// KCP/QUIC) on the Iran server, frpc's serverAddr:serverPort on the foreign
+// one. An frpc that dials a GRE inner address or 127.0.0.1 is not the public
+// route, and a visitor's bindPort is not frps's.
+func TestFRPCarrierEnds(t *testing.T) {
+	old := frpDir
+	frpDir = t.TempDir()
+	t.Cleanup(func() { frpDir = old })
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(frpDir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("frps.toml", "bindAddr = \"0.0.0.0\"\nbindPort = 7001\nkcpBindPort = 7001\nquicBindPort = 7002\n")
+	write("frps-2.toml", "bindPort = 7003\n")
+	write("frpc.toml", "serverAddr = \"198.51.100.7\"\nserverPort = 7001\n\n[[proxies]]\nname = \"tcp-443\"\nlocalPort = 443\n")
+	write("frpc-2.toml", "serverAddr = \"10.10.10.2\"\nserverPort = 7003\n")
+	write("frpc-3.toml", "serverAddr = \"127.0.0.1\"\nserverPort = 7100\n\n[[visitors]]\nbindPort = 8443\n")
+	want := []carrierEnd{
+		{Port: 7003, Tag: "frps-2"}, // the files in name order
+		{Port: 7001, UDP: true, Tag: "frps"}, {Port: 7002, UDP: true, Tag: "frps"},
+		{Port: 7001, Remote: "198.51.100.7", UDP: true, Tag: "frpc"},
+	}
+	if got := frpCarrierEnds(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v\nwant %+v", got, want)
+	}
+}
+
+func TestSumCounters(t *testing.T) {
+	u := func(n uint64) *uint64 { return &n }
+	if rx, tx := sumCounters(u(10), u(20), u(1), u(2)); *rx != 11 || *tx != 22 {
+		t.Fatalf("both: %d %d", *rx, *tx)
+	}
+	if rx, tx := sumCounters(nil, nil, u(1), u(2)); *rx != 1 || *tx != 2 {
+		t.Fatalf("no GRE: %d %d", *rx, *tx)
+	}
+	if rx, tx := sumCounters(u(10), u(20), nil, nil); *rx != 10 || *tx != 20 {
+		t.Fatalf("no port rules: %d %d", *rx, *tx)
+	}
+	if rx, tx := sumCounters(nil, nil, nil, nil); rx != nil || tx != nil {
+		t.Fatal("neither")
+	}
 }
