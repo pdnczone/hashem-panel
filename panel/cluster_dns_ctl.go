@@ -455,6 +455,10 @@ var dnsPortsCache struct {
 	tunnels map[string]int   // how many tunnels the hub has
 }
 
+// dnsPortsGo runs the background refresh (tests run it in place, so it never
+// outlives the test that swapped the functions it reads).
+var dnsPortsGo = func(f func()) { go f() }
+
 // dnsPortsFor returns, for each hub, the ports this hub serves and it does not
 // (known hubs only). It refreshes in the background at most every 30 s.
 func dnsPortsFor(c ClusterConfig) map[string][]int {
@@ -466,7 +470,7 @@ func dnsPortsFor(c ClusterConfig) map[string][]int {
 	mine, hubs := dnsPortsCache.mine, dnsPortsCache.hubs
 	dnsPortsCache.Unlock()
 	if stale {
-		go dnsPortsRefresh(c)
+		dnsPortsGo(func() { dnsPortsRefresh(c) })
 	}
 	out := map[string][]int{}
 	for id, theirs := range hubs {

@@ -1179,6 +1179,9 @@ func handleClusterStatus(w http.ResponseWriter, r *http.Request) {
 	// dnsView describes this hub (meshSelfBeat), which takes clusterRT.mu itself:
 	// built before this handler holds it, or the status request never returns.
 	dns := dnsView(cfg)
+	// every tunnel of this hub with its traffic, pool or not (the map draws
+	// a line as soon as a tunnel is up)
+	tunnels := meshLinksOf(lbSnapshot())
 	rt := clusterRT
 	rt.mu.Lock()
 	links := append([]lbLinkView(nil), rt.view...)
@@ -1223,6 +1226,7 @@ func handleClusterStatus(w http.ResponseWriter, r *http.Request) {
 		"hub_forward": cfg.HubForward,
 		"pools":       pools,
 		"links":       links,
+		"tunnels":     tunnels,
 		"warnings":    append([]string(nil), rt.warnings...),
 		"apply_error": rt.applyErr,
 		"icmp":        rt.icmpOK,

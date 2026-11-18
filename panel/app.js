@@ -11546,8 +11546,9 @@ async function clLeaveHub(id, name) {
 }
 
 // ---- cluster map ----
-// A picture of the cluster: users and the other Iran hubs on the left, this
-// hub with its pools in the middle, the foreign servers on the right. Line
+// A picture of the cluster: users and the DNS failover domain on top, the
+// Iran hubs stacked under the domain (this one first, with its pools), the
+// foreign servers on the right with a line from each hub that reaches them. Line
 // thickness is the share of new connections, color the health. Clicking any
 // part opens it in the inspector next to the map, where everything about it
 // can be changed. The map is redrawn on every poll; the inspector's forms are
@@ -11615,77 +11616,201 @@ function clMapWire() {
 function clSvgNode(key, x, y, w, h, cls, inner, label) {
   const sel = _clSel === key ? ' sel' : '';
   return `<g class="cl-n ${cls}${sel}" data-sel="${esc(key)}" role="button" tabindex="0" aria-label="${esc(label)}"><title>${esc(label)}</title>` +
-    `<rect class="cl-n-bg" x="${x}" y="${y}" width="${w}" height="${h}" rx="12"/>${inner}</g>`;
+    `<rect class="cl-n-bg" x="${x}" y="${y}" width="${w}" height="${h}" rx="14"/>${inner}</g>`;
 }
 
-function clSvgEdge(key, x1, y1, x2, y2, cls, width, flow, label, tag) {
-  const dx = Math.max(40, (x2 - x1) / 2);
-  const p = `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`;
+// clSvgPath draws one line of the map along path p: a wide invisible stroke
+// to click, a soft glow under a line that carries traffic, the line, and the
+// moving dashes of the traffic (faster when there is more).
+function clSvgPath(key, p, cls, width, flow, label, tag, speed) {
   const sel = key && _clSel === key ? ' sel' : '';
   const attrs = key ? ` data-sel="${esc(key)}" role="button" tabindex="0" aria-label="${esc(label)}"` : '';
   return `<g class="cl-e ${cls}${sel}"${attrs}><title>${esc(label)}</title><path class="cl-e-hit" d="${p}"/>` +
-    `<path class="cl-e-line" d="${p}" stroke-width="${width.toFixed(1)}"/>${flow ? `<path class="cl-e-flow" d="${p}"/>` : ''}` +
-    (tag ? `<text class="cl-t-share" x="${(0.216 * x1 + 0.189 * dx + 0.784 * x2 - 0.441 * dx).toFixed(1)}" y="${(0.216 * y1 + 0.784 * y2 - 6).toFixed(1)}">${esc(tag)}</text>` : '') + `</g>`;
+    (flow ? `<path class="cl-e-glow" d="${p}" stroke-width="${(width + 8).toFixed(1)}"/>` : '') +
+    `<path class="cl-e-line" d="${p}" stroke-width="${width.toFixed(1)}"/>` +
+    (flow ? `<path class="cl-e-flow" d="${p}"${speed ? ` style="animation-duration:${speed.toFixed(2)}s"` : ''}/>` : '') + (tag || '') + `</g>`;
 }
 
-const clDot = (cx, cy, kind) => `<circle class="cl-dot ${kind}" cx="${cx}" cy="${cy}" r="5"/>`;
+// clCurve: a soft S-curve from left to right.
+const clCurve = (x1, y1, x2, y2) => {
+  const dx = Math.max(40, (x2 - x1) / 2);
+  return `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`;
+};
+
+function clSvgEdge(key, x1, y1, x2, y2, cls, width, flow, label, tag) {
+  const dx = Math.max(40, (x2 - x1) / 2);
+  const t = tag ? `<text class="cl-t-share" x="${(0.216 * x1 + 0.189 * dx + 0.784 * x2 - 0.441 * dx).toFixed(1)}" y="${(0.216 * y1 + 0.784 * y2 - 6).toFixed(1)}">${esc(tag)}</text>` : '';
+  return clSvgPath(key, clCurve(x1, y1, x2, y2), cls, width, flow, label, t);
+}
+
+// clPill: a small rounded label centred on (x,y), for the traffic of a line.
+function clPill(x, y, s, cls) {
+  const w = Math.round(String(s).length * 7 + 16);
+  return `<g class="cl-pill ${cls || ''}"><rect x="${(x - w / 2).toFixed(1)}" y="${(y - 10).toFixed(1)}" width="${w}" height="20" rx="10"/>` +
+    `<text x="${x.toFixed(1)}" y="${(y + 4).toFixed(1)}">${esc(s)}</text></g>`;
+}
+
+// clTrafficW: the width of a tunnel's line from its traffic (bytes per second):
+// 2.2 when idle, about 4 at 10 KB/s, 7 at 1 MB/s, 10 from 100 MB/s.
+const clTrafficW = bps => 2.2 + 7.8 * Math.min(1, Math.log10(1 + (bps || 0) / 1024) / 5);
+const clTrafficSpeed = bps => Math.max(0.35, 1.7 - 0.27 * Math.log10(1 + (bps || 0) / 1024));
+const CL_BUSY = 128; // bytes per second: below it a tunnel counts as idle
+
+// clTunEdge: the line of a tunnel from an Iran hub to a foreign server. Green
+// as soon as the tunnel is up, thicker the more traffic it carries. Its
+// traffic goes on a pill, collected in pills (drawn over every line) at the
+// first point of the curve where it does not cover another pill.
+function clTunEdge(key, x1, y1, x2, y2, up, bps, label, known, pills) {
+  const busy = up && bps >= CL_BUSY;
+  const cls = !known ? 'off' : up ? 'ok' : 'err';
+  if (busy) {
+    const txt = fmtRate(bps), w = txt.length * 7 + 16, dx = Math.max(40, (x2 - x1) / 2);
+    const at = t => { const u = 1 - t; return [u * u * u * x1 + 3 * u * u * t * (x1 + dx) + 3 * u * t * t * (x2 - dx) + t * t * t * x2, u * u * u * y1 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * y2]; };
+    let pt = at(0.5);
+    for (const t of [0.5, 0.36, 0.64, 0.24, 0.76]) {
+      const c = at(t);
+      if (!pills.boxes.some(b => Math.abs(b[0] - c[0]) < (b[2] + w) / 2 + 2 && Math.abs(b[1] - c[1]) < 22)) { pt = c; break; }
+    }
+    pills.boxes.push([pt[0], pt[1], w]);
+    pills.svg += clPill(pt[0], pt[1], txt, 'ok');
+  }
+  return clSvgPath(key, clCurve(x1, y1, x2, y2), cls, up ? clTrafficW(bps) : 1.8, busy, label + (up ? ' · ' + (busy ? fmtRate(bps) : tr('', 'idle')) : ''), '', busy ? clTrafficSpeed(bps) : 0);
+}
+
+// clBusPath: from (x1,y1) down, left to the trunk at bx, down it, then right
+// into (x2,y2), with rounded corners. The lines of every hub share the trunk,
+// so the domain reads as one stem that branches to each Iran hub.
+function clBusPath(x1, y1, bx, x2, y2) {
+  const r = 12, yb = y1 + 18;
+  if (x1 - bx < 2 * r) return `M${x1},${y1} L${x1},${y2 - r} Q${x1},${y2} ${x1 + r},${y2} L${x2},${y2}`;
+  return `M${x1},${y1} L${x1},${yb - r} Q${x1},${yb} ${x1 - r},${yb} L${bx + r},${yb} Q${bx},${yb} ${bx},${yb + r} ` +
+    `L${bx},${y2 - r} Q${bx},${y2} ${bx + r},${y2} L${x2},${y2}`;
+}
+
+const clDot = (cx, cy, kind) => (kind === 'ok' ? `<circle class="cl-pulse" cx="${cx}" cy="${cy}" r="5"/>` : '') + `<circle class="cl-dot ${kind}" cx="${cx}" cy="${cy}" r="5"/>`;
 const clTxt = (x, y, cls, s) => `<text class="${cls}" x="${x}" y="${y}">${esc(s)}</text>`;
+// clAcc: the health stripe on the left edge of a card.
+const clAcc = (x, y, h, kind) => `<rect class="cl-acc ${kind}" x="${x + 1}" y="${y + 14}" width="3.5" height="${Math.max(8, h - 28)}" rx="1.75"/>`;
+// clChip: a small outlined tag after a title (e.g. the hub that runs DNS failover).
+const clChip = (x, y, s, cls) => {
+  const w = Math.round(String(s).length * 7 + 14);
+  return `<g class="cl-chip ${cls || ''}"><rect x="${x}" y="${y - 13}" width="${w}" height="18" rx="9"/><text x="${x + w / 2}" y="${y}">${esc(s)}</text></g>`;
+};
+const CL_ICONS = {
+  users: '<circle cx="6" cy="5" r="2.6"/><path d="M1.5 13.5c0-2.6 2-4.2 4.5-4.2s4.5 1.6 4.5 4.2"/><circle cx="11.8" cy="5.6" r="2"/><path d="M11.4 9.4c2 .2 3.4 1.6 3.4 3.9"/>',
+  globe: '<circle cx="8" cy="8" r="6.5"/><path d="M1.5 8h13M8 1.5c1.9 2 2.8 4.2 2.8 6.5S9.9 12.5 8 14.5M8 1.5C6.1 3.5 5.2 5.7 5.2 8s.9 4.5 2.8 6.5"/>',
+  hub: '<rect x="2" y="2.5" width="12" height="4.6" rx="1.3"/><rect x="2" y="8.9" width="12" height="4.6" rx="1.3"/><path d="M4.6 4.8h.01M4.6 11.2h.01"/>',
+  cloud: '<path d="M4.6 12.8h6.9a3 3 0 0 0 .3-6 4 4 0 0 0-7.6 1A2.5 2.5 0 0 0 4.6 12.8z"/>',
+};
+const clIc = (x, y, name, cls) => `<g class="cl-ic ${cls || ''}" transform="translate(${x},${y})">${CL_ICONS[name]}</g>`;
+const CL_DEFS = '<defs><linearGradient id="clgDns" x1="0" y1="0" x2="1" y2="1"><stop offset="0" class="cl-gs-dns0"/><stop offset="1" class="cl-gs-dns1"/></linearGradient>' +
+  '<linearGradient id="clgCard" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="cl-gs-card0"/><stop offset="1" class="cl-gs-card1"/></linearGradient></defs>';
 
 function clMapRender(d) {
   const svg = $('clMap');
   if (!svg) return;
   clMapWire();
   const links = d.links || [], joined = d.joined_hubs || [];
-  if (links.length === 0 && joined.length > 0) return clMapRenderSpoke(d, svg);
+  if (links.length === 0 && joined.length > 0) return clMapRenderSpoke(d, svg); // a foreign server
   const pools = d.pools || [], hubs = d.hubs || [], dns = d.dns || {};
-  const W = 820, SRV_H = 62, SRV_G = 14, POOL_H = 52, POOL_G = 10, SIDE_H = 58, SIDE_G = 16;
-  const nSrv = links.length + 1, nSide = 3 + hubs.length;
-  const hubH = 96 + (pools.length + 1) * (POOL_H + POOL_G);
-  const H = Math.max(nSrv * (SRV_H + SRV_G), hubH + 24, nSide * (SIDE_H + SIDE_G)) + 36;
-  const col = (n, h, g) => (H - (n * (h + g) - g)) / 2;
-  const hubX = 262, hubW = 236, hubY = (H - hubH) / 2;
-  const srvX = 600, srvW = 206, srvY0 = col(nSrv, SRV_H, SRV_G);
-  const sideX = 14, sideW = 190, sideY0 = col(nSide, SIDE_H, SIDE_G);
+  // Columns: users and the domain on top; the Iran hubs stacked under the
+  // domain; the foreign servers on the right, with a line from each Iran hub
+  // to each foreign server it has a tunnel with, as thick as its traffic.
+  const W = 896, TOP_Y = 16, TOP_H = 70, SRV_H = 64, SRV_G = 14, POOL_H = 52, POOL_G = 10, PEER_H = 76, HUB_G = 18, ADD_H = 48;
+  const usersX = 14, usersW = 164, hubX = 236, hubW = 280, busX = hubX - 30, srvX = 664, srvW = 218;
+  const thisH = 96 + (pools.length + 1) * (POOL_H + POOL_G);
+  const y0 = TOP_Y + TOP_H + 42;
+  const hubYs = [y0];
+  hubs.forEach((h, i) => hubYs.push((i === 0 ? y0 + thisH : hubYs[i] + PEER_H) + HUB_G));
+  const addHubY = (hubs.length ? hubYs[hubs.length] + PEER_H : y0 + thisH) + HUB_G;
+  const stackEnd = addHubY + ADD_H;
+  let edges = '', edgesTop = '', nodes = '';
+  const pills = { svg: '', boxes: [] };
+
+  // this hub's tunnels (every one, in a pool or not; an older status has
+  // only the pool relays), then the foreign servers only another hub reaches
+  // (the same foreign server is matched by its IP)
+  const linkById = new Map(links.map(l => [l.id, l]));
+  const tuns = d.tunnels || links.map(l => ({ id: l.id, name: l.name, remote: l.remote, engine: l.engine, up: l.up, ms: l.latency_ms, bps: 0 }));
+  const fsrv = [], byRemote = new Map(), srvById = new Map();
+  tuns.forEach(t => {
+    const l = linkById.get(t.id);
+    let n = t.remote ? byRemote.get(t.remote) : null;
+    if (!n) {
+      n = { key: l ? 'link:' + l.id : 'hub', l, name: t.name || (l && l.name), remote: t.remote, engine: t.engine || (l && l.engine), up: false, ms: t.ms, bps: 0, hubs: 0, mine: true };
+      fsrv.push(n);
+      if (t.remote) byRemote.set(t.remote, n);
+      n.hubs++;
+    }
+    n.up = n.up || t.up;
+    n.bps += t.bps || 0;
+    srvById.set(t.id, n);
+  });
+  hubs.forEach(h => (h.links || []).forEach(pl => {
+    let n = byRemote.get(pl.remote);
+    if (!n) {
+      n = { key: 'peer:' + h.id, name: pl.name, remote: pl.remote, engine: pl.engine, up: false, ms: pl.ms, bps: 0, hubs: 0, via: h.name || h.id };
+      fsrv.push(n);
+      byRemote.set(pl.remote, n);
+    }
+    n.hubs++;
+    n.bps += h.up ? pl.bps || 0 : 0;
+    if (!n.mine) n.up = n.up || (h.up && pl.up);
+  }));
+  const nSrv = fsrv.length + 1, srvTot = nSrv * (SRV_H + SRV_G) - SRV_G;
+  const srvY0 = Math.max(y0, y0 + (stackEnd - y0 - srvTot) / 2);
   const srvY = i => srvY0 + i * (SRV_H + SRV_G);
-  const sideY = i => sideY0 + i * (SIDE_H + SIDE_G);
-  const poolY = j => hubY + 84 + j * (POOL_H + POOL_G);
-  const linkIdx = new Map(links.map((l, i) => [l.id, i]));
-  let edges = '', nodes = '';
+  const srvMid = n => srvY(fsrv.indexOf(n)) + SRV_H / 2;
+  const H = Math.max(stackEnd, srvY0 + srvTot) + 22;
 
   // traffic and conns per link, over every pool
   const connsBy = {}, totalConns = { n: 0, known: false };
   pools.forEach(p => (p.member_status || []).forEach(s => {
     if (s.conns != null && s.conns >= 0) { connsBy[s.link] = (connsBy[s.link] || 0) + s.conns; totalConns.n += s.conns; totalConns.known = true; }
   }));
+  const myBps = tuns.reduce((a, t) => a + (t.bps || 0), 0);
+  const peerBps = h => h.up ? (h.links || []).reduce((a, l) => a + (l.bps || 0), 0) : 0;
+  const allBps = myBps + hubs.reduce((a, h) => a + peerBps(h), 0);
 
-  // left column: users, DNS, linked hubs, + link a hub
-  const uy = sideY(0);
-  nodes += clSvgNode('users', sideX, uy, sideW, SIDE_H, '', clTxt(sideX + 16, uy + 25, 'cl-t1', tr('', 'Users')) +
-    clTxt(sideX + 16, uy + 44, 'cl-t2', totalConns.known ? totalConns.n + ' ' + tr('', 'open connections') : tr('', 'connect to this hub')), tr('', 'Users'));
-  edges += clSvgEdge('', sideX + sideW, uy + SIDE_H / 2, hubX, hubY + 36, 'ok', 3, true, tr('', 'Users'));
-  const dy = sideY(1);
-  const dnsKind = !dns.enabled ? 'off' : dns.error ? 'err' : 'ok';
-  nodes += clSvgNode('dns', sideX, dy, sideW, SIDE_H, dns.enabled ? '' : 'dim', clDot(sideX + 18, dy + 21, dnsKind) +
-    clTxt(sideX + 32, dy + 25, 'cl-t1', tr('', 'DNS Failover')) +
-    clTxt(sideX + 16, dy + 44, 'cl-t2', dns.enabled ? clTrunc(dns.name, 22) : tr('', 'Off')), tr('', 'DNS Failover'));
-  if (dns.enabled) edges += clSvgEdge('', sideX + sideW, dy + SIDE_H / 2, hubX, hubY + 56, dnsKind === 'ok' ? 'standby' : 'err', 2, false, tr('', 'DNS Failover'));
-  hubs.forEach((h, i) => {
-    const y = sideY(2 + i), kind = !h.up ? 'err' : h.healthy ? 'ok' : 'warn';
-    nodes += clSvgNode('peer:' + h.id, sideX, y, sideW, SIDE_H, '', clDot(sideX + 18, y + 21, kind) +
-      clTxt(sideX + 32, y + 25, 'cl-t1', clTrunc(h.name || h.id, 11)) +
-      clTxt(sideX + 16, y + 44, 'cl-t2', (h.public_ip || '') + (h.up ? ' · ' + clMs(h.latency_ms) : '')) +
-      clTxt(sideX + sideW - 12, y + 25, 'cl-t2 cl-tr', tr('', 'Iran hub')), tr('', 'Iran hub') + ' ' + (h.name || h.id));
-    edges += clSvgEdge('peer:' + h.id, sideX + sideW, y + SIDE_H / 2, hubX, hubY + hubH - 30, kind === 'err' ? 'err' : 'standby', 2, false,
-      tr('', 'Linked hub') + ' ' + (h.name || h.id));
-  });
-  const ay = sideY(2 + hubs.length);
-  nodes += clSvgNode('add:hub', sideX, ay, sideW, SIDE_H, 'add', clTxt(sideX + sideW / 2, ay + 34, 'cl-t1 cl-tc', '+ ' + tr('', 'Link a Hub')), tr('', 'Link a Hub'));
+  // the hubs as DNS failover sees them: who gets users and how many
+  const on = !!dns.enabled, byHub = {};
+  dnswHubs(dns).forEach(x => { byHub[x.m.self ? '' : x.m.id] = x; });
+  const busCls = x => !x ? 'off' : x.st === 'ok' ? 'ok' : x.st === 'wait' ? 'standby' : x.st === 'bad' ? 'err' : 'off';
+  const busW = x => x && x.pct != null ? 2 + x.pct / 100 * 7 : 2;
+  const ctlId = !on ? null : dns.role === 'follower' ? dns.managed_by : dns.role === 'controller' || dns.role === 'solo' ? '' : null;
 
-  // middle: this hub and its pools
+  // top: users, and the domain they look up
+  const uMid = TOP_Y + TOP_H / 2;
+  const uSub = allBps >= CL_BUSY ? fmtRate(allBps) : totalConns.known ? totalConns.n + ' ' + tr('', 'open connections') : on ? tr('', 'look up the domain') : tr('', 'connect to this hub');
+  nodes += clSvgNode('users', usersX, TOP_Y, usersW, TOP_H, 'usersbox', clIc(usersX + 16, TOP_Y + 15, 'users', 'lit') +
+    clTxt(usersX + 42, TOP_Y + 29, 'cl-t1', tr('', 'Users')) +
+    clTxt(usersX + 16, TOP_Y + 54, allBps >= CL_BUSY ? 'cl-t2 cl-trate' : 'cl-t2', uSub), tr('', 'Users'));
+  const dnsKind = !on ? 'off' : dns.error ? 'err' : 'ok';
+  nodes += clSvgNode('dns', hubX, TOP_Y, hubW, TOP_H, 'dnsbox' + (on ? ' on' : ' dim'), clIc(hubX + 16, TOP_Y + 15, 'globe', on ? 'lit' : '') +
+    clTxt(hubX + 42, TOP_Y + 29, 'cl-t1', tr('', 'DNS Failover')) + clDot(hubX + hubW - 22, TOP_Y + 24, dnsKind) +
+    clTxt(hubX + 16, TOP_Y + 54, on ? 'cl-t2 cl-tdns' : 'cl-t2', on ? clTrunc(dns.name, 32) : tr('', 'Off: tap to set up')), tr('', 'DNS Failover'));
+  if (on) {
+    edgesTop += clSvgPath('', `M${usersX + usersW},${uMid} L${hubX},${uMid}`, dnsKind === 'ok' ? 'ok' : 'err', 3, dnsKind === 'ok', tr('', 'Users look up') + ' ' + dns.name);
+  } else {
+    // without the domain users reach this hub by its own IP
+    const ux = usersX + usersW / 2, ty = y0 + 38;
+    edgesTop += clSvgPath('', `M${ux},${TOP_Y + TOP_H} L${ux},${ty - 12} Q${ux},${ty} ${ux + 12},${ty} L${hubX},${ty}`, 'ok', 3, true, tr('', 'Users connect to this hub by its IP'));
+  }
+
+  // this hub, with its pools
   const okPools = pools.filter(p => p.state === 'ok').length;
-  nodes += clSvgNode('hub', hubX, hubY, hubW, hubH, 'hubbox', clTxt(hubX + 16, hubY + 24, 'cl-t2', tr('', 'This Iran hub')) +
-    clTxt(hubX + 16, hubY + 46, 'cl-t1', clTrunc(d.name || d.node_id, 24)) +
-    clTxt(hubX + 16, hubY + 66, 'cl-t2', (d.public_ip || '') + (pools.length ? ' · ' + okPools + '/' + pools.length + ' ' + tr('', 'healthy') : '')), tr('', 'This Iran hub'));
+  const me = byHub[''], meKind = me ? (me.m.healthy ? 'ok' : 'warn') : tuns.some(t => t.up) ? 'ok' : 'warn';
+  const hubY = y0, name = clTrunc(d.name || d.node_id, 22);
+  if (on) edges += clSvgPath('dns', clBusPath(hubX + 26, TOP_Y + TOP_H, busX, hubX, hubY + 38), busCls(me), busW(me), !!me && me.st === 'ok',
+    tr('', 'DNS Failover') + ' → ' + tr('', 'This Iran hub') + (me ? ': ' + tr('', me.text) : ''));
+  nodes += clSvgNode('hub', hubX, hubY, hubW, thisH, 'hubbox', clAcc(hubX, hubY, thisH, meKind) + clIc(hubX + 16, hubY + 14, 'hub', 'lit') +
+    clTxt(hubX + 40, hubY + 26, 'cl-t2', tr('', 'This Iran hub')) +
+    (on && me && me.pct != null ? clTxt(hubX + hubW - 16, hubY + 26, 'cl-tpct cl-tr', me.pct + '%') : '') +
+    clTxt(hubX + 16, hubY + 51, 'cl-t1', name) + (ctlId === '' ? clChip(hubX + 24 + name.length * 8.6, hubY + 50, 'DNS', 'dns') : '') +
+    clTxt(hubX + 16, hubY + 72, 'cl-t2', (d.public_ip || '') + (pools.length ? ' · ' + okPools + '/' + pools.length + ' ' + tr('', 'healthy') : '')) +
+    (myBps >= CL_BUSY ? clTxt(hubX + hubW - 16, hubY + 72, 'cl-t2 cl-tr cl-trate', fmtRate(myBps)) : ''), tr('', 'This Iran hub'));
+  const poolY = j => hubY + 88 + j * (POOL_H + POOL_G);
+  const inPool = new Set();
   pools.forEach((p, j) => {
     const y = poolY(j), pk = clPoolKey(p), kind = clPoolKind(p.state);
     nodes += clSvgNode('pool:' + pk, hubX + 14, y, hubW - 28, POOL_H, 'pool' + (p.disabled ? ' dim' : ''),
@@ -11695,8 +11820,9 @@ function clMapRender(d) {
       clDot(hubX + hubW - 28, y + 15, kind), tr('', 'Pool') + ' ' + p.port + ' ' + tr('', (CL_STATE[p.state] || CL_STATE.starting)[1]));
     const status = p.member_status || [];
     (p.members || []).forEach(m => {
-      const i = linkIdx.get(m.link);
-      if (i === undefined) return;
+      const n = srvById.get(m.link);
+      if (!n) return;
+      inPool.add(m.link);
       const s = status.find(x => x.link === m.link) || {};
       const share = s.share || 0;
       let cls;
@@ -11708,28 +11834,56 @@ function clMapRender(d) {
       else cls = 'idle';
       const w = share > 0 ? 2 + share * 8 : 1.6;
       const what = cls === 'err' ? tr('', 'Down') : m.drain ? tr('', 'Draining') : m.backup ? tr('', 'Standby') : share > 0 ? Math.round(share * 100) + '%' : tr('', 'idle');
-      edges += clSvgEdge('member:' + pk + ':' + m.link, hubX + hubW - 14, y + POOL_H / 2, srvX, srvY(i) + SRV_H / 2, cls, w, share > 0 && !p.disabled,
+      edges += clSvgEdge('member:' + pk + ':' + m.link, hubX + hubW - 14, y + POOL_H / 2, srvX, srvMid(n), cls, w, share > 0 && !p.disabled,
         p.port + ' → ' + (s.name || 'link ' + m.link) + ': ' + what, share > 0 && share < 1 ? Math.round(share * 100) + '%' : '');
     });
+  });
+  // a tunnel in no pool: a line from the hub itself as soon as it is up
+  tuns.forEach(t => {
+    if (inPool.has(t.id)) return;
+    const n = srvById.get(t.id), l = linkById.get(t.id);
+    edges += clTunEdge(l ? 'link:' + l.id : 'hub', hubX + hubW, hubY + 44, srvX, srvMid(n), t.up, t.bps, tr('', 'This Iran hub') + ' → ' + (t.name || t.remote), true, pills);
   });
   const npy = poolY(pools.length);
   nodes += clSvgNode('add:pool', hubX + 14, npy, hubW - 28, POOL_H, 'add', clTxt(hubX + hubW / 2, npy + 31, 'cl-t1 cl-tc', '+ ' + tr('', 'New Pool')), tr('', 'New Pool'));
 
-  // right: foreign servers
-  links.forEach((l, i) => {
-    const y = srvY(i), kind = l.up ? 'ok' : 'err';
-    nodes += clSvgNode('link:' + l.id, srvX, y, srvW, SRV_H, l.bound ? '' : 'dim', clDot(srvX + 18, y + 22, kind) +
-      clTxt(srvX + 32, y + 26, 'cl-t1', clTrunc(l.name, 13)) +
-      clTxt(srvX + srvW - 12, y + 26, 'cl-t2 cl-tr', clMs(l.latency_ms)) +
-      clTxt(srvX + 16, y + 46, 'cl-t2', clTrunc((l.remote || '—') + ' · ' + l.engine, 20)) +
-      clTxt(srvX + srvW - 12, y + 46, 'cl-t2 cl-tr', connsBy[l.id] != null ? connsBy[l.id] + ' ' + tr('', 'conn') : ''),
-      tr('', 'Foreign Server') + ' ' + l.name + ': ' + tr('', l.up ? 'Up' : 'Down'));
+  // the other Iran hubs, under this one
+  hubs.forEach((h, i) => {
+    const y = hubYs[i + 1], kind = !h.up ? 'err' : h.healthy ? 'ok' : 'warn', x = byHub[h.id], key = 'peer:' + h.id, hb = peerBps(h);
+    const hn = clTrunc(h.name || h.id, 18);
+    if (on) edges += clSvgPath('dns', clBusPath(hubX + 26, TOP_Y + TOP_H, busX, hubX, y + PEER_H / 2), busCls(x), busW(x), !!x && x.st === 'ok',
+      tr('', 'DNS Failover') + ' → ' + (h.name || h.id) + (x ? ': ' + tr('', x.text) : ''));
+    const right = on && x && x.pct != null ? clTxt(hubX + hubW - 16, y + 28, 'cl-tpct cl-tr', x.pct + '%')
+      : clTxt(hubX + hubW - 16, y + 28, 'cl-t2 cl-tr', !h.up ? tr('', 'Unreachable') : tr('', 'Iran hub'));
+    nodes += clSvgNode(key, hubX, y, hubW, PEER_H, 'hubbox peer', clAcc(hubX, y, PEER_H, kind) + clIc(hubX + 16, y + 16, 'hub', kind === 'ok' ? 'lit' : '') +
+      clTxt(hubX + 40, y + 29, 'cl-t1', hn) + (ctlId === h.id ? clChip(hubX + 48 + hn.length * 8.6, y + 28, 'DNS', 'dns') : '') + right +
+      clTxt(hubX + 16, y + 56, 'cl-t2', (h.public_ip || '') + (h.up ? ' · ' + clMs(h.latency_ms) : '')) +
+      (hb >= CL_BUSY ? clTxt(hubX + hubW - 16, y + 56, 'cl-t2 cl-tr cl-trate', fmtRate(hb)) : ''),
+      tr('', 'Iran hub') + ' ' + (h.name || h.id));
+    (h.links || []).forEach(pl => {
+      const n = byRemote.get(pl.remote);
+      if (n) edges += clTunEdge(key, hubX + hubW, y + PEER_H / 2, srvX, srvMid(n), h.up && pl.up, h.up ? pl.bps : 0, (h.name || h.id) + ' → ' + (pl.name || pl.remote), h.up, pills);
+    });
   });
-  const ny = srvY(links.length);
-  nodes += clSvgNode('add:server', srvX, ny, srvW, SRV_H, 'add', clTxt(srvX + srvW / 2, ny + 36, 'cl-t1 cl-tc', '+ ' + tr('', 'Add a foreign server')), tr('', 'Add a foreign server') + ' (' + tr('', 'Setup') + ')');
+  nodes += clSvgNode('add:hub', hubX, addHubY, hubW, ADD_H, 'add', clTxt(hubX + hubW / 2, addHubY + 29, 'cl-t1 cl-tc', '+ ' + tr('', 'Link a Hub')), tr('', 'Link a Hub'));
+
+  // right: foreign servers
+  fsrv.forEach((n, i) => {
+    const y = srvY(i), kind = n.up ? 'ok' : 'err', l = n.l;
+    const meta = n.bps >= CL_BUSY ? fmtRate(n.bps) : l && connsBy[l.id] != null ? connsBy[l.id] + ' ' + tr('', 'conn') : n.hubs > 1 ? '×' + n.hubs : '';
+    const sub = (n.remote || '—') + (meta ? '' : ' · ' + (n.engine || 'gre'));
+    nodes += clSvgNode(n.key, srvX, y, srvW, SRV_H, 'srv' + (l && !l.bound && !n.up ? ' dim' : ''), clAcc(srvX, y, SRV_H, kind) + clIc(srvX + 14, y + 14, 'cloud', n.up ? 'lit' : '') +
+      clTxt(srvX + 38, y + 28, 'cl-t1', clTrunc(n.name || n.remote, 12)) +
+      clTxt(srvX + srvW - 12, y + 28, 'cl-t2 cl-tr', n.via ? tr('', 'via') + ' ' + clTrunc(n.via, 10) : n.up ? clMs(n.ms) : tr('', 'Down')) +
+      clTxt(srvX + 16, y + 49, 'cl-t2', clTrunc(sub, meta ? 19 : 26)) +
+      clTxt(srvX + srvW - 12, y + 49, 'cl-t2 cl-tr' + (n.bps >= CL_BUSY ? ' cl-trate' : ''), meta),
+      tr('', 'Foreign Server') + ' ' + (n.name || n.remote) + ': ' + tr('', n.up ? 'Up' : 'Down') + (n.hubs > 1 ? ' · ' + n.hubs + ' ' + tr('', 'Iran hubs') : ''));
+  });
+  const ny = srvY(fsrv.length);
+  nodes += clSvgNode('add:server', srvX, ny, srvW, SRV_H, 'add', clTxt(srvX + srvW / 2, ny + 37, 'cl-t1 cl-tc', '+ ' + tr('', 'Add a foreign server')), tr('', 'Add a foreign server') + ' (' + tr('', 'Setup') + ')');
 
   svg.setAttribute('viewBox', `0 0 ${W} ${Math.round(H)}`);
-  svg.innerHTML = edges + nodes;
+  svg.innerHTML = CL_DEFS + edges + edgesTop + pills.svg + nodes;
   clMapCenter(svg);
 }
 

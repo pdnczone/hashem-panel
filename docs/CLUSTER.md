@@ -25,19 +25,19 @@ The cluster keeps your users connected when a server dies. It joins several serv
 
 ### The cluster map
 
-The Cluster tab opens on a map of the cluster. Every part of it can be clicked, and an inspector next to it (under it on narrow screens) shows that part and lets you change everything about it:
+The Cluster tab opens on a map of the cluster: users and DNS failover on top, the Iran hubs stacked under the domain (this one first), and the foreign servers on the right, with a line from each Iran hub to every foreign server it reaches. Every part of it can be clicked, and an inspector next to it (under it on narrow screens) shows that part and lets you change everything about it:
 
 | Click | You see and can change |
 |---|---|
-| **This Iran hub** (middle) | hub name and public IP, the health check (interval, Fall, Rise), hub forwarding; New Pool, Show Join Code, Link a Hub, the kernel rules |
+| **This Iran hub** (first in the hub column) | hub name and public IP, the health check (interval, Fall, Rise), hub forwarding; New Pool, Show Join Code, Link a Hub, the kernel rules |
 | **A pool** (port inside the hub) | its state and members with share and connections; mode (one click), port, protocol, name, service check and interval, manual failback; Fail Back Now, Enable/Disable, Delete, add a foreign server |
 | **A line** from a pool to a foreign server | that server's settings in that pool: weight (slider), priority, port, connection limit, standby, drain; Remove From Pool |
 | **A foreign server** (right) | its health and why, latency, session, ports, private address; the pools it is in (click one to edit it), Add to a pool |
-| **A linked Iran hub** (left) | its state, latency, version and pools; Unlink |
-| **DNS Failover** (left) | provider (Cloudflare or webhook), record, TTL, token or secret, on/off; Test, Save |
+| **A linked Iran hub** (under this hub), or its line to a foreign server | its state, latency, version and pools; Unlink |
+| **DNS Failover** (top), or its stem to a hub | the domain, the Cloudflare key, each hub's share of users, on/off; Test, Save |
 | **+ New Pool / + Link a Hub / + Add a foreign server** | the matching dialog (a foreign server is added in Setup) |
 
-Line thickness is the share of new connections the server gets; moving dashes show traffic. Green carries traffic, grey is healthy but idle (for example the backup in failover mode), blue dashes are standby members, DNS and linked hubs, red dots are down, grey dots are drained or not serving. The map refreshes every 3 seconds without touching what you are typing in the inspector. **List** shows the same data as tables. On a foreign server, the map shows the Iran hubs it serves; click one to leave it, or **+ Join Another Iran Hub**.
+The stem from DNS failover branches to every Iran hub, as thick as its share of users (the percentage on the hub). A foreign server only another hub reaches shows "via" that hub; ×2 means two hubs reach it. A tunnel's line appears as soon as it is up and is as thick as the traffic it carries, written on the line; a pool's line is as thick as the share of new connections the server gets; moving dashes show traffic. Green carries traffic, grey is healthy but idle (for example the backup in failover mode), blue dashes are standby members, DNS and linked hubs, red dots are down, grey dots are drained or not serving. The map refreshes every 3 seconds without touching what you are typing in the inspector. **List** shows the same data as tables. On a foreign server, the map shows the Iran hubs it serves; click one to leave it, or **+ Join Another Iran Hub**.
 
 ---
 

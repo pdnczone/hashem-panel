@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"sort"
@@ -78,6 +79,98 @@ type meshBeat struct {
 	// the latest ones.
 	DNSBy  string `json:"dns_by,omitempty"`
 	DNSVer int64  `json:"dns_ver,omitempty"`
+
+	// Links are the hub's foreign servers, for the cluster map of the other
+	// hubs (which foreign server each Iran hub reaches).
+	Links []meshLink `json:"links,omitempty"`
+}
+
+// meshLink is one foreign server of a hub, as the cluster map shows it.
+type meshLink struct {
+	ID     int     `json:"id"`
+	Name   string  `json:"name"`
+	Remote string  `json:"remote"`
+	Engine string  `json:"engine,omitempty"`
+	Up     bool    `json:"up"`
+	Ms     float64 `json:"ms,omitempty"`
+	Bps    float64 `json:"bps"` // traffic both ways, bytes per second
+}
+
+// linkRates turns the tunnels' byte counters into traffic per second for the
+// map. The beat and the status poll both read it; a rate is measured over at
+// least 2 s and smoothed, so it does not jump between polls.
+var linkRates = struct {
+	sync.Mutex
+	m map[string]*linkRate
+}{m: map[string]*linkRate{}}
+
+type linkRate struct {
+	bytes uint64
+	at    time.Time
+	bps   float64
+	seen  time.Time
+}
+
+func linkBps(key string, rx, tx *uint64, now time.Time) float64 {
+	if rx == nil || tx == nil {
+		return 0
+	}
+	total := *rx + *tx
+	linkRates.Lock()
+	defer linkRates.Unlock()
+	r := linkRates.m[key]
+	if r == nil {
+		if len(linkRates.m) > 512 { // tunnels come and go: forget the old ones
+			for k, v := range linkRates.m {
+				if now.Sub(v.seen) > 10*time.Minute {
+					delete(linkRates.m, k)
+				}
+			}
+		}
+		linkRates.m[key] = &linkRate{bytes: total, at: now, seen: now}
+		return 0
+	}
+	r.seen = now
+	dt := now.Sub(r.at).Seconds()
+	if dt < 2 {
+		return r.bps
+	}
+	if total < r.bytes { // the counter restarted (service or interface)
+		r.bytes, r.at = total, now
+		return r.bps
+	}
+	cur := float64(total-r.bytes) / dt
+	if r.bps == 0 || dt > 30 {
+		r.bps = cur
+	} else {
+		r.bps = 0.6*cur + 0.4*r.bps
+	}
+	r.bytes, r.at = total, now
+	return math.Round(r.bps)
+}
+
+// meshLinksOf lists the tunnels of a snapshot as the beat carries them
+// (healthy or degraded counts as up: it carries users).
+func meshLinksOf(s *HubSnapshot) []meshLink {
+	if s == nil {
+		return nil
+	}
+	var out []meshLink
+	for _, l := range s.All() {
+		if l.RemotePub == "" {
+			continue
+		}
+		if len(out) == 200 { // the beat stays far below its 64 KiB limit
+			break
+		}
+		ml := meshLink{ID: l.ID, Name: l.Name, Remote: l.RemotePub, Engine: l.Engine, Up: l.HealthState == stateHealthy || l.HealthState == stateDegraded}
+		ml.Bps = linkBps(strconv.Itoa(l.ID)+"|"+l.RemotePub, l.Rx, l.Tx, time.Now())
+		if ml.Up && l.LatencyMs > 0 {
+			ml.Ms = math.Round(l.LatencyMs*10) / 10
+		}
+		out = append(out, ml)
+	}
+	return out
 }
 
 // hubRT is what this hub knows about another one right now.
@@ -224,12 +317,14 @@ func meshSelfBeat(c ClusterConfig) meshBeat {
 		}
 	}
 	clusterRT.mu.Unlock()
+	snap := lbSnapshot()
 	if len(c.Pools) == 0 {
 		// Without pools the cluster monitor is idle and its link list stops
 		// being updated (it keeps what it had when the last pool went): the
 		// live snapshot says whether a tunnel works.
-		anyOK = snapAnyLinkWorks(lbSnapshot())
+		anyOK = snapAnyLinkWorks(snap)
 	}
+	b.Links = meshLinksOf(snap)
 	b.Healthy = anyOK
 	if c.DNS.Enabled {
 		b.DNS = c.DNS.Name
@@ -561,6 +656,7 @@ type hubView struct {
 	Error     string                   `json:"error,omitempty"`
 	Pools     map[string]meshPoolState `json:"pools"`
 	Version   string                   `json:"version,omitempty"`
+	Links     []meshLink               `json:"links"` // its foreign servers (cluster map)
 	// VersionDiffers: the hub answers with another panel version (or one too
 	// old to send it). The cluster needs the same version on every hub.
 	VersionDiffers bool `json:"version_differs,omitempty"`
@@ -574,6 +670,7 @@ func meshView(c ClusterConfig) []hubView {
 		v := hubView{HubPeer: h}
 		if st := meshState[h.ID]; st != nil {
 			v.Up, v.Healthy, v.LatencyMs, v.Error, v.Pools, v.Version = st.Up, st.Beat.Healthy, st.LatencyMs, st.Err, st.Beat.Pools, st.Beat.Version
+			v.Links = st.Beat.Links
 			if !st.LastSeen.IsZero() {
 				v.LastSeen = st.LastSeen.Format("2006-01-02 15:04:05")
 				v.VersionDiffers = st.Beat.Version != panelVersion

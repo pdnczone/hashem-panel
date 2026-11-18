@@ -627,6 +627,34 @@ html[lang="fa"] .brand-premium-badge .bp-label { letter-spacing: 0; } /* trackin
 @keyframes cl-flow { to { stroke-dashoffset: -16; } }
 @media (prefers-reduced-motion: reduce) { .cl-e-flow { display: none; } }
 .cl-t-share { fill: var(--tx); font-size: 12px; font-weight: 600; text-anchor: middle; paint-order: stroke; stroke: var(--sunk); stroke-width: 4px; pointer-events: none; }
+/* the map: a faint dot grid under the picture, line icons, a health stripe
+   on each card, the domain lit in blue when DNS failover is on, and tunnel
+   lines that glow and carry their traffic on a pill */
+.cl-map-scroll { background-image: radial-gradient(circle, color-mix(in srgb, var(--mu) 20%, transparent) 1px, transparent 1.5px); background-size: 18px 18px; background-position: 9px 9px; }
+.cl-gs-card0 { stop-color: var(--s2); } .cl-gs-card1 { stop-color: var(--s1); }
+.cl-gs-dns0 { stop-color: color-mix(in srgb, var(--info) 16%, var(--s2)); } .cl-gs-dns1 { stop-color: color-mix(in srgb, var(--info) 4%, var(--s1)); }
+.cl-n.hubbox > .cl-n-bg, .cl-n.srv > .cl-n-bg, .cl-n.usersbox > .cl-n-bg { fill: url(#clgCard); }
+.cl-n.dnsbox.on > .cl-n-bg { fill: url(#clgDns); stroke: color-mix(in srgb, var(--info) 55%, transparent); }
+.cl-n.dnsbox.on:hover > .cl-n-bg, .cl-n.dnsbox.on:focus-visible > .cl-n-bg, .cl-n.dnsbox.on.sel > .cl-n-bg { stroke: var(--ac); }
+.cl-n.dnsbox.on .cl-ic { stroke: var(--info); }
+.cl-ic { fill: none; stroke: var(--mu); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.cl-ic.lit { stroke: var(--tx); }
+.cl-tdns { fill: var(--info); font-weight: 600; }
+.cl-tpct { fill: var(--ok); font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cl-trate { fill: var(--ok); font-weight: 600; }
+.cl-acc { fill: var(--mu); opacity: .45; pointer-events: none; }
+.cl-acc.ok { fill: var(--ok); opacity: 1; } .cl-acc.warn { fill: var(--wr); opacity: 1; } .cl-acc.err { fill: var(--er); opacity: 1; }
+.cl-chip rect { fill: color-mix(in srgb, var(--info) 14%, transparent); stroke: color-mix(in srgb, var(--info) 60%, transparent); stroke-width: 1; }
+.cl-chip text { fill: var(--info); font-size: 12px; font-weight: 700; text-anchor: middle; }
+.cl-e-glow { fill: none; stroke-linecap: round; opacity: .16; pointer-events: none; }
+.cl-e.ok .cl-e-glow { stroke: var(--ok); } .cl-e.warn .cl-e-glow { stroke: var(--wr); }
+.cl-e.sel .cl-e-glow, .cl-e[data-sel]:hover .cl-e-glow { stroke: var(--ac); }
+.cl-pill { pointer-events: none; }
+.cl-pill rect { fill: var(--s2); stroke: color-mix(in srgb, var(--ok) 60%, transparent); stroke-width: 1; }
+.cl-pill text { fill: var(--ok); font-size: 12px; font-weight: 700; text-anchor: middle; font-variant-numeric: tabular-nums; }
+.cl-pulse { fill: var(--ok); transform-box: fill-box; transform-origin: center; animation: cl-pulse 2.6s ease-out infinite; pointer-events: none; }
+@keyframes cl-pulse { 0% { transform: scale(1); opacity: .5; } 70%, 100% { transform: scale(2.8); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .cl-pulse { display: none; } }
 .cl-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: var(--fs-caption); color: var(--mu); }
 .cl-legend i { display: inline-block; width: 22px; border-top: 3px solid var(--mu); vertical-align: middle; margin-inline-end: 6px; }
 .cl-legend i.ok { border-top-color: var(--ok); } .cl-legend i.err { border-top: 3px dotted var(--er); }

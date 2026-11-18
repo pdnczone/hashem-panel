@@ -2287,7 +2287,7 @@
           <div class="tc-header u-flex u-jc-sb u-ai-c u-wrap u-gap-8">
             <div class="u-flex-1 cl-head-txt">
               <p class="tc-title u-m-0">Cluster Map</p>
-              <div class="ent-help u-m-0">Click any part of the map to see and change it. Line thickness is the share of new connections; color is health.</div>
+              <div class="ent-help u-m-0">Click any part of the map to see and change it. A line is as thick as the traffic it carries (a pool's line: its share of new connections); color is health.</div>
             </div>
             <div class="cl-seg" role="group" aria-label="View">
               <button type="button" id="clViewMap" onclick="clSetView('map')">Map</button>
@@ -2299,7 +2299,7 @@
               <div class="cl-map-col">
                 <div class="cl-map-scroll"><svg id="clMap" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 400" role="group" aria-label="Cluster map"></svg></div>
                 <div class="cl-legend">
-                  <span><i class="ok"></i>Carries traffic</span>
+                  <span><i class="ok"></i>Up; thicker carries more</span>
                   <span><i class="idle"></i>Healthy, idle</span>
                   <span><i class="standby"></i>Standby, DNS or linked hub</span>
                   <span><i class="err"></i>Down</span>

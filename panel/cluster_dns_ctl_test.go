@@ -425,3 +425,41 @@ func TestDNSFollowerKeepsFreshSettings(t *testing.T) {
 		t.Fatalf("the old controller let the new settings go at once: %+v", d)
 	}
 }
+
+// The beat lists the hub's foreign servers for the other hubs' map.
+func TestMeshLinksOf(t *testing.T) {
+	if meshLinksOf(nil) != nil {
+		t.Fatal("links without a snapshot")
+	}
+	s := &HubSnapshot{Peers: []peerLive{
+		{peerRecord: peerRecord{Name: "de", RemotePub: "203.0.113.5"}, HealthState: stateHealthy, LatencyMs: 41.27},
+		{peerRecord: peerRecord{Name: "fi", RemotePub: "203.0.113.6"}, HealthState: stateDown, LatencyMs: 9},
+		{peerRecord: peerRecord{Name: "none"}, HealthState: stateHealthy},
+	}}
+	got := meshLinksOf(s)
+	if len(got) != 2 || got[0] != (meshLink{Name: "de", Remote: "203.0.113.5", Up: true, Ms: 41.3}) || got[1].Up || got[1].Ms != 0 {
+		t.Fatalf("%+v", got)
+	}
+}
+
+// A tunnel's traffic per second comes from its byte counters, over at least
+// 2 s, and survives a counter restart.
+func TestLinkBps(t *testing.T) {
+	u := func(v uint64) *uint64 { return &v }
+	linkRates.Lock()
+	delete(linkRates.m, "t|x")
+	linkRates.Unlock()
+	t0 := time.Now()
+	if linkBps("t|x", u(1000), u(0), t0) != 0 || linkBps("t|x", nil, u(1), t0) != 0 {
+		t.Fatal("a first reading has no rate")
+	}
+	if got := linkBps("t|x", u(3000), u(2000), t0.Add(time.Second)); got != 0 {
+		t.Fatalf("measured over less than 2 s: %v", got)
+	}
+	if got := linkBps("t|x", u(11000), u(10000), t0.Add(4*time.Second)); got != 5000 {
+		t.Fatalf("20000 bytes in 4 s: %v", got)
+	}
+	if got := linkBps("t|x", u(10), u(0), t0.Add(8*time.Second)); got != 5000 {
+		t.Fatalf("a restarted counter changed the rate: %v", got)
+	}
+}

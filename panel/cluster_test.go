@@ -74,7 +74,10 @@ func newClusterFixture(t *testing.T, licensed bool) *clusterFixture {
 		return out, f.icmpOK
 	}
 	resetClusterState()
+	oldPortsGo := dnsPortsGo
+	dnsPortsGo = func(f func()) { f() }
 	t.Cleanup(func() {
+		dnsPortsGo = oldPortsGo
 		configDir, procNetRoot = old, oldProc
 		lbSnapshot = saved[0].(func() *HubSnapshot)
 		lbApply = saved[1].(func(string, []string) error)
