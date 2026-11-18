@@ -92,6 +92,7 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/peer/carrier-info` | peer secret (or session) | `handlePeerCarrierInfo` |
 | `GET` | `/api/peer/config` | session | `handlePeerConfigGet` |
 | `POST` | `/api/peer/config` | session + CSRF | `handlePeerConfigPost` |
+| `POST` | `/api/peer/egress` | peer secret (or session) | `handlePeerEgress` |
 | `POST` | `/api/peer/handshake` | peer secret (or session) | `handlePeerHandshake` |
 | `GET` | `/api/peer/node-offer` | peer secret (or session) | `handlePeerNodeOffer` |
 | `POST` | `/api/peer/pathtest-join` | peer secret (or session) | `handlePeerPathTestJoin` |
@@ -112,6 +113,7 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/peers` | session + CSRF | `handlePeersPost` |
 | `GET` | `/api/perf` | session | `handlePerfGet` |
 | `POST` | `/api/perf` | session + CSRF | `handlePerfPost` |
+| `POST` | `/api/proxy/probe` | session + CSRF | `handleProxyProbe` |
 | `GET` | `/api/releases` | session | `handleReleases` |
 | `GET` | `/api/rescue` | session | `handleRescueGet` |
 | `POST` | `/api/rescue` | session + CSRF | `handleRescuePost` |
@@ -172,4 +174,4 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/xray` | session + CSRF | `handleXrayPost` |
 | `GET` | `/metrics` | none | `handleMetrics` |
 
-Total: 148 routes.
+Total: 150 routes.
