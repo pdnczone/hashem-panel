@@ -75,6 +75,7 @@ type hostView struct {
 	tunnelShow string
 	tunnelOK   bool
 	inner      map[string]string // ifname -> first inet CIDR
+	addrShow   string            // raw `ip -o -4 addr show` (every address, for publicIPv4s)
 	frpsListen []int             // TCP ports the main frps unit listens on (frpsUnitPorts)
 	active     map[string]bool   // unit -> active
 	devData    string            // raw /proc/net/dev
@@ -219,6 +220,7 @@ func collectHost(recs []peerRecord, prev map[string]devCounters) *hostView {
 	timedStep("ip_addr", func() {
 		if out, err := runCmdTimeoutOut(5*time.Second, "ip", "-o", "-4", "addr", "show"); err == nil {
 			v.inner = parseAddrShow(string(out))
+			v.addrShow = string(out)
 		}
 	})
 	timedStep("systemctl", func() {
@@ -358,13 +360,16 @@ func mainTunnelFrom(st tunnelStatus, v *hostView) *peerLive {
 // ---- snapshot ----
 
 type HubSnapshot struct {
-	At      time.Time
-	Seq     uint64
-	BuildMs float64
-	Local   tunnelStatus
-	Main    *peerLive
-	Peers   []peerLive
-	Traffic map[string]any
+	// PublicIPs: every public IPv4 on this server, the main one first (a
+	// server with several can give each tunnel its own, see local_pub)
+	PublicIPs []string
+	At        time.Time
+	Seq       uint64
+	BuildMs   float64
+	Local     tunnelStatus
+	Main      *peerLive
+	Peers     []peerLive
+	Traffic   map[string]any
 	// DevData is the raw /proc/net/dev this snapshot was built from (the
 	// traffic ledger sums tunnel interfaces from it).
 	DevData string
@@ -515,6 +520,7 @@ func buildSnapshot() *HubSnapshot {
 		s.LocalRx, s.LocalTx = localTraffic(local, v)
 	})
 	s.PublicIP = detectPublicIPCached()
+	s.PublicIPs = publicIPv4s(v.addrShow, s.PublicIP)
 	s.FrpSince = frpSinceCached(local.FrpSvc)
 
 	snapIcmp.setTargets(icmpTargets(s))
