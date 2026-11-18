@@ -6860,40 +6860,15 @@ async function loadWatchdog() {
     // Telegram card
     if ($('wdBotToken')) $('wdBotToken').value = s.tg_bot_token_masked || '';
     if ($('wdChatId')) $('wdChatId').value = s.tg_chat_id || '';
+    rtRender($('wdRoutePick'), s.tunnels || [], { route: s.tg_route, tunnel_id: s.tg_tunnel_id, tunnel_port: s.tg_tunnel_port });
+    $('wdProbeRow').classList.toggle('hidden', rtValue($('wdRoutePick')).route !== 'tunnel');
     if (s.tg_route === 'tunnel') {
-      $('wdRouteTunnel').checked = true;
-      $('wdTunnelPortGroup').classList.remove('hidden');
-      $('wdTgRouteBadge').textContent = 'Tunnel (SOCKS5)';
+      const t = (s.tunnels || []).find(x => x.id === s.tg_tunnel_id);
+      $('wdTgRouteBadge').textContent = tr('', 'Tunnel') + (t ? ' · ' + t.name : '');
       $('wdTgRouteBadge').className = 'badge info';
     } else {
-      $('wdRouteDirect').checked = true;
-      $('wdTunnelPortGroup').classList.add('hidden');
-      $('wdTgRouteBadge').textContent = 'Direct';
+      $('wdTgRouteBadge').textContent = tr('', 'Direct');
       $('wdTgRouteBadge').className = 'badge';
-    }
-
-    // Tunnel ports dropdown
-    const sel = $('wdTunnelPortSelect');
-    if (sel) {
-      sel.innerHTML = '';
-      const ports = s.tunnel_ports || [];
-      if (ports.length === 0 && s.tg_tunnel_port) ports.push(s.tg_tunnel_port);
-      ports.forEach(p => {
-        const opt = document.createElement('option');
-        opt.value = p;
-        opt.textContent = 'Port ' + p;
-        if (p === s.tg_tunnel_port) opt.selected = true;
-        sel.appendChild(opt);
-      });
-      const optManual = document.createElement('option');
-      optManual.value = 'custom';
-      optManual.textContent = 'Custom port…';
-      sel.appendChild(optManual);
-      if (s.tg_tunnel_port && !ports.includes(s.tg_tunnel_port)) {
-        optManual.selected = true;
-        $('wdTunnelPortManual').value = s.tg_tunnel_port;
-        $('wdTunnelPortManual').classList.remove('hidden');
-      }
     }
 
     // Tunnel Auto-Restart Scheduler card
@@ -7021,56 +6996,49 @@ $('wdShowTokenBtn').onclick = () => {
   inp.type = inp.type === 'password' ? 'text' : 'password';
 };
 
-$('wdRouteDirect').onchange = () => {
-  $('wdTunnelPortGroup').classList.add('hidden');
-};
-$('wdRouteTunnel').onchange = () => {
-  $('wdTunnelPortGroup').classList.remove('hidden');
-};
+// The route picker's choice in the Telegram card changed: check it at once.
+$('wdRoutePick').addEventListener('change', () => {
+  const v = rtValue($('wdRoutePick'));
+  $('wdProbeRow').classList.toggle('hidden', v.route !== 'tunnel');
+  $('wdProbeOut').textContent = '';
+  if (v.route === 'tunnel') $('wdProbeBtn').click();
+});
 
-$('wdTunnelPortSelect').onchange = () => {
-  if ($('wdTunnelPortSelect').value === 'custom') {
-    $('wdTunnelPortManual').classList.remove('hidden');
-    $('wdTunnelPortManual').focus();
-  } else {
-    $('wdTunnelPortManual').classList.add('hidden');
-  }
-};
-
-$('wdSaveTgBtn').onclick = async () => {
+// wdSaveTelegram saves what the card shows; false when it cannot.
+async function wdSaveTelegram() {
   const botToken = $('wdBotToken').value.trim();
   const chatId = $('wdChatId').value.trim();
-  const route = $('wdRouteTunnel').checked ? 'tunnel' : 'direct';
-  let port = 0;
-  if (route === 'tunnel') {
-    const selVal = $('wdTunnelPortSelect').value;
-    port = selVal === 'custom' ? parseInt($('wdTunnelPortManual').value) : parseInt(selVal);
-    if (!port || port < 1 || port > 65535) {
-      toastWarn('invalid port', 'Please select or enter a valid tunnel port (1-65535).');
-      return;
-    }
-  }
+  const v = rtValue($('wdRoutePick'));
+  const body = { action: 'set-telegram', bot_token: botToken, chat_id: chatId, route: v.route };
+  if (v.tunnel_id != null) body.tunnel_id = v.tunnel_id;
+  else if (v.tunnel_port) body.tunnel_port = v.tunnel_port;
   try {
-    await api('/api/watchdog', {
-      action: 'set-telegram',
-      bot_token: botToken,
-      chat_id: chatId,
-      route: route,
-      tunnel_port: port,
-    });
-    toastOk('Telegram settings saved');
-    $('wdTgMsg').textContent = 'Saved at ' + new Date().toLocaleTimeString();
-    loadWatchdog();
-  } catch(e) {
+    await api('/api/watchdog', body);
+    $('wdRoutePick').dataset.touched = '';
+    return true;
+  } catch (e) {
     toastErr('save failed', e.message);
+    return false;
   }
+}
+
+$('wdSaveTgBtn').onclick = async () => {
+  if (!await wdSaveTelegram()) return;
+  toastOk('Telegram settings saved');
+  $('wdTgMsg').textContent = 'Saved at ' + new Date().toLocaleTimeString();
+  loadWatchdog();
 };
+
+$('wdProbeBtn').onclick = () => routeProbe(rtValue($('wdRoutePick')), $('wdProbeOut'), 'telegram');
 
 $('wdTestTgBtn').onclick = async () => {
   const btn = $('wdTestTgBtn');
   btn.disabled = true;
   btn.textContent = 'Testing…';
-  $('wdTgMsg').textContent = 'Sending test alert via ' + ($('wdRouteTunnel').checked ? 'tunnel' : 'direct') + '…';
+  // the test uses the saved settings: save what the card shows first, or a
+  // route or port chosen but not saved yet would be ignored
+  if (!await wdSaveTelegram()) { btn.disabled = false; btn.textContent = 'Test Alert'; return; }
+  $('wdTgMsg').textContent = 'Sending test alert ' + (rtValue($('wdRoutePick')).route === 'tunnel' ? 'through the tunnel' : 'directly') + '…';
   try {
     const res = await api('/api/watchdog', { action: 'test' });
     toastOk('Telegram test OK', res.detail);
@@ -11015,6 +10983,59 @@ async function clRulesShow() {
   box.classList.remove('hidden');
 }
 
+// ---- the route picker: Direct, or one of this server's tunnels ----
+// Telegram alerts and the DNS failover use it when this server cannot reach
+// Telegram or Cloudflare directly. The choice is a tunnel, never a port: the
+// panel sends the call out from that tunnel's foreign server.
+const RT_STATE = { healthy: ['ok', 'Healthy'], degraded: ['warn', 'Degraded'], down: ['err', 'Down'] };
+
+// rtRender draws the choices into box. cfg is the saved route
+// ({route, tunnel_id, tunnel_port}); a choice the user made but has not saved
+// is kept when the card is redrawn.
+function rtRender(box, tunnels, cfg) {
+  const name = box.id;
+  let sel = 'direct';
+  if (cfg.route === 'tunnel') sel = cfg.tunnel_id != null ? 't:' + cfg.tunnel_id : (cfg.tunnel_port ? 'p:' + cfg.tunnel_port : 'direct');
+  if (box.dataset.touched === '1') { const cur = box.querySelector('input:checked'); if (cur) sel = cur.value; }
+  const rows = [{ v: 'direct', name: tr('', 'Direct'), sub: tr('', 'Straight out from this server'), state: '' }];
+  tunnels.forEach(t => rows.push({ v: 't:' + t.id, name: t.name, sub: t.remote || '', state: t.state }));
+  if (cfg.route === 'tunnel' && cfg.tunnel_id == null && cfg.tunnel_port) rows.push({ v: 'p:' + cfg.tunnel_port, name: tr('', 'Port') + ' ' + cfg.tunnel_port, sub: tr('', 'A SOCKS5 port saved by an older version'), state: '' });
+  if (sel.startsWith('t:') && !tunnels.some(t => 't:' + t.id === sel)) rows.push({ v: sel, name: tr('', 'Tunnel') + ' ' + sel.slice(2), sub: tr('', 'No longer on this server'), state: 'down' });
+  box.innerHTML = rows.map(r => {
+    const st = RT_STATE[r.state];
+    return `<label class="rt-opt"><input type="radio" name="${esc(name)}" value="${esc(r.v)}"${r.v === sel ? ' checked' : ''}>`
+      + `<span class="rt-main"><span class="rt-name">${esc(r.name)}</span>${r.sub ? `<span class="rt-sub u-mono">${esc(r.sub)}</span>` : ''}</span>`
+      + (st ? `<span class="badge ${st[0]}">${esc(tr('', st[1]))}</span>` : '') + '</label>';
+  }).join('') + (tunnels.length ? '' : `<div class="rt-empty">${esc(tr('', 'This server has no tunnels to choose from.'))}</div>`);
+  box.querySelectorAll('input').forEach(i => i.addEventListener('change', () => { box.dataset.touched = '1'; }));
+}
+
+// rtValue is what the picker shows now: {route:'direct'} or
+// {route:'tunnel', tunnel_id} (or {route:'tunnel', tunnel_port} for a saved old port).
+function rtValue(box) {
+  const c = box.querySelector('input:checked');
+  const v = c ? c.value : 'direct';
+  if (v.startsWith('t:')) return { route: 'tunnel', tunnel_id: Number(v.slice(2)) };
+  if (v.startsWith('p:')) return { route: 'tunnel', tunnel_port: Number(v.slice(2)) };
+  return { route: 'direct' };
+}
+
+// routeProbe makes a real connection to Telegram or Cloudflare out of the chosen
+// tunnel and shows whether it worked, which address of the foreign panel
+// carried it, or what is wrong. what is "telegram" or "cloudflare".
+async function routeProbe(v, el, what) {
+  if (v.route !== 'tunnel') { el.textContent = ''; return true; }
+  el.textContent = tr('', 'Checking…');
+  try {
+    const r = await api('/api/proxy/probe', v.tunnel_id != null ? { tunnel: v.tunnel_id, for: what } : { port: v.tunnel_port, for: what });
+    el.innerHTML = r.ok
+      ? `<span class="badge ok">${esc(tr('', 'Connected'))}</span> <span class="u-mono">${esc(r.via || '')}</span>`
+      : `<span class="badge err">${esc(tr('', 'Not working'))}</span> ${esc(r.why)}`;
+    return !!r.ok;
+  } catch (e) { el.textContent = e.message || String(e); return false; }
+}
+function clDnsProbe() { return routeProbe(rtValue($('clDnsRoutePick')), $('clDnsProbeOut'), 'cloudflare'); }
+
 function clRenderDNS(dns) {
   const b = $('clDnsBadge');
   b.className = 'badge ' + (!dns.enabled ? 'dim' : dns.error ? 'err' : 'ok');
@@ -11023,21 +11044,63 @@ function clRenderDNS(dns) {
     _clDnsFilled = true;
     $('clDnsName').value = dns.name || '';
     $('clDnsTTL').value = dns.ttl || 60;
+    $('clDnsWeight').value = dns.weight || 1;
+    $('clDnsMaster').checked = !!dns.master;
     $('clDnsEnabled').checked = !!dns.enabled;
     $('clDnsProvider').value = dns.provider === 'webhook' ? 'webhook' : 'cloudflare';
     $('clDnsURL').value = dns.url || '';
     _clDnsSaved = { provider: dns.provider === 'webhook' ? 'webhook' : 'cloudflare', hasToken: !!dns.has_token };
     clDnsProviderChanged();
   }
-  const lines = [];
+  rtRender($('clDnsRoutePick'), dns.tunnels || [], { route: dns.route, tunnel_id: dns.tunnel_id, tunnel_port: dns.tunnel_port });
+  clDnsRouteChanged();
+  clDnsRenderMembers(dns.members || []);
+  clDnsMasterChanged();
+  clDnsRenderShares(dns.shares || []);
+  const kpi = (k, v, cls) => `<div class="cl-kpi ${cls || ''}"><span>${esc(tr('', k))}</span><b class="u-fs-14">${v}</b></div>`;
+  const kp = $('clDnsKpis');
+  kp.classList.toggle('hidden', !dns.enabled);
   if (dns.enabled) {
-    lines.push(tr('', 'Points to:') + ' ' + ((dns.records || []).join(', ') || '—'));
-    if ((dns.want || []).length) lines.push(tr('', 'Working hubs:') + ' ' + dns.want.join(', '));
-    lines.push(tr('', dns.leader ? 'This hub writes the record.' : 'Another hub writes the record (the one with the lowest id).'));
-    if (dns.last_run) lines.push(tr('', 'Last check:') + ' ' + dns.last_run);
+    kp.innerHTML = kpi('Points to', esc((dns.records || []).join(', ') || '—'), (dns.records || []).length ? 'ok' : '')
+      + kpi('Writes the record', esc(tr('', dns.leader ? 'This hub' : 'Another hub')))
+      + kpi('Last check', esc(dns.last_run || '—'));
   }
-  if (dns.error) lines.push(tr('', 'Error:') + ' ' + dns.error);
-  $('clDnsState').textContent = lines.join('\n');
+  const er = $('clDnsErr');
+  er.classList.toggle('hidden', !dns.error);
+  er.textContent = dns.error ? tr('', 'Error:') + ' ' + dns.error : '';
+}
+
+// A bar of who gets what share, drawn like a pool's bar.
+function clDnsRenderShares(shares) {
+  const box = $('clDnsShareViz');
+  box.classList.toggle('hidden', shares.length < 2);
+  if (shares.length < 2) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="cl-bar" role="img" aria-label="${esc(tr('', 'Share of users'))}">`
+    + shares.map((h, i) => `<span class="cl-c${i % 6}" style="width:${h.percent}%"></span>`).join('') + '</div>'
+    + '<div class="cl-share-leg">' + shares.map((h, i) => `<span><span class="cl-sw cl-c${i % 6}"></span>${esc(h.name || h.ip)} <b>${h.percent}%</b></span>`).join('') + '</div>';
+}
+
+function clDnsRouteChanged() {
+  $('clDnsProbeRow').classList.toggle('hidden', rtValue($('clDnsRoutePick')).route !== 'tunnel');
+}
+$('clDnsRoutePick').addEventListener('change', () => {
+  clDnsRouteChanged();
+  $('clDnsProbeOut').textContent = '';
+  if (rtValue($('clDnsRoutePick')).route === 'tunnel') clDnsProbe();
+});
+
+// The master's table of shares. Redrawn only when the hubs change, so typing is not lost.
+let _clDnsMemSig = '';
+function clDnsRenderMembers(members) {
+  const sig = members.map(m => m.id).join(',');
+  if (sig === _clDnsMemSig && $('clDnsMembers').children.length) return;
+  _clDnsMemSig = sig;
+  $('clDnsMembers').innerHTML = `<div class="wd-lbl">${esc(tr('', 'Share of users for each hub (1-100)'))}</div>` + members.map(m => `<div class="u-flex-gap-8 u-mb-8 u-ai-c"><span class="u-flex-1">${esc(m.name || m.id)}${m.self ? ' <span class="badge dim">' + esc(tr('', 'this hub')) + '</span>' : ''}${m.up ? '' : ' <span class="badge warn">' + esc(tr('', 'down')) + '</span>'}</span><input class="hashem-input cl-num" type="number" min="1" max="100" data-hub="${esc(m.id)}" data-self="${m.self ? 1 : 0}" value="${m.weight || 1}" aria-label="${esc(m.name || m.id)}"></div>`).join('');
+}
+function clDnsMasterChanged() {
+  const on = $('clDnsMaster').checked;
+  $('clDnsMembersRow').classList.toggle('hidden', !on);
+  $('clDnsWeightRow').classList.toggle('hidden', on);
 }
 
 // The token saved for one provider is never used by the other one.
@@ -11047,17 +11110,34 @@ function clDnsProviderChanged() {
   $('clDnsURLRow').classList.toggle('hidden', !hook);
   $('clDnsTokenLabel').textContent = tr('', hook ? 'Secret (optional, sent as Authorization: Bearer)' : 'Cloudflare API token (Zone, DNS, Edit)');
   $('clDnsHookHelp').classList.toggle('hidden', !hook);
+  $('clDnsRouteSub').classList.toggle('hidden', hook);
+  $('clDnsCfWeightHelp').classList.toggle('hidden', hook);
   const saved = _clDnsSaved.provider === prov && _clDnsSaved.hasToken;
   $('clDnsToken').placeholder = tr('', saved ? 'Saved; paste a new one to replace it' : hook ? 'Optional' : 'API token');
 }
 
 async function clDnsSave(test) {
   const provider = $('clDnsProvider').value;
-  const body = { provider, url: $('clDnsURL').value.trim(), name: $('clDnsName').value.trim(), ttl: Number($('clDnsTTL').value) || 60, enabled: $('clDnsEnabled').checked, test: !!test };
+  const body = { provider, url: $('clDnsURL').value.trim(), name: $('clDnsName').value.trim(), ttl: Number($('clDnsTTL').value) || 60, weight: Math.min(100, Math.max(1, Math.round(Number($('clDnsWeight').value)) || 1)), enabled: $('clDnsEnabled').checked, master: $('clDnsMaster').checked, test: !!test };
+  if (provider !== 'webhook') {
+    const v = rtValue($('clDnsRoutePick'));
+    body.route = v.route;
+    if (v.tunnel_id != null) body.tunnel_id = v.tunnel_id;
+    else if (v.tunnel_port) body.tunnel_port = v.tunnel_port;
+  }
+  if (body.master) {
+    const hw = {};
+    document.querySelectorAll('#clDnsMembers input[data-hub]').forEach(i => {
+      const w = Math.min(100, Math.max(1, Math.round(Number(i.value)) || 1));
+      if (i.dataset.self === '1') body.weight = w; else hw[i.dataset.hub] = w;
+    });
+    body.hub_weights = hw;
+  }
   const tok = $('clDnsToken').value.trim();
   if (tok) body.token = tok;
   try {
     const r = await api('/api/cluster/dns', body);
+    $('clDnsRoutePick').dataset.touched = '';
     if (test) toastOk(tr('', provider === 'webhook' ? 'The webhook answered' : 'Cloudflare answered'), tr('', provider === 'webhook' ? 'Working hubs sent:' : 'The record points to:') + ' ' + ((r.records || []).join(', ') || '—'));
     else { toastOk(tr('', 'DNS failover saved')); $('clDnsToken').value = ''; _clDnsFilled = false; }
   } catch (e) { toastErr(tr('', test ? 'The test failed' : 'Cannot save'), e.message || String(e)); }

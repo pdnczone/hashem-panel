@@ -910,6 +910,31 @@ func tunnelPeerBases(t swapTunnel, l tunnelLink) []string {
 	return out
 }
 
+// tunnelPinnedTLS is the TLS client config for a tunnel's foreign panel: its
+// certificate is self-signed, so it is pinned (trust on first use) instead of
+// verified against a CA.
+func tunnelPinnedTLS(id int, pin string) *tls.Config {
+	return &tls.Config{
+		InsecureSkipVerify: true, // checked against the pin below (trust on first use)
+		VerifyPeerCertificate: func(raw [][]byte, _ [][]*x509.Certificate) error {
+			if len(raw) == 0 {
+				return errors.New("no TLS certificate")
+			}
+			sum := sha256.Sum256(raw[0])
+			got := hex.EncodeToString(sum[:])
+			if pin == "" {
+				pin = got
+				updateTunnelLink(id, func(x *tunnelLink) { x.TLSPin = got })
+				return nil
+			}
+			if subtle.ConstantTimeCompare([]byte(pin), []byte(got)) != 1 {
+				return errors.New("foreign panel TLS certificate changed (pinned fingerprint does not match)")
+			}
+			return nil
+		},
+	}
+}
+
 func tunnelPeerCall(t swapTunnel, method, path string, payload any, timeout time.Duration) ([]byte, error) {
 	var body []byte
 	if payload != nil {
@@ -944,28 +969,9 @@ func tunnelPeerCall(t swapTunnel, method, path string, payload any, timeout time
 			break // the secret was right; another one will not help
 		}
 	}
-	pin := l.TLSPin
 	tr := &http.Transport{
-		DialContext: (&net.Dialer{Timeout: peerDialTimeout}).DialContext,
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true, // checked against the pin below (trust on first use)
-			VerifyPeerCertificate: func(raw [][]byte, _ [][]*x509.Certificate) error {
-				if len(raw) == 0 {
-					return errors.New("no TLS certificate")
-				}
-				sum := sha256.Sum256(raw[0])
-				got := hex.EncodeToString(sum[:])
-				if pin == "" {
-					pin = got
-					updateTunnelLink(t.ID, func(x *tunnelLink) { x.TLSPin = got })
-					return nil
-				}
-				if subtle.ConstantTimeCompare([]byte(pin), []byte(got)) != 1 {
-					return errors.New("foreign panel TLS certificate changed (pinned fingerprint does not match)")
-				}
-				return nil
-			},
-		},
+		DialContext:     (&net.Dialer{Timeout: peerDialTimeout}).DialContext,
+		TLSClientConfig: tunnelPinnedTLS(t.ID, l.TLSPin),
 	}
 	defer tr.CloseIdleConnections()
 	client := &http.Client{Timeout: timeout, Transport: tr,

@@ -171,18 +171,35 @@ func sendWebhook(raw string, e alertEvent) error {
 	return nil
 }
 
+// tgAPIBase is Telegram's Bot API address; tests point it elsewhere.
+var tgAPIBase = "https://api.telegram.org"
+
 func sendTelegram(wd watchdogConfig, text string) error {
 	if wd.TGBotToken == "" || wd.TGChatID == "" {
 		return fmt.Errorf("telegram bot token/chat id not configured (Watchdog tab)")
 	}
 	client := alertClient
-	if wd.TGRoute == "tunnel" && wd.TGTunnelPort > 0 {
-		pu, _ := url.Parse(fmt.Sprintf("socks5h://127.0.0.1:%d", wd.TGTunnelPort))
-		client = &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(pu)}}
+	viaTunnel := wd.TGRoute == "tunnel" && (wd.TGTunnelID != nil || wd.TGTunnelPort > 0)
+	if viaTunnel {
+		port, err := routePort(wd.TGTunnelID, wd.TGTunnelPort)
+		if err != nil {
+			return fmt.Errorf("telegram tunnel route: %v", err)
+		}
+		if wd.TGTunnelID == nil { // an old manual port: say now if it is no SOCKS5 proxy
+			if err := tunnelProxyReady(port); err != nil {
+				return fmt.Errorf("telegram tunnel route: %v", err)
+			}
+		}
+		client = tunnelProxyClient(port, 20*time.Second)
 	}
-	api := "https://api.telegram.org/bot" + wd.TGBotToken + "/sendMessage"
+	api := tgAPIBase + "/bot" + wd.TGBotToken + "/sendMessage"
 	resp, err := client.PostForm(api, url.Values{"chat_id": {wd.TGChatID}, "text": {text}})
 	if err != nil {
+		if viaTunnel && wd.TGTunnelID != nil {
+			if why := routeWhy(wd.TGTunnelID); why != "" {
+				return fmt.Errorf("telegram tunnel route: %s", why)
+			}
+		}
 		return redactErr(err, wd.TGBotToken)
 	}
 	defer resp.Body.Close()

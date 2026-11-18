@@ -68,6 +68,9 @@ type meshBeat struct {
 	DNS     string                   `json:"dns,omitempty"`  // record this hub keeps (DNS failover)
 	Version string                   `json:"version"`
 	Bye     bool                     `json:"bye,omitempty"`
+
+	Weight int  `json:"weight,omitempty"` // this hub's share of users (1..100)
+	Master bool `json:"master,omitempty"` // this hub is DNS failover's master
 }
 
 // hubRT is what this hub knows about another one right now.
@@ -230,6 +233,8 @@ func meshSelfBeat(c ClusterConfig) meshBeat {
 	if c.DNS.Enabled {
 		b.DNS = c.DNS.Name
 	}
+	b.Weight = dnsWeight(c.DNS.Weight)
+	b.Master = c.DNS.Enabled && c.DNS.Master
 	return b
 }
 

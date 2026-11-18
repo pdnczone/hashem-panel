@@ -878,6 +878,8 @@ func TestCloudflareSync(t *testing.T) {
 	type rec struct{ ID, Content string }
 	var mu sync.Mutex
 	recs := []rec{{"r1", "5.5.5.5"}, {"r2", "6.6.6.6"}, {"r3", "9.9.9.9"}} // 9.9.9.9 is not a hub
+	ttls := map[string]int{"r1": 300, "r3": 300}                           // r1 holds a stale TTL; r3 is not ours
+	var patched []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -897,7 +899,7 @@ func TestCloudflareSync(t *testing.T) {
 			out := []map[string]any{}
 			for _, x := range recs {
 				if (r.URL.Query().Get("type") == "AAAA") == strings.Contains(x.Content, ":") {
-					out = append(out, map[string]any{"id": x.ID, "content": x.Content, "proxied": false})
+					out = append(out, map[string]any{"id": x.ID, "content": x.Content, "proxied": false, "ttl": ttls[x.ID]})
 				}
 			}
 			b, _ := json.Marshal(map[string]any{"success": true, "result": out})
@@ -909,6 +911,10 @@ func TestCloudflareSync(t *testing.T) {
 				t.Errorf("create %v", in)
 			}
 			recs = append(recs, rec{fmt.Sprintf("r%d", len(recs)+1), in["content"].(string)})
+			_, _ = io.WriteString(w, `{"success":true,"result":{}}`)
+		case r.Method == "PATCH":
+			patched = append(patched, filepath.Base(r.URL.Path))
+			ttls[filepath.Base(r.URL.Path)] = 60
 			_, _ = io.WriteString(w, `{"success":true,"result":{}}`)
 		case r.Method == "DELETE":
 			id := filepath.Base(r.URL.Path)
@@ -939,6 +945,9 @@ func TestCloudflareSync(t *testing.T) {
 	}
 	if strings.Join(got, ",") != "5.5.5.5,9.9.9.9,7.7.7.7" {
 		t.Fatalf("records %v (9.9.9.9 is not ours and must stay)", got)
+	}
+	if fmt.Sprint(patched) != "[r1]" {
+		t.Fatalf("TTL patched on %v: only r1 (ours, stale TTL) should change", patched)
 	}
 	// IPv6 hubs get AAAA records, beside the A ones
 	hubs["2001:db8::5"], hubs["2001:db8::6"] = true, true

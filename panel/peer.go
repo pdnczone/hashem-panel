@@ -250,6 +250,7 @@ func mountPeerRoutes(mux *http.ServeMux, base string) {
 		{"POST", "/api/peer/carrier-info", handlePeerCarrierInfo},
 		{"POST", "/api/peer/apply-engine", handlePeerApplyEngine},
 		{"POST", "/api/peer/ping", handlePeerPing},
+		{"POST", "/api/peer/egress", handlePeerEgress}, // a hub's Telegram/Cloudflare calls through this server (tunnel_egress.go)
 		{"POST", "/api/peer/revpath-probe", handlePeerRevPathProbe},
 		{"POST", "/api/peer/sshfwd-install-key", handlePeerSSHFwdInstallKey},
 		{"GET", "/api/peer/status", handlePeerStatus},
@@ -750,19 +751,9 @@ func truncateForError(b []byte) string {
 	return s
 }
 
-// peerTargetURLs lists the URLs to try for a peer API path, best first:
-// the fixed peer prefix (works without knowing the peer's base path), then
-// the peer's own base path when known, on the tunnel IP and then the public URL.
-func peerTargetURLs(c PeerConfig, path string) []string {
-	cleanPath := "/" + strings.TrimLeft(path, "/")
-	prefixes := []string{peerRoutePrefix}
-	if bp := strings.Trim(c.PeerBasePath, "/"); bp != "" {
-		prefixes = append(prefixes, "/"+bp)
-	} else if bp := strings.Trim(cfg.BasePath, "/"); bp != "" {
-		// Legacy fallback for old peers installed with the same base path.
-		prefixes = append(prefixes, "/"+bp)
-	}
-
+// peerBases lists the base URLs (scheme://host:port) of the Peer Link's other
+// panel: the tunnel address first, then the public one on the usual ports.
+func peerBases(c PeerConfig) []string {
 	var bases []string
 	if c.InternalIP != "" {
 		ports := []int{}
@@ -797,6 +788,23 @@ func peerTargetURLs(c PeerConfig, path string) []string {
 		}
 	}
 
+	return bases
+}
+
+// peerTargetURLs lists the URLs to try for a peer API path, best first:
+// the fixed peer prefix (works without knowing the peer's base path), then
+// the peer's own base path when known, on the tunnel IP and then the public URL.
+func peerTargetURLs(c PeerConfig, path string) []string {
+	cleanPath := "/" + strings.TrimLeft(path, "/")
+	prefixes := []string{peerRoutePrefix}
+	if bp := strings.Trim(c.PeerBasePath, "/"); bp != "" {
+		prefixes = append(prefixes, "/"+bp)
+	} else if bp := strings.Trim(cfg.BasePath, "/"); bp != "" {
+		// Legacy fallback for old peers installed with the same base path.
+		prefixes = append(prefixes, "/"+bp)
+	}
+
+	bases := peerBases(c)
 	var out []string
 	for _, b := range bases {
 		for _, pre := range prefixes {

@@ -8500,6 +8500,22 @@ except Exception:
     return 0
 }
 
+# tg_tunnel_host PORT: the address a tunnel port listens on. 127.0.0.1 when it
+# listens on loopback or every address; else the address it is bound to (a
+# cluster hub binds its tunnel ports to 169.254.77.N, never to 127.0.0.1).
+tg_tunnel_host() {
+    local port="$1" a best=""
+    while read -r a; do
+        a="${a%:*}"; a="${a#[}"; a="${a%]}"
+        case "$a" in
+            "*"|0.0.0.0|::|127.*) echo "127.0.0.1"; return 0 ;;
+        esac
+        [[ "$a" == *:* ]] && a="[${a}]"
+        [[ -z "$best" ]] && best="$a"
+    done < <(ss -H -ltn "sport = :${port}" 2>/dev/null | awk '{print $4}')
+    echo "${best:-127.0.0.1}"
+}
+
 watchdog_send() {
     local TEXT="$1"
     [[ -z "$TEXT" ]] && return 1
@@ -8539,7 +8555,7 @@ except Exception:
             echo -e "${RED}[!] Telegram route is set to tunnel but tunnel port is not configured.${NC}" >&2
             return 1
         fi
-        CURL_ARGS+=(--max-time 20 --socks5-hostname "127.0.0.1:${TG_PORT}")
+        CURL_ARGS+=(--max-time 20 --socks5-hostname "$(tg_tunnel_host "$TG_PORT"):${TG_PORT}")
     else
         CURL_ARGS+=(--max-time 15)
     fi
@@ -9314,6 +9330,7 @@ try:
         d = json.load(f)
     d["tg_route"] = "tunnel"
     d["tg_tunnel_port"] = int("'"$CHOSEN_PORT"'")
+    d.pop("tg_tunnel_id", None)  # a port typed here replaces a tunnel the panel picked
     with open(path + ".tmp", "w") as f:
         json.dump(d, f, indent=2)
     import os

@@ -28,7 +28,8 @@ type watchdogConfig struct {
 	TGBotToken        string `json:"tg_bot_token"`
 	TGChatID          string `json:"tg_chat_id"`
 	TGRoute           string `json:"tg_route"`
-	TGTunnelPort      int    `json:"tg_tunnel_port"`
+	TGTunnelPort      int    `json:"tg_tunnel_port"` // the local SOCKS5 port (hashem.sh reads it); the panel sets it for a chosen tunnel
+	TGTunnelID        *int   `json:"tg_tunnel_id,omitempty"`
 	BackupEveryHours  int    `json:"backup_every_hours"`
 	BackupDailyAt     string `json:"backup_daily_at"`
 	LastCheck         string `json:"last_check"`
@@ -46,28 +47,30 @@ type backupItem struct {
 }
 
 type watchdogStatusResponse struct {
-	Enabled           bool         `json:"enabled"`
-	Status            string       `json:"status"`
-	CheckResult       string       `json:"check_result"`
-	LastCheck         string       `json:"last_check"`
-	ConsecFails       int          `json:"consec_fails"`
-	FailThreshold     int          `json:"fail_threshold"`
-	AutoRestart       bool         `json:"auto_restart"`
-	RestartEveryHours int          `json:"restart_every_hours"`
-	LastRestart       int64        `json:"last_restart"`
-	LastRestartDate   string       `json:"last_restart_date"`
-	NextRestartHuman  string       `json:"next_restart_human"`
-	TGBotTokenMasked  string       `json:"tg_bot_token_masked"`
-	TGChatID          string       `json:"tg_chat_id"`
-	TGRoute           string       `json:"tg_route"`
-	TGTunnelPort      int          `json:"tg_tunnel_port"`
-	ScheduleMode      string       `json:"schedule_mode"`
-	BackupEveryHours  int          `json:"backup_every_hours"`
-	BackupDailyAt     string       `json:"backup_daily_at"`
-	ScheduleHuman     string       `json:"schedule_human"`
-	Backups           []backupItem `json:"backups"`
-	TunnelPorts       []int        `json:"tunnel_ports"`
-	RecentEvents      []errEvent   `json:"recent_events"`
+	Enabled           bool           `json:"enabled"`
+	Status            string         `json:"status"`
+	CheckResult       string         `json:"check_result"`
+	LastCheck         string         `json:"last_check"`
+	ConsecFails       int            `json:"consec_fails"`
+	FailThreshold     int            `json:"fail_threshold"`
+	AutoRestart       bool           `json:"auto_restart"`
+	RestartEveryHours int            `json:"restart_every_hours"`
+	LastRestart       int64          `json:"last_restart"`
+	LastRestartDate   string         `json:"last_restart_date"`
+	NextRestartHuman  string         `json:"next_restart_human"`
+	TGBotTokenMasked  string         `json:"tg_bot_token_masked"`
+	TGChatID          string         `json:"tg_chat_id"`
+	TGRoute           string         `json:"tg_route"`
+	TGTunnelPort      int            `json:"tg_tunnel_port"`
+	TGTunnelID        *int           `json:"tg_tunnel_id"`
+	Tunnels           []tunnelChoice `json:"tunnels"`
+	ScheduleMode      string         `json:"schedule_mode"`
+	BackupEveryHours  int            `json:"backup_every_hours"`
+	BackupDailyAt     string         `json:"backup_daily_at"`
+	ScheduleHuman     string         `json:"schedule_human"`
+	Backups           []backupItem   `json:"backups"`
+	TunnelPorts       []int          `json:"tunnel_ports"`
+	RecentEvents      []errEvent     `json:"recent_events"`
 }
 
 type watchdogPostRequest struct {
@@ -76,6 +79,7 @@ type watchdogPostRequest struct {
 	ChatID       string `json:"chat_id,omitempty"`
 	Route        string `json:"route,omitempty"`
 	TunnelPort   int    `json:"tunnel_port,omitempty"`
+	TunnelID     *int   `json:"tunnel_id,omitempty"`
 	Mode         string `json:"mode,omitempty"`
 	Hours        int    `json:"hours,omitempty"`
 	At           string `json:"at,omitempty"`
@@ -312,6 +316,8 @@ func handleWatchdogGet(w http.ResponseWriter, r *http.Request) {
 		TGChatID:          c.TGChatID,
 		TGRoute:           c.TGRoute,
 		TGTunnelPort:      c.TGTunnelPort,
+		TGTunnelID:        c.TGTunnelID,
+		Tunnels:           tunnelChoices(),
 		ScheduleMode:      mode,
 		BackupEveryHours:  c.BackupEveryHours,
 		BackupDailyAt:     c.BackupDailyAt,
@@ -393,6 +399,21 @@ func handleWatchdogPost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"status": "ok", "detail": "Watchdog disabled"})
 
 	case "test":
+		// On the tunnel route say first whether the port is a working SOCKS5
+		// proxy: curl alone only reports a timeout.
+		if wc := loadWatchdogConfig(); wc.TGRoute == "tunnel" && (wc.TGTunnelID != nil || wc.TGTunnelPort > 0) {
+			port, perr := routePort(wc.TGTunnelID, wc.TGTunnelPort)
+			if perr != nil {
+				recordError("E-WD-05", "watchdog", "Telegram test failed: "+perr.Error())
+				writeAPIError(w, r, "E-WD-05", perr.Error())
+				return
+			}
+			if ok, _, why := probeRoute(wc.TGTunnelID, port, "api.telegram.org"); !ok {
+				recordError("E-WD-05", "watchdog", "Telegram test failed: "+why)
+				writeAPIError(w, r, "E-WD-05", why)
+				return
+			}
+		}
 		out, err := runWatchdogCmd("watchdog", "test")
 		if err != nil {
 			// "Telegram said: ..." means it was reached and refused (a bad token or
@@ -452,8 +473,19 @@ func handleWatchdogPost(w http.ResponseWriter, r *http.Request) {
 		if body.Route == "direct" || body.Route == "tunnel" {
 			c.TGRoute = body.Route
 		}
-		if body.TunnelPort > 0 && body.TunnelPort <= 65535 {
-			c.TGTunnelPort = body.TunnelPort
+		if body.TunnelID != nil {
+			port, err := bridgeEnsure(*body.TunnelID)
+			if err != nil {
+				writeAPIError(w, r, "E-WD-05", err.Error())
+				return
+			}
+			c.TGTunnelID, c.TGTunnelPort = body.TunnelID, port
+		} else if body.TunnelPort > 0 && body.TunnelPort <= 65535 {
+			c.TGTunnelID, c.TGTunnelPort = nil, body.TunnelPort // an old manual port
+		}
+		if c.TGRoute == "tunnel" && c.TGTunnelID == nil && c.TGTunnelPort == 0 {
+			writeAPIError(w, r, "E-WD-01", "choose a tunnel, or choose Direct")
+			return
 		}
 		if err := saveWatchdogConfig(c); err != nil {
 			writeAPIError(w, r, "E-WD-01", "failed to save config: "+err.Error())

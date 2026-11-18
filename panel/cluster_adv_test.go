@@ -5,8 +5,10 @@ package main
 // Prometheus lines.
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -312,6 +314,210 @@ func TestClusterPoolAPIAdvanced(t *testing.T) {
 	}
 	if rr := post(handleClusterPoolFailback, `{"port":444}`); rr.Code != 404 {
 		t.Fatalf("unknown pool: %d", rr.Code)
+	}
+}
+
+// The webhook carries each hub's weight so the receiver can split users by percentage.
+func TestDNSWebhookWeights(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = nil
+		_ = json.NewDecoder(r.Body).Decode(&got)
+	}))
+	defer srv.Close()
+	c := ClusterConfig{NodeID: "hub-a", DNS: DNSConfig{Provider: "webhook", URL: srv.URL, Name: "vpn.example.com", TTL: 60}}
+	w := map[string]int{"5.5.5.5": 70, "6.6.6.6": 0, "9.9.9.9": 30}
+	if _, err := dnsWebhookW(c, []string{"5.5.5.5", "6.6.6.6"}, w, false); err != nil {
+		t.Fatal(err)
+	}
+	// 9.9.9.9 is not in the list; 6.6.6.6 has no weight set, so it counts as 1
+	if fmt.Sprint(got["weights"]) != "map[5.5.5.5:70 6.6.6.6:1]" {
+		t.Fatalf("weights %v", got["weights"])
+	}
+	if _, err := dnsWebhook(c, []string{"5.5.5.5"}, false); err != nil || got["weights"] != nil {
+		t.Fatalf("no weights expected: %v %v", err, got)
+	}
+	for in, want := range map[int]int{-3: 1, 0: 1, 40: 40, 100: 100, 500: 100} {
+		if dnsWeight(in) != want {
+			t.Errorf("dnsWeight(%d) = %d, want %d", in, dnsWeight(in), want)
+		}
+	}
+	if dnsSig([]string{"5.5.5.5"}, map[string]int{"5.5.5.5": 70}) == dnsSig([]string{"5.5.5.5"}, map[string]int{"5.5.5.5": 30}) {
+		t.Fatal("a weight change must change the signature, or the webhook is not sent again")
+	}
+}
+
+// Cloudflare cannot weight records, so the record rotates between hubs by weight.
+func TestDNSRotateWeights(t *testing.T) {
+	dnsRot.cur, dnsRot.set, dnsRot.pick = nil, "", ""
+	a := dnsGroup{Key: "a", IPs: []string{"1.1.1.1"}, Weight: 70}
+	b := dnsGroup{Key: "b", IPs: []string{"2.2.2.2", "2001:db8::2"}, Weight: 30}
+	if dnsUnequal([]dnsGroup{{Weight: 5}, {Weight: 5}}) || !dnsUnequal([]dnsGroup{a, b}) {
+		t.Fatal("dnsUnequal")
+	}
+	slot := time.Minute
+	now := time.Unix(1000, 0)
+	count := map[string]int{}
+	for i := 0; i < 10; i++ {
+		ips := dnsRotate([]dnsGroup{a, b}, slot, now)
+		count[ips[0]]++
+		// within the same slot the record does not move
+		if again := dnsRotate([]dnsGroup{a, b}, slot, now.Add(slot-time.Second)); again[0] != ips[0] {
+			t.Fatalf("moved inside a slot: %v then %v", ips, again)
+		}
+		now = now.Add(slot)
+	}
+	if count["1.1.1.1"] != 7 || count["2.2.2.2"] != 3 {
+		t.Fatalf("10 slots of a 70/30 split gave %v", count)
+	}
+	// a hub's IPv6 travels with its IPv4
+	dnsRot.at = time.Time{}
+	dnsRot.cur = map[string]int{"a": 0, "b": 100}
+	if ips := dnsRotate([]dnsGroup{a, b}, slot, now); len(ips) != 2 || ips[1] != "2001:db8::2" {
+		t.Fatalf("hub b with its IPv6: %v", ips)
+	}
+	// a hub that stops working is dropped at once, mid-slot
+	if ips := dnsRotate([]dnsGroup{a}, slot, now); ips[0] != "1.1.1.1" {
+		t.Fatalf("only hub a is left: %v", ips)
+	}
+}
+
+// A master writes while it answers, whatever the ids; its shares for the other hubs win.
+func TestDNSMaster(t *testing.T) {
+	newClusterFixture(t, true)
+	c := defaultClusterConfig()
+	c.NodeID, c.PublicIP = "hub-z", "5.5.5.5" // the highest id, still the master
+	c.DNS = DNSConfig{Enabled: true, Name: "vpn.example.com", Master: true, Weight: 50, HubWeights: map[string]int{"hub-a": 20, "hub-ghost": 99}}
+	c.Hubs = []HubPeer{{ID: "hub-a", PublicIP: "6.6.6.6"}}
+	meshMu.Lock()
+	meshState["hub-a"] = &hubRT{Up: true, Beat: meshBeat{ID: "hub-a", Healthy: true, DNS: "vpn.example.com", Weight: 90}}
+	meshMu.Unlock()
+	if _, leader := dnsHealthyIPs(c); !leader {
+		t.Fatal("the master leads even though hub-a has the lower id")
+	}
+	if w := dnsHubWeight(c, "hub-a", 90); w != 20 {
+		t.Fatalf("the master's share for hub-a is 20, got %d", w)
+	}
+	if w := dnsHubWeight(c, "hub-b", 7); w != 7 {
+		t.Fatalf("no setting for hub-b: its own 7 counts, got %d", w)
+	}
+	// seen from hub-a (a plain hub), the master wins while it answers
+	a := ClusterConfig{NodeID: "hub-a", PublicIP: "6.6.6.6", DNS: DNSConfig{Enabled: true, Name: "vpn.example.com"}, Hubs: []HubPeer{{ID: "hub-z", PublicIP: "5.5.5.5"}}}
+	meshMu.Lock()
+	meshState["hub-z"] = &hubRT{Up: true, Beat: meshBeat{ID: "hub-z", Healthy: true, DNS: "vpn.example.com", Master: true}}
+	meshMu.Unlock()
+	if _, leader := dnsHealthyIPs(a); leader {
+		t.Fatal("hub-a must leave the writing to the master")
+	}
+	meshMu.Lock()
+	meshState["hub-z"].Up = false
+	meshMu.Unlock()
+	if _, leader := dnsHealthyIPs(a); !leader {
+		t.Fatal("the master is unreachable: hub-a may take over")
+	}
+	// the API keeps only shares of hubs in this cluster, and refuses a bad one
+	_ = saveClusterConfig(func() ClusterConfig { x := defaultClusterConfig(); x.Hubs = c.Hubs; return x }())
+	rr := httptest.NewRecorder()
+	handleClusterDNS(rr, httptest.NewRequest("POST", "/", strings.NewReader(`{"master":true,"hub_weights":{"hub-a":30,"hub-ghost":40}}`)))
+	if rr.Code != 200 {
+		t.Fatalf("%d %s", rr.Code, rr.Body)
+	}
+	if d := loadClusterConfig().DNS; !d.Master || len(d.HubWeights) != 1 || d.HubWeights["hub-a"] != 30 {
+		t.Fatalf("%+v", d)
+	}
+	rr = httptest.NewRecorder()
+	handleClusterDNS(rr, httptest.NewRequest("POST", "/", strings.NewReader(`{"hub_weights":{"hub-a":500}}`)))
+	if rr.Code != 400 {
+		t.Fatalf("a share of 500 must be refused, got %d", rr.Code)
+	}
+}
+
+// miniSocks5 is a no-auth SOCKS5 server for one test; hits counts the CONNECTs it served.
+func miniSocks5(t *testing.T) (port int, hits *int32, stop func()) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n int32
+	var mu sync.Mutex
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				b := make([]byte, 262)
+				if _, err := io.ReadFull(c, b[:2]); err != nil || b[0] != 5 {
+					return
+				}
+				if _, err := io.ReadFull(c, b[:int(b[1])]); err != nil {
+					return
+				}
+				_, _ = c.Write([]byte{5, 0})
+				if _, err := io.ReadFull(c, b[:4]); err != nil || b[1] != 1 {
+					return
+				}
+				var host string
+				switch b[3] {
+				case 1:
+					_, _ = io.ReadFull(c, b[:4])
+					host = net.IP(append([]byte(nil), b[:4]...)).String()
+				case 3:
+					_, _ = io.ReadFull(c, b[:1])
+					l := int(b[0])
+					_, _ = io.ReadFull(c, b[:l])
+					host = string(b[:l])
+				default:
+					return
+				}
+				_, _ = io.ReadFull(c, b[:2])
+				dst, err := net.Dial("tcp", net.JoinHostPort(host, fmt.Sprint(binary.BigEndian.Uint16(b[:2]))))
+				if err != nil {
+					return
+				}
+				defer dst.Close()
+				mu.Lock()
+				n++
+				mu.Unlock()
+				_, _ = c.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0})
+				go func() { _, _ = io.Copy(dst, c) }()
+				_, _ = io.Copy(c, dst)
+			}(c)
+		}
+	}()
+	h := new(int32)
+	return ln.Addr().(*net.TCPAddr).Port, h, func() { mu.Lock(); *h = n; mu.Unlock(); ln.Close() }
+}
+
+// With the tunnel route, Cloudflare is reached through the SOCKS5 proxy, not directly.
+func TestCloudflareViaTunnelProxy(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"success":true,"result":[{"id":"z1"}]}`)
+	}))
+	defer api.Close()
+	old := cfAPI
+	cfAPI = api.URL
+	defer func() { cfAPI = old }()
+
+	port, hits, stop := miniSocks5(t)
+	d := DNSConfig{Token: "tok", Name: "vpn.example.com", Route: "tunnel", TunnelPort: port}
+	if z, err := cfZone(d, d.Name); err != nil || z != "z1" {
+		t.Fatalf("through the proxy: %q %v", z, err)
+	}
+	stop()
+	if *hits < 1 {
+		t.Fatal("the request did not go through the SOCKS5 proxy")
+	}
+	// a dead proxy port is named in the error
+	d.TunnelPort = 1
+	if _, err := cfZone(d, d.Name); err == nil || !strings.Contains(err.Error(), "nothing answers on 127.0.0.1:1") || strings.Contains(err.Error(), "tok") {
+		t.Fatalf("a dead proxy: %v", err)
+	}
+	if dnsClient(DNSConfig{Route: "tunnel"}) != cfClient || dnsClient(DNSConfig{TunnelPort: 9}) != cfClient {
+		t.Fatal("no port or direct route means the plain client")
 	}
 }
 

@@ -776,6 +776,7 @@ func main() {
 	mux.HandleFunc("POST "+base+"/api/cluster/hubs/add", requireAuth(requireCSRF(handleClusterHubAdd)))
 	mux.HandleFunc("POST "+base+"/api/cluster/hubs/delete", requireAuth(requireCSRF(handleClusterHubDelete)))
 	mux.HandleFunc("POST "+base+"/api/cluster/dns", requireAuth(requireCSRF(handleClusterDNS)))
+	mux.HandleFunc("POST "+base+"/api/proxy/probe", requireAuth(requireCSRF(handleProxyProbe)))
 	mux.HandleFunc("POST "+base+"/api/cluster/join-hub", requireAuth(requireCSRF(handleClusterJoinHub)))
 	mux.HandleFunc("POST "+base+"/api/cluster/leave-hub", requireAuth(requireCSRF(handleClusterLeaveHub)))
 	mountMeshRoutes(mux)
@@ -850,6 +851,7 @@ func main() {
 	}
 	// after the busy-port switch: the sold relays' plugin calls go to cfg.Port
 	go startCustomersLoop()
+	go startRouteBridges() // Telegram / Cloudflare routes that go out through a chosen tunnel
 	srv := &http.Server{
 		Handler:           panelChain(mux),
 		ReadHeaderTimeout: 10 * time.Second,

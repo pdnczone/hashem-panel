@@ -1169,6 +1169,9 @@ type memberStatus struct {
 
 func handleClusterStatus(w http.ResponseWriter, r *http.Request) {
 	cfg := loadClusterConfig()
+	// dnsView describes this hub (meshSelfBeat), which takes clusterRT.mu itself:
+	// built before this handler holds it, or the status request never returns.
+	dns := dnsView(cfg)
 	rt := clusterRT
 	rt.mu.Lock()
 	links := append([]lbLinkView(nil), rt.view...)
@@ -1218,7 +1221,7 @@ func handleClusterStatus(w http.ResponseWriter, r *http.Request) {
 		"icmp":        rt.icmpOK,
 		"events":      clusterEvents(60),
 		"hubs":        meshView(cfg),
-		"dns":         dnsView(cfg),
+		"dns":         dns,
 		"joined_hubs": joinedHubsView(),
 	}
 	if !rt.appliedAt.IsZero() {

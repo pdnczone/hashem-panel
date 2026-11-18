@@ -354,16 +354,20 @@ Every hub with DNS failover on reports the record name in its heartbeat. Among t
 - Only records whose IP belongs to a hub of the cluster are added or removed. Other records under the same name are never touched.
 - The last record is never removed: if every hub looks down, the record stays as it was.
 - A proxied (orange cloud) record is refused.
+- **A route through a tunnel, for an Iran server that cannot reach Cloudflare.** Under **Reach Cloudflare through** pick one of this server's tunnels from the list (name, foreign IP, health), or **Direct**. No port to type and nothing to set up on the foreign server: the panel starts a SOCKS5 bridge on `127.0.0.1` itself and carries each call to the foreign server's panel over the same authenticated link the two panels already use, and that panel makes the call to `api.cloudflare.com` (it relays only to `api.cloudflare.com` and `api.telegram.org`, port 443, nothing else). **Check connection** makes a real connection out of the chosen tunnel and says whether it worked, which address of the foreign panel carried it, or what is wrong. Each foreign server must run this version of the panel (`hashem update`): an older one answers "update its panel". The panel link must be reachable from the Iran server (the tunnel's inner address is tried first, then the public one). **Test Connection** uses the route. The webhook is not routed.
+- **Master.** To keep the token and the percentages on one panel, tick **This hub is the master** on one hub. While it answers, only it writes the record, and its table sets every hub's share (the other hubs need no token and no share of their own). If the master is unreachable the record stays as it is; a hub that has DNS failover on and a token takes over only then. For fully independent hubs (no Iran-to-Iran traffic), turn off **Forward a pool to another hub when no foreign server here can serve it**: a hub whose servers are all down then leaves the record instead of passing users on.
+- **Shares without a paid plan.** Cloudflare's plain DNS has no weights. Give each hub a share in **Share of users for this hub** (on each hub's own panel); when the shares differ, the record points to **one hub at a time** and moves to the next every TTL (at least 60 s), in smooth weighted order (70/30 gives A A B A A B A A B A). Over time each hub gets about its share of the users who look the name up. It is approximate: resolvers that hold an answer longer than the TTL, and few users, skew it. A hub that stops working is dropped at once. Equal shares (the default) keep every working hub in the record.
 
 ### 9.2 Webhook
 
 For any DNS provider. The leading hub POSTs JSON to your URL:
 
 ```json
-{"name": "vpn.example.com", "ips": ["5.5.5.5", "6.6.6.6"], "ips6": ["2001:db8::5"], "ttl": 60, "hub": "hub-1a2b3c4d", "at": "2026-10-19T14:00:00Z"}
+{"name": "vpn.example.com", "ips": ["5.5.5.5", "6.6.6.6"], "ips6": ["2001:db8::5"], "weights": {"5.5.5.5": 70, "6.6.6.6": 30, "2001:db8::5": 70}, "ttl": 60, "hub": "hub-1a2b3c4d", "at": "2026-10-19T14:00:00Z"}
 ```
 
 - `ips` are the IPv4 addresses (`A`), `ips6` the IPv6 ones (`AAAA`, empty when no hub has IPv6).
+- `weights` maps each address to its hub's share (1 to 100, relative to the other hubs). Each hub sets its own under **Cluster → DNS failover → Share of users for this hub**, and the panel shows the resulting percentages. Two hubs set to 70 and 30 mean 70% and 30% of users. Your receiver applies them (weighted records or a weighted pool at your DNS provider). Plain DNS and the built-in Cloudflare mode cannot weight records, so they ignore it and split users about equally. A change of weight sends the webhook again.
 - Headers: `Content-Type: application/json` and, when you set a secret, `Authorization: Bearer <secret>`.
 - Your endpoint sets the record to exactly `ips` (and `ips6`). Any `2xx` answer counts as done; anything else is shown as an error and retried.
 - **Test** sends the same body with `"test": true`.
