@@ -71,7 +71,7 @@ sudo bash hashem-customer.sh install hsk1.XXXX
 
 The kit modal shows this exact command. The installer downloads the
 link's engine from its official release (FRP v0.71.0, Backhaul v0.7.2 or
-Xray-core v26.3.27, checksum checked), says which ports it publishes, warns
+Xray-core v26.10.21, checksum checked), says which ports it publishes, warns
 about services that listen on 127.0.0.1 only, and starts the tunnel. The
 kit is data only: the installer checks each value and writes the config
 itself. Running it again with a new kit updates the tunnel (also when you

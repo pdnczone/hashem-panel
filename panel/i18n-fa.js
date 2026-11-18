@@ -3130,7 +3130,7 @@ window.FA_TEXT = {
 "Manual setup: {f}": "راه‌اندازی دستی: {f}",
 "A new control port, engine or transport needs the kit again on the foreign server; new ports only need it if the server serves them.": "پورت کنترل، موتور یا ترنسپورت جدید یعنی کیت باید دوباره روی سرور خارج اجرا شود؛ برای پورت‌های جدید فقط وقتی لازم است که سرور آن‌ها را سرویس بدهد.",
 "For a foreign server that already runs Backhaul v0.7.2: run backhaul -c with this file.": "برای سرور خارجی که از قبل Backhaul نسخهٔ v0.7.2 دارد: backhaul -c را با این فایل اجرا کنید.",
-"For a foreign server that already runs Xray-core v26.3.27: run xray run -c with this file.": "برای سرور خارجی که از قبل Xray-core نسخهٔ v26.3.27 دارد: xray run -c را با این فایل اجرا کنید.",
+"For a foreign server that already runs Xray-core v26.10.21: run xray run -c with this file.": "برای سرور خارجی که از قبل Xray-core نسخهٔ v26.10.21 دارد: xray run -c را با این فایل اجرا کنید.",
 "Reality SNI": "SNI ریالیتی",
 "Waiting for the customer's reply code": "در انتظار کد پاسخ مشتری",
 "Reply code": "کد پاسخ",

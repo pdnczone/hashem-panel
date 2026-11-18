@@ -15,14 +15,14 @@ ext() { awk -v n="$1" '$0 ~ "^"n"\\(\\) \\{" {p=1} p {print} p && /^}/ {exit}' h
 RED='' GREEN='' YELLOW='' CYAN='' NC=''
 for f in xray_unzip install_xray_core xray_link_units xray_enabled_units xray_remove_all cli_xray pro_ok; do eval "$(ext "$f")"; done
 eval "$(grep -E '^(DEFAULT_XRAY_VERSION|XRAY_SHA256_amd64)=' hashem.sh)"
-check "pinned version" v26.3.27 "$DEFAULT_XRAY_VERSION"
+check "pinned version" v26.10.21 "$DEFAULT_XRAY_VERSION"
 check "pinned sha256 is 64 hex digits" yes "$([[ $XRAY_SHA256_amd64 =~ ^[0-9a-f]{64}$ ]] && echo yes)"
 
 # a release archive with a fake xray that reports the pinned version
 mkdir -p "$T/rel"
 cat > "$T/rel/xray" <<'EOF'
 #!/bin/bash
-[[ "$1" == version ]] && echo "Xray 26.3.27 (Xray, Penetrates Everything.) Custom (go1.26.1 linux/amd64)"
+[[ "$1" == version ]] && echo "Xray 26.10.21 (Xray, Penetrates Everything.) Custom (go1.26.1 linux/amd64)"
 EOF
 echo geo > "$T/rel/geoip.dat"; echo geo > "$T/rel/geosite.dat"
 python3 -I -c 'import sys, zipfile, os
@@ -39,7 +39,7 @@ XRAY_DIR="$T/lib/hashem/xray"
 install_xray_core >/dev/null 2>&1
 check "installs into its own directory" yes "$([[ -x $XRAY_DIR/xray && -f $XRAY_DIR/geoip.dat ]] && echo yes)"
 check "downloads the official pinned release" \
-    "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip" "$(cat "$T/url")"
+    "https://github.com/XTLS/Xray-core/releases/download/v26.10.21/Xray-linux-64.zip" "$(cat "$T/url")"
 check "no temporary file left next to it" 0 "$(ls "$XRAY_DIR" | grep -c '\.new$')"
 rm -f "$T/url"
 install_xray_core >/dev/null 2>&1
@@ -47,7 +47,7 @@ check "the pinned version is not downloaded again" no "$([[ -f $T/url ]] && echo
 
 XRAY_SHA256_amd64=$(printf '0%.0s' {1..64})
 check "a wrong checksum is refused" 1 "$(install_xray_core --force >/dev/null 2>&1; echo $?)"
-check "...and the installed core is kept" yes "$("$XRAY_DIR/xray" version | grep -q 26.3.27 && echo yes)"
+check "...and the installed core is kept" yes "$("$XRAY_DIR/xray" version | grep -q 26.10.21 && echo yes)"
 
 # the defaults never point at another Xray's files
 check "default directory is the panel's own" /usr/local/lib/hashem/xray \

@@ -119,7 +119,7 @@ export HASHEM_CUSTOMER_CGROUP=/system.slice/test.service HASHEM_RESOLV_CONF="$T/
 printf '#!/bin/sh\necho "ESTAB 0 0 10.0.0.2:40000 203.0.113.7:31000"\n' > "$T/bin/ss"; chmod +x "$T/bin/ss"
 mkdir -p "$T/lib/hc"
 for b in backhaul xray; do printf '#!/bin/sh\n' > "$T/lib/hc/$b"; chmod +x "$T/lib/hc/$b"; done
-echo v0.7.2 > "$T/lib/hc/backhaul.version"; echo v26.3.27 > "$T/lib/hc/xray.version"
+echo v0.7.2 > "$T/lib/hc/backhaul.version"; echo v26.10.21 > "$T/lib/hc/xray.version"
 printf '#!/bin/sh\n[ "$1" = "-v" ] && echo 0.71.0\n' > "$T/lib/hc/frpc"; chmod +x "$T/lib/hc/frpc"
 BH=$'v=2\nengine=backhaul\nname=hsell-4-2\nserver=203.0.113.7\nport=31000\ntransport=wssmux\ntoken=AbCdEfGhIjKlMnOpQrStUvWxYz012345\nudp=0\nports=443,2083\n'
 out=$(bash "$SH" config "$(mkkit "$BH")" 2>&1) || F "backhaul config: $out"

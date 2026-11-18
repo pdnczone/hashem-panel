@@ -92,7 +92,7 @@ status page (FA/EN, light/dark, Hashem design tokens).
   the server lists the ports (`p=127.0.0.1:p`), so the client cannot add
   any; UDP only with tcp (`accept_udp`). wss links get their own
   self-signed certificate. Unit runs `/usr/local/lib/hashem-sell/backhaul`.
-- Xray reverse (Xray-core v26.3.27, presets reality, xhttp, grpc, kcp):
+- Xray reverse (Xray-core v26.10.21, presets reality, xhttp, grpc, kcp):
   the Iran end is a VLESS portal whose user carries `reverse` (Xray refuses
   it a forward proxy) and everything unmatched goes to the blackhole; built
   with `buildXrayConfig`. Keys stay across edits that keep engine and

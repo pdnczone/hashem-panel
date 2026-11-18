@@ -47,11 +47,11 @@ jobs:
             echo "::error title=go test::$msg"
             exit 1
           fi
-      - name: Xray tunnel configs load in the pinned Xray-core v26.3.27 (every preset, direct and reverse, both ends)
+      - name: Xray tunnel configs load in the pinned Xray-core v26.10.21 (every preset, direct and reverse, both ends)
         run: |
           mkdir -p /tmp/xray-dl && cd /tmp/xray-dl
-          curl -fsSL -o xray.zip https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip
-          echo "23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae  xray.zip" | sha256sum -c -
+          curl -fsSL -o xray.zip https://github.com/XTLS/Xray-core/releases/download/v26.10.21/Xray-linux-64.zip
+          echo "0eec3ed4163c273d8c8bf821f7d219e257921cf584aa3fb970715e458e631978  xray.zip" | sha256sum -c -
           unzip -oq xray.zip xray && ./xray version | head -1
           cd "$GITHUB_WORKSPACE/panel" && XRAY_BIN=/tmp/xray-dl/xray go test -count=1 -v -run '^TestXrayConfigsLoad$' .
 
@@ -139,11 +139,11 @@ jobs:
         run: |
           (cd panel && go test -c -o /tmp/limitslab.test .)
           sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" LIMITS_LAB_TEST_BIN=/tmp/limitslab.test bash tests/test_limits_lab.sh
-      - name: Customers lab (tunnels sold on real FRP 0.71.0, Backhaul v0.7.2, Xray-core v26.3.27 reverse and direct, and Bagher over a real sshd with the customer's installer, one speed cap shared by every link both ways, volume against exact bytes, no bypass, cut on volume and expiry, resume, clean remove)
+      - name: Customers lab (tunnels sold on real FRP 0.71.0, Backhaul v0.7.2, Xray-core v26.10.21 reverse and direct, and Bagher over a real sshd with the customer's installer, one speed cap shared by every link both ways, volume against exact bytes, no bypass, cut on volume and expiry, resume, clean remove)
         run: |
           mkdir -p /tmp/xray-dl && cd /tmp/xray-dl
-          [[ -x xray ]] || { curl -fsSL -o xray.zip https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip \
-            && echo "23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae  xray.zip" | sha256sum -c - && unzip -oq xray.zip xray; }
+          [[ -x xray ]] || { curl -fsSL -o xray.zip https://github.com/XTLS/Xray-core/releases/download/v26.10.21/Xray-linux-64.zip \
+            && echo "0eec3ed4163c273d8c8bf821f7d219e257921cf584aa3fb970715e458e631978  xray.zip" | sha256sum -c - && unzip -oq xray.zip xray; }
           cd "$GITHUB_WORKSPACE"
           (cd panel && FRP_BIN_DIR=/tmp/frp-rel go test -count=1 -run '^TestCustomersFrpConfigsLoad$' -v . \
             && XRAY_BIN=/tmp/xray-dl/xray BACKHAUL_BIN=/tmp/backhaul-rel/backhaul go test -count=1 -run '^TestCustomersEngineConfigsLoad$' -v . \
@@ -158,11 +158,11 @@ jobs:
         run: |
           (cd panel && go test -c -o /tmp/udplab.test .)
           sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" CARRIER_LAB_TEST_BIN=/tmp/udplab.test bash tests/test_backhaul_udp_lab.sh
-      - name: Xray tunnel lab (real Xray-core v26.3.27, Reality/XHTTP/gRPC/mKCP direct and reverse, TCP+UDP integrity, next to a fake 3x-ui, camouflage, no open proxy)
+      - name: Xray tunnel lab (real Xray-core v26.10.21, Reality/XHTTP/gRPC/mKCP direct and reverse, TCP+UDP integrity, next to a fake 3x-ui, camouflage, no open proxy)
         run: |
           mkdir -p /tmp/xray-dl && cd /tmp/xray-dl
-          curl -fsSL -o xray.zip https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip
-          echo "23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae  xray.zip" | sha256sum -c -
+          curl -fsSL -o xray.zip https://github.com/XTLS/Xray-core/releases/download/v26.10.21/Xray-linux-64.zip
+          echo "0eec3ed4163c273d8c8bf821f7d219e257921cf584aa3fb970715e458e631978  xray.zip" | sha256sum -c -
           unzip -oq xray.zip xray
           cd "$GITHUB_WORKSPACE" && (cd panel && go test -c -o /tmp/xraylab.test .)
           sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" XRAY_BIN=/tmp/xray-dl/xray XRAY_LAB_TEST_BIN=/tmp/xraylab.test bash tests/test_xray_lab.sh

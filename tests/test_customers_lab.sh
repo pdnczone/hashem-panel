@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/test_customers_lab.sh: tunnels sold to customers, with the real
 # kernel and the real engines: FRP v0.71.0, and when given Backhaul v0.7.2
-# and Xray-core v26.3.27 (TestCustomersLabEngines).
+# and Xray-core v26.10.21 (TestCustomersLabEngines).
 #
 #   cs-us (users) ── cs-hub (the seller's Iran server, the panel) ── cs-fo (the customer's foreign server)
 #

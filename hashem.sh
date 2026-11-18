@@ -2651,11 +2651,11 @@ cli_spoof() {
 # Installed to its own directory: never /usr/local/bin/xray (the official
 # installer's) nor a panel's (3x-ui, Marzban, ...), whose xray, units and ports
 # stay untouched. Units are hashem-xray-N only; nothing is killed by name.
-DEFAULT_XRAY_VERSION="v26.3.27"
+DEFAULT_XRAY_VERSION="v26.10.21"
 XRAY_DIR="${XRAY_DIR:-/usr/local/lib/hashem/xray}"
-# sha256 of the official v26.3.27 release archives (verified on download).
-XRAY_SHA256_amd64="23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae"
-XRAY_SHA256_arm64="4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c"
+# sha256 of the official v26.10.21 release archives (verified on download).
+XRAY_SHA256_amd64="0eec3ed4163c273d8c8bf821f7d219e257921cf584aa3fb970715e458e631978"
+XRAY_SHA256_arm64="d1304946c486d98e6b886e9b931eaaaebb23835b30e217638037b7f2721d4e9c"
 
 # xray_unzip ZIP DIR: unzip, else python3, else install unzip and retry.
 xray_unzip() {

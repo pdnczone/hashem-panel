@@ -76,7 +76,7 @@ func (e *xrayEnv) use() {
 			}
 			return []byte(e.testOut), nil
 		case name == bin && args[0] == "version":
-			return []byte("Xray 26.3.27 (Xray, Penetrates Everything.) Custom\nA unified platform"), nil
+			return []byte("Xray 26.10.21 (Xray, Penetrates Everything.) Custom\nA unified platform"), nil
 		}
 		return nil, fmt.Errorf("no host commands in this test: %s", name)
 	}
@@ -192,7 +192,7 @@ func TestXrayCreateDirectAndImport(t *testing.T) {
 	if raw, _ := json.Marshal(g); strings.Contains(string(raw), st.Links[0].Keys.PrivateKey) {
 		t.Error("GET leaks the Reality private key")
 	}
-	if g["public_ip"] != "203.0.113.9" || g["installed"] != true || g["version"] != "Xray 26.3.27" {
+	if g["public_ip"] != "203.0.113.9" || g["installed"] != true || g["version"] != "Xray 26.10.21" {
 		t.Errorf("GET %v %v %v", g["public_ip"], g["installed"], g["version"])
 	}
 
@@ -424,7 +424,7 @@ func TestXrayInstallAndSNI(t *testing.T) {
 	old := xrayInstallCmd
 	t.Cleanup(func() { xrayInstallCmd = old })
 	release := make(chan struct{})
-	xrayInstallCmd = func() (string, error) { <-release; return "[OK] Xray-core v26.3.27 installed", nil }
+	xrayInstallCmd = func() (string, error) { <-release; return "[OK] Xray-core v26.10.21 installed", nil }
 	if _, m := e.post(`{"action":"install"}`); m["status"] != "ok" {
 		t.Fatalf("install: %v", m)
 	}

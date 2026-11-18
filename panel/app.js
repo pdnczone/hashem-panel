@@ -13023,11 +13023,11 @@ function openCustReply(id, lid) {
 
 // ---- the kit: what the customer runs on a foreign server ----
 function custKitEngine(k) {
-  return { backhaul: 'Backhaul v0.7.2', xray: 'Xray-core v26.3.27', 'xray-direct': 'Xray-core v26.3.27' }[k.engine] || 'FRP v' + k.frp;
+  return { backhaul: 'Backhaul v0.7.2', xray: 'Xray-core v26.10.21', 'xray-direct': 'Xray-core v26.10.21' }[k.engine] || 'FRP v' + k.frp;
 }
 function custKitManualHint(k) {
   if (k.engine === 'backhaul') return tr('', 'For a foreign server that already runs Backhaul v0.7.2: run backhaul -c with this file.');
-  if (k.engine === 'xray' || k.engine === 'xray-direct') return tr('', 'For a foreign server that already runs Xray-core v26.3.27: run xray run -c with this file.');
+  if (k.engine === 'xray' || k.engine === 'xray-direct') return tr('', 'For a foreign server that already runs Xray-core v26.10.21: run xray run -c with this file.');
   if (k.engine === 'bagher') return tr('', 'The steps in the file, then frpc v{v}. Without the installer, send the seller the reply code\'s parts by hand.').replace('{v}', k.frp);
   return tr('', 'For a foreign server that already runs frpc v{v}: run frpc -c with this file.').replace('{v}', k.frp);
 }

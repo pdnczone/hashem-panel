@@ -677,7 +677,7 @@ var xrayVersionCache = struct {
 	v   string
 }{}
 
-// xrayVersion is the installed core's version line ("Xray 26.3.27 ...").
+// xrayVersion is the installed core's version line ("Xray 26.10.21 ...").
 func xrayVersion() string {
 	st, err := os.Stat(xrayBinPath)
 	if err != nil {

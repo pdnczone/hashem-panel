@@ -11,7 +11,7 @@
 #   bash hashem-customer.sh config hsk1.XXXX         # print the tunnel's config only
 #
 # The kit says which engine the seller sold: FRP (frpc v0.71.0), Backhaul
-# (v0.7.2), Xray (Xray-core v26.3.27, reverse or direct) or Bagher (SSH:
+# (v0.7.2), Xray (Xray-core v26.10.21, reverse or direct) or Bagher (SSH:
 # the seller's server logs in to this one's sshd as a locked-down user and
 # frpc v0.71.0 runs through it; install prints a reply code for the
 # seller, `reply hsk1.XXXX` prints it again). The installer
@@ -31,9 +31,9 @@ FRP_SHA256_arm64="f33c293c275d8fc68c654b6fba8f10b2551d6463d09a9fc9cffb7227eae822
 BACKHAUL_VERSION="v0.7.2"
 BACKHAUL_SHA256_amd64="57bf95c2eabeddb1152d2e94ac42f4310883ce0fb909ee2a57bd53503b2dabbc"
 BACKHAUL_SHA256_arm64="9a424c97ff16fc3f682e8314c418790d2b5bf3136e008edbb6cd402ea00999f6"
-XRAY_VERSION="v26.3.27"
-XRAY_SHA256_amd64="23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae"
-XRAY_SHA256_arm64="4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c"
+XRAY_VERSION="v26.10.21"
+XRAY_SHA256_amd64="0eec3ed4163c273d8c8bf821f7d219e257921cf584aa3fb970715e458e631978"
+XRAY_SHA256_arm64="d1304946c486d98e6b886e9b931eaaaebb23835b30e217638037b7f2721d4e9c"
 BIN_DIR="${HASHEM_CUSTOMER_BIN_DIR:-/usr/local/lib/hashem-customer}"
 CONF_DIR="${HASHEM_CUSTOMER_CONF_DIR:-/etc/hashem-customer}"
 UNIT_DIR="${HASHEM_SYSTEMD_DIR:-/etc/systemd/system}"

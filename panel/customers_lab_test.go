@@ -441,7 +441,7 @@ func labTCFilters() int {
 }
 
 // TestCustomersLabEngines sells one customer four foreign-server links on
-// the real Backhaul v0.7.2 and Xray-core v26.3.27 (CUST_LAB_BACKHAUL,
+// the real Backhaul v0.7.2 and Xray-core v26.10.21 (CUST_LAB_BACKHAUL,
 // CUST_LAB_XRAY): Backhaul tcp (with UDP) and wssmux, Xray reverse Reality
 // (with UDP) and mKCP. The customer's ends run the configs the installer
 // makes from the kits. It checks that users reach every link, that one
@@ -646,7 +646,7 @@ sys.stdout.write(repr(d))`
 }
 
 // TestCustomersLabDial sells two links this server dials, on the real
-// Xray-core v26.3.27 (direct, Reality) and Bagher (the panel's own SSH
+// Xray-core v26.10.21 (direct, Reality) and Bagher (the panel's own SSH
 // carrier to a real sshd, frps/frpc 0.71.0): reach, one cap shared by both,
 // the billed volume, the host key pinned by the reply code (a wrong code
 // does not connect), the customer's sshd lets the link's key do nothing
