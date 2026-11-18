@@ -334,7 +334,10 @@ func mainTunnelFrom(st tunnelStatus, v *hostView) *peerLive {
 	// The base tunnel's bytes: its GRE interface, or its Backhaul unit's port
 	// counters. It had none, so the hub's main tunnel never showed a speed.
 	if st.Gre.Exists {
-		l.Rx, l.Tx = v.traffic("gre-tunnel")
+		// plus FRP's port when it runs over the public route instead
+		gr, gt := v.traffic("gre-tunnel")
+		cr, ct := v.carrierTraffic(st.FrpSvc)
+		l.Rx, l.Tx = sumCounters(gr, gt, cr, ct)
 	} else {
 		l.Rx, l.Tx = v.carrierTraffic(st.FrpSvc)
 	}

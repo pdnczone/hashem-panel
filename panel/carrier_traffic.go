@@ -182,7 +182,78 @@ func carrierEnds() []carrierEnd {
 	sshFwdMu.Unlock()
 	ends = append(ends, bagherCarrierEnds(cfg)...)
 	ends = append(ends, xrayCarrierEnds()...)
+	ends = append(ends, frpCarrierEnds()...)
 	return dedupeEnds(ends)
+}
+
+// frpCarrierEnds are FRP's connections between the two servers when they do
+// not run inside GRE: frps's bindPort (and its KCP/QUIC UDP ports) on the Iran
+// server, frpc's serverAddr:serverPort on the foreign one. Inside GRE they use
+// the GRE interface, which /proc/net/dev counts, and these rules (on the
+// default-route interface only) never see them. Over the public route (dial
+// public, or "FRP only" when GRE is down) nothing else counted them, so a
+// tunnel carrying all its users showed no speed.
+func frpCarrierEnds() []carrierEnd {
+	var ends []carrierEnd
+	read := func(pat string) []string {
+		m, _ := filepath.Glob(filepath.Join(frpDir, pat))
+		sort.Strings(m)
+		return m
+	}
+	for _, p := range read("frps*.toml") {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		s, tag := string(data), strings.TrimSuffix(filepath.Base(p), ".toml")
+		port := tomlInt(s, "bindPort")
+		if port <= 0 || port > 65535 {
+			continue
+		}
+		ends = append(ends, carrierEnd{Port: port, UDP: tomlInt(s, "kcpBindPort") == port, Tag: tag})
+		if q := tomlInt(s, "quicBindPort"); q > 0 && q <= 65535 && q != port {
+			ends = append(ends, carrierEnd{Port: q, UDP: true, Tag: tag})
+		}
+	}
+	for _, p := range read("frpc*.toml") {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		s := string(data)
+		port := tomlInt(s, "serverPort")
+		// a GRE inner address or 127.0.0.1 is not the public route
+		ip := carrierIP(tomlStr(s, "serverAddr"))
+		if port <= 0 || port > 65535 || !validPublicIP(ip, 4) {
+			continue
+		}
+		ends = append(ends, carrierEnd{Port: port, Remote: ip, UDP: true, Tag: strings.TrimSuffix(filepath.Base(p), ".toml")})
+	}
+	return ends
+}
+
+// tomlStr is the quoted string value of a top-level key ("" when absent).
+func tomlStr(content, key string) string {
+	for _, ln := range strings.Split(content, "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(ln), "=")
+		if ok && strings.TrimSpace(k) == key {
+			return strings.Trim(strings.TrimSpace(v), `"'`)
+		}
+	}
+	return ""
+}
+
+// sumCounters adds two byte counters: a tunnel's GRE interface and its FRP
+// or Backhaul port rules. Either may be unknown.
+func sumCounters(rx1, tx1, rx2, tx2 *uint64) (rx, tx *uint64) {
+	if rx1 == nil || tx1 == nil {
+		return rx2, tx2
+	}
+	if rx2 == nil || tx2 == nil {
+		return rx1, tx1
+	}
+	r, t := *rx1+*rx2, *tx1+*tx2
+	return &r, &t
 }
 
 // bagherCarrierEnds are Bagher's SSH connections: on Iran one per foreign
