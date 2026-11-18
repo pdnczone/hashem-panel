@@ -2882,9 +2882,23 @@ async function refreshDash() {
     const bindPort = (f.port && f.port !== NA) ? String(f.port) : '';
     const fwd = ((f.proxy_ports && f.proxy_ports.length) ? f.proxy_ports : (f.proxies || [])).filter(p => p !== '' && p != null);
     const innerPeer = c => { const m = /^(\d+\.\d+\.\d+)\.(\d+)(?:\/\d+)?$/.exec(c || ''); if (!m) return ''; const n = +m[2]; return m[1] + '.' + (n % 2 === 0 ? n - 1 : n + 1); };
+    // This server's other public IPv4 addresses: any of them can be a
+    // tunnel's Iran IP (Edit Tunnel). Its global IPv6 addresses are listed
+    // apart: the 6to4 and 4in6 carriers use them, Edit Tunnel does not.
+    const moreIPs = (d.public_ips || []).filter(ip => ip && ip !== d.local_pub);
+    const ipv6 = (d.public_ipv6 || []).filter(Boolean);
+    // on a hub with more tunnels, these cards describe the first one only
+    { const sc = $('detScope');
+      if (sc) {
+        const scoped = iran && !unset && peers.length > 0;
+        sc.hidden = !scoped;
+        sc.textContent = scoped ? tr('', 'First tunnel') + ' · ' + (d.main_name || otherIP || '—') : '';
+      } }
     const serverCard = detCard(ICO_SRV, tr('card_server_title', 'Server & Role'),
       detRow(tr('', 'Role'), roleCell)
       + detRow(tr('', 'This server'), dpill(d.local_pub), tr('', 'public IP'))
+      + (moreIPs.length ? detStack(tr('', 'Other IPs'), moreIPs.length, dchips(moreIPs)) : '')
+      + (ipv6.length ? detStack('IPv6', ipv6.length, dchips(ipv6)) : '')
       + (otherIP ? detRow(otherLabel, dpill(otherIP), tr('', 'public IP')) : '')
       + (!unset && fwd.length ? detStack(tr('lbl_forwarded_ports', 'Forwarded'), fwd.length, dchips(fwd)) : ''));
     let det, n = 1;

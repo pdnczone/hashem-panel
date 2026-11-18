@@ -1651,6 +1651,8 @@ window.FA_TEXT = {
 "iPerf3 action failed": "عملیات iPerf3 ناموفق بود",
 "Dial": "اتصال",
 "not set up": "راه‌اندازی نشده",
+"First tunnel": "تانل اول",
+"Other IPs": "IPهای دیگر",
 "Main tunnel": "تونل اصلی",
 "Enter a valid port (e.g. 8080), range (10000-10050), or mapping (2083=8443).": "یک پورت معتبر (مثلاً 8080)، بازه (10000-10050) یا نگاشت (2083=8443) وارد کنید.",
 "Enter a port (8080), a range (10000-10050) or a mapping (2083=8443), with an optional IP: before either side.": "یک پورت (8080)، بازه (10000-10050) یا نگاشت (2083=8443) وارد کنید؛ پیش از هر طرف می‌توانید IP: هم بگذارید.",

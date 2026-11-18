@@ -7,7 +7,7 @@ package main
 //
 // Per tick the collector runs a fixed set of host commands, independent of the
 // peer count: one `ss -Htin state established` (parsed once, indexed by local
-// port), one `ip tunnel show`, one `ip -o -4 addr show`, one
+// port), one `ip tunnel show`, one `ip -o addr show`, one
 // `systemctl is-active <all units>`, one read of /proc/net/dev, and a streaming
 // count of /proc/net/{tcp,udp}[6]. Per-peer extras (active TCP connect probe
 // and background ICMP) run through a bounded worker pool with hard timeouts and
@@ -75,6 +75,7 @@ type hostView struct {
 	tunnelShow string
 	tunnelOK   bool
 	inner      map[string]string // ifname -> first inet CIDR
+	addrShow   string            // raw `ip -o addr show`, both families (publicIPs)
 	active     map[string]bool   // unit -> active
 	devData    string            // raw /proc/net/dev
 	devAt      time.Time         // when devData and the carrier counters were read
@@ -118,7 +119,7 @@ func (v *hostView) carrierTraffic(tag string) (rx, tx *uint64) {
 
 // ---- parsing helpers ----
 
-// parseAddrShow parses `ip -o -4 addr show`: ifname -> first inet CIDR.
+// parseAddrShow parses `ip -o addr show`: ifname -> first inet (IPv4) CIDR.
 func parseAddrShow(out string) map[string]string {
 	m := map[string]string{}
 	for _, line := range strings.Split(out, "\n") {
@@ -216,8 +217,9 @@ func collectHost(recs []peerRecord, prev map[string]devCounters) *hostView {
 		}
 	})
 	timedStep("ip_addr", func() {
-		if out, err := runCmdTimeoutOut(5*time.Second, "ip", "-o", "-4", "addr", "show"); err == nil {
+		if out, err := runCmdTimeoutOut(5*time.Second, "ip", "-o", "addr", "show"); err == nil {
 			v.inner = parseAddrShow(string(out))
+			v.addrShow = string(out)
 		}
 	})
 	timedStep("systemctl", func() {
@@ -388,8 +390,13 @@ type HubSnapshot struct {
 	// unit, or Bagher); nil when unknown.
 	LocalRx, LocalTx *uint64
 	PublicIP         string
-	FrpSince         string
-	Bagher           map[string]any
+	// PublicIPs: every public IPv4 on this server, PublicIP first; any can be
+	// a tunnel's Iran IP (Edit Tunnel). PublicIPv6: its global IPv6
+	// addresses, which the 6to4 and 4in6 carriers use.
+	PublicIPs  []string
+	PublicIPv6 []string
+	FrpSince   string
+	Bagher     map[string]any
 }
 
 // AgeMs is the snapshot age in milliseconds, -1 for the empty snapshot.
@@ -483,6 +490,13 @@ func buildSnapshot() *HubSnapshot {
 	snapPrevDev.Unlock()
 
 	local := localStatusFrom(v)
+	// An Iran server's first FRP tunnel: its ports are written in the
+	// foreign frpc.toml, so read what this frps serves (cached, see
+	// frpsServedTTL).
+	if strings.HasPrefix(local.FrpSvc, "frps") && len(local.ProxyPorts) == 0 {
+		local.ProxyPorts = frpsServedCached(local.FrpSvc, t0)
+		local.Ports = local.ProxyPorts
+	}
 	v.owners = portOwners(controlPortsOf(recs, local.BindPort))
 	v.icmp = snapIcmp.lookup
 	v.connect = snapProbe.lookup
@@ -517,6 +531,7 @@ func buildSnapshot() *HubSnapshot {
 		s.LocalRx, s.LocalTx = localTraffic(local, v)
 	})
 	s.PublicIP = detectPublicIPCached()
+	s.PublicIPs, s.PublicIPv6 = publicIPs(v.addrShow, s.PublicIP)
 	s.FrpSince = frpSinceCached(local.FrpSvc)
 
 	snapIcmp.setTargets(icmpTargets(s))
