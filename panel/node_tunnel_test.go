@@ -643,3 +643,24 @@ func TestNodeTunHeld(t *testing.T) {
 		t.Fatalf("a held node: %v", err)
 	}
 }
+
+// A server with two public addresses: a tunnel moved to the second one is
+// still drawn on the map, found by the address it uses, and still only with
+// the shared token.
+func TestNodeTunLinksSecondAddress(t *testing.T) {
+	f := nodeTunTest(t) // the fake answers every proof with the token "tok"
+	f.plans[1].Peers = []setupPlanPeer{{ID: 4, RemotePub: "192.0.2.7"}}
+	f.plans[2].Uplinks = []setupPlanUplink{{Hub: 1, IranPub: "198.51.100.9"}} // the Iran server's second address
+	if links, _ := nodeTunLinks(context.Background()); len(links) != 0 {
+		t.Fatalf("an address the Iran server never said it uses: %+v", links)
+	}
+	f.plans[1].Peers[0].LocalPub = "198.51.100.9"
+	links, _ := nodeTunLinks(context.Background())
+	if len(links) != 1 || links[0].Server != 1 || links[0].Client != 2 || links[0].PeerID != 4 || links[0].ServerIP != "198.51.100.9" {
+		t.Fatalf("the tunnel on the second address: %+v", links)
+	}
+	f.plans[2].Uplinks[0].IranPub = "198.51.100.1" // the main address still matches
+	if links, _ := nodeTunLinks(context.Background()); len(links) != 1 || links[0].ServerIP != "198.51.100.1" {
+		t.Fatalf("the main address: %+v", links)
+	}
+}

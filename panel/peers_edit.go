@@ -88,6 +88,7 @@ type peerPatchRequest struct {
 	ID             int       `json:"id"`
 	Name           string    `json:"name,omitempty"`
 	RemotePub      string    `json:"remote_pub,omitempty"`
+	LocalPub       string    `json:"local_pub,omitempty"` // this server's address the tunnel leaves from
 	Carrier        string    `json:"carrier,omitempty"`
 	Engine         string    `json:"engine,omitempty"`
 	Transport      string    `json:"transport,omitempty"`
@@ -104,6 +105,7 @@ func (p *peerPatchRequest) UnmarshalJSON(data []byte) error {
 		ID             any             `json:"id"`
 		Name           string          `json:"name,omitempty"`
 		RemotePub      string          `json:"remote_pub,omitempty"`
+		LocalPub       string          `json:"local_pub,omitempty"`
 		Carrier        string          `json:"carrier,omitempty"`
 		Engine         string          `json:"engine,omitempty"`
 		Transport      string          `json:"transport,omitempty"`
@@ -145,6 +147,7 @@ func (p *peerPatchRequest) UnmarshalJSON(data []byte) error {
 
 	p.Name = raw.Name
 	p.RemotePub = raw.RemotePub
+	p.LocalPub = raw.LocalPub
 	p.Carrier = raw.Carrier
 	p.Engine = raw.Engine
 	p.Transport = raw.Transport
@@ -267,6 +270,7 @@ func handlePeersPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	body.Name = strings.TrimSpace(body.Name)
 	body.RemotePub = strings.TrimSpace(body.RemotePub)
+	body.LocalPub = strings.TrimSpace(body.LocalPub)
 	body.Carrier = strings.TrimSpace(body.Carrier)
 	body.Engine = strings.TrimSpace(body.Engine)
 	body.Transport = strings.TrimSpace(body.Transport)
@@ -282,7 +286,7 @@ func handlePeersPatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Must provide at least one field to update
-	if body.Name == "" && body.RemotePub == "" && body.Carrier == "" && body.Engine == "" && body.Transport == "" && body.Ports == nil && body.RawPorts == nil {
+	if body.Name == "" && body.RemotePub == "" && body.LocalPub == "" && body.Carrier == "" && body.Engine == "" && body.Transport == "" && body.Ports == nil && body.RawPorts == nil {
 		writeAPIError(w, r, "E-PEER-07", "no fields to update")
 		return
 	}
@@ -338,6 +342,24 @@ func handlePeersPatch(w http.ResponseWriter, r *http.Request) {
 		}
 		if clash := peerDuplicateIPClash(body.RemotePub, body.ID); clash != "" {
 			writeAPIError(w, r, "E-PEER-03", "IP "+body.RemotePub+" already used by peer "+clash)
+			return
+		}
+	}
+
+	// Validate this server's address for the tunnel if provided: one of its
+	// own IPv4 addresses (a server with several picks the one whose route
+	// to the foreign server is best)
+	if body.LocalPub != "" {
+		if body.ID == 0 {
+			writeAPIError(w, r, "E-PEER-07", "the first tunnel's Iran IP is set by Setup; this field is for the tunnels added after it")
+			return
+		}
+		if ipFamily(body.LocalPub) != 4 {
+			writeAPIError(w, r, "E-PEER-07", "Iran IP: enter an IPv4 address of this server")
+			return
+		}
+		if !serverHasAddr(body.LocalPub) {
+			writeAPIError(w, r, "E-PEER-07", "Iran IP "+body.LocalPub+" is not an address of this server")
 			return
 		}
 	}
@@ -542,6 +564,9 @@ func editPeerDirect(peer *peerRecord, req peerPatchRequest) (string, error) {
 			if req.RemotePub != "" {
 				peers[i].RemotePub = req.RemotePub
 			}
+			if req.LocalPub != "" {
+				peers[i].LocalPub = req.LocalPub
+			}
 			if req.Carrier != "" {
 				peers[i].Carrier = req.Carrier
 			}
@@ -603,6 +628,29 @@ func editPeerDirect(peer *peerRecord, req peerPatchRequest) (string, error) {
 
 		if !testPing(req.RemotePub, 2) {
 			warning = fmt.Sprintf("New remote IP %s did not reply to ping (peer may be offline or firewalling ICMP)", req.RemotePub)
+		}
+	}
+
+	// 2b. Move the tunnel to another address of this server: GRE leaves
+	// from it; FRP and Backhaul listen on every address, so only the
+	// foreign server has to follow
+	if req.LocalPub != "" && req.LocalPub != peer.LocalPub {
+		if !peer.NoGre && peer.Engine != "backhaul" {
+			_, _ = exec.Command("ip", "tunnel", "change", greIf, "local", req.LocalPub).CombinedOutput()
+			svcFile := fmt.Sprintf("/etc/systemd/system/%s.service", greIf)
+			updateServiceLocalIP(svcFile, peer.LocalPub, req.LocalPub)
+			_ = runSystemctl("daemon-reload")
+			_ = runSystemctl("restart", greIf+".service")
+		}
+		was := peer.LocalPub
+		if was == "" {
+			was = "the old address"
+		}
+		note := fmt.Sprintf("On the foreign server, set the Iran server's IP to %s (its Edit Tunnel): it still reaches %s.", req.LocalPub, was)
+		if warning != "" {
+			warning += " " + note
+		} else {
+			warning = note
 		}
 	}
 
@@ -749,6 +797,9 @@ func generatePeerBundle(peer *peerRecord, req peerPatchRequest) string {
 		return ""
 	}
 	localPub := peer.LocalPub
+	if req.LocalPub != "" {
+		localPub = req.LocalPub
+	}
 	if localPub == "" {
 		localPub = detectPublicIP()
 	}
@@ -921,6 +972,43 @@ func generateMainBundle(req peerPatchRequest, legacyPeer *peerRecord) string {
 func applyPeerCarrierDirect(greIf string, carrier string) error {
 	_, err := runHashemCarrierCmd("set", carrier, "--if", greIf)
 	return err
+}
+
+// serverHasAddr reports whether ip is an address on one of this server's
+// interfaces. A test hook.
+var serverHasAddr = func(ip string) bool {
+	want := net.ParseIP(ip)
+	addrs, err := net.InterfaceAddrs()
+	if want == nil || err != nil {
+		return false
+	}
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok && n.IP.Equal(want) {
+			return true
+		}
+	}
+	return false
+}
+
+// updateServiceLocalIP is updateServiceRemoteIP for the GRE unit's local
+// address: the old one replaced as a whole address, else the "local IP"
+// argument.
+func updateServiceLocalIP(serviceFile string, oldIP string, newIP string) {
+	data, err := os.ReadFile(serviceFile)
+	if err != nil {
+		return
+	}
+	content := string(data)
+	exact := regexp.MustCompile(`(^|[^0-9.])` + regexp.QuoteMeta(oldIP) + `($|[^0-9.])`)
+	if oldIP != "" && exact.MatchString(content) {
+		for i := 0; i < 4 && oldIP != newIP && exact.MatchString(content); i++ {
+			content = exact.ReplaceAllString(content, "${1}"+newIP+"${2}")
+		}
+	} else {
+		re := regexp.MustCompile(`local\s+\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`)
+		content = re.ReplaceAllString(content, "local "+newIP)
+	}
+	_ = os.WriteFile(serviceFile, []byte(content), 0644)
 }
 
 func updateServiceRemoteIP(serviceFile string, oldIP string, newIP string) {

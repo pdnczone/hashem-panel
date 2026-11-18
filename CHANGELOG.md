@@ -3,6 +3,12 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## Unreleased
+
+- **A server with several IPs: pick the one a tunnel uses.** Edit Tunnel on a tunnel added after the first one has an **Iran IP (this server)** field: any IPv4 address of this server. Its GRE moves to it (FRP and Backhaul already listen on every address), the bundle carries it, and the reply says to set the same address on the foreign server. Before, the only way was `ip tunnel change` by hand, which the card and the bundle did not know about.
+- **Nodes map: a tunnel on the server's second IP is drawn.** The map linked a foreign server to an Iran server only when it reached the Iran server's main address, so a tunnel moved to another of its IPs had no line. It now also accepts the address that tunnel uses; the shared-token check is unchanged.
+- **CI: `docs/API.md` lists `/api/peer/egress` and `/api/proxy/probe`.** They were added in v3.1.5 without regenerating the docs, so the "generated docs are current" step failed.
+
 ## v3.1.5 — 2026-11-18
 
 **Pick a tunnel for Telegram and Cloudflare, FRP port ranges, a clearer dashboard.** Run `hashem update` on every server, the central first: the tunnel route needs the new panel on the foreign servers too.
