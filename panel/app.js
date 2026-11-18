@@ -1388,7 +1388,7 @@ function tunViz(o) {
   const shown = ports.slice(0, 8);
   return `<div class="tv-wrap">
     <div class="tv ${live ? 'tv-on' : 'tv-off'}${o.state === 'warn' ? ' tv-warn' : ''}${o.gre ? ' tv-gre' : ''}">
-      <div class="tv-node"><span class="tv-ico">${ICO_SRV}</span><b>${esc(o.here)}</b><small>${esc(o.hereSub || '')}</small></div>
+      <div class="tv-node"><span class="tv-ico">${ICO_SRV}</span><b>${esc(o.here)}</b><small title="${esc(o.hereSub || '')}">${esc(o.hereSub || '')}</small></div>
       <div class="tv-link">
         <div class="tv-tag">${(o.tags || []).filter(t => t && t[0]).map(t => `<span class="${t[1] || ''}" data-no-i18n>${esc(t[0])}</span>`).join('')}</div>
         <div class="tv-pipe" role="img" aria-label="${esc(tr('', live ? 'Tunnel connected' : 'Tunnel down'))}">
@@ -1397,7 +1397,7 @@ function tunViz(o) {
         </div>
         <div class="tv-meta">${meta.join('')}</div>
       </div>
-      <div class="tv-node"><span class="tv-ico far">${ICO_GLOBE}</span><b>${esc(o.there)}</b><small>${esc(o.thereSub || '')}</small></div>
+      <div class="tv-node"><span class="tv-ico far">${ICO_GLOBE}</span><b>${esc(o.there)}</b><small title="${esc(o.thereSub || '')}">${esc(o.thereSub || '')}</small></div>
     </div>
     ${shown.length ? `<div class="tv-ports"><span class="tv-ports-k">${esc(tr('', 'Forwarded'))}</span>${shown.map(p => `<span class="tv-port" data-no-i18n>${esc(p)}</span>`).join('')}${ports.length > shown.length ? `<span class="tv-port more">+${ports.length - shown.length}</span>` : ''}</div>` : ''}
   </div>`;
