@@ -257,3 +257,28 @@ func TestSSPortFilter(t *testing.T) {
 		t.Fatalf("ports past 65535 must be dropped, got %q", f)
 	}
 }
+
+// The main tunnel on 7001 next to a peer on 7003: controlPorts overlap
+// (7003-2), so "the only tunnel on this port" no longer held and the main
+// tunnel's live frpc session was not seen ("no client holds a control
+// session", Degraded) unless its query named the foreign server.
+func TestMainTunnelSessionNextToPeerPort(t *testing.T) {
+	owners := portOwners([]int{7003, 7001}) // a peer's FrpPort, then the main BindPort
+	if owners[7001] != 2 {
+		t.Fatalf("the ports must overlap for this test: %v", owners)
+	}
+	st := tunnelStatus{Role: "iran", FrpUp: true, BindPort: 7001, GrePeer: "198.51.100.4",
+		Gre: greState{Exists: true, Inner: "10.10.10.2/30"}}
+	for _, from := range []string{"10.10.10.1", "198.51.100.4"} { // FRP inside GRE, then over the public route
+		v := &hostView{sessions: []ssSession{{LPort: 7001, RHost: from, RPort: 64462, RTTms: 66}}, owners: owners}
+		m := mainTunnelFrom(st, v)
+		if m == nil || !m.Linked || m.HealthState != stateHealthy {
+			t.Fatalf("frpc from %s: %+v", from, m)
+		}
+	}
+	// a session from a host that is not the foreign server still does not count
+	v := &hostView{sessions: []ssSession{{LPort: 7001, RHost: "203.0.113.50", RPort: 5000, RTTms: 9}}, owners: owners}
+	if m := mainTunnelFrom(st, v); m == nil || m.Linked {
+		t.Fatalf("a stranger on the shared port: %+v", m)
+	}
+}
