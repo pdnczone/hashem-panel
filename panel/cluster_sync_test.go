@@ -239,6 +239,9 @@ type fakeSyncHub struct {
 	list    syncList
 	deliver func(syncDeliverReq) syncDeliverAns
 	got     []syncDeliverReq
+	pull    func() (int, syncPullAns) // nil: an old hub without /pull (404)
+	state   func() syncState
+	pulled  int
 }
 
 func (f *fakeSyncHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -262,6 +265,20 @@ func (f *fakeSyncHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.got = append(f.got, q)
 		meshAnswer(w, syncTestSecret, f.deliver(q))
+	case "/pull":
+		if f.pull == nil {
+			http.NotFound(w, r)
+			return
+		}
+		f.pulled++
+		_, ans := f.pull()
+		meshAnswer(w, syncTestSecret, ans)
+	case "/syncstate":
+		if f.state == nil {
+			http.NotFound(w, r)
+			return
+		}
+		meshAnswer(w, syncTestSecret, f.state())
 	default:
 		http.NotFound(w, r)
 	}
@@ -328,7 +345,7 @@ func TestRunHubSync(t *testing.T) {
 	syncRemove = func(id int) error { removed = append(removed, id); return nil }
 
 	c := loadClusterConfig()
-	if err := runHubSync(c, c.Hubs[0]); err != nil {
+	if err := runHubSync(c, c.Hubs[0], false); err != nil {
 		t.Fatal(err)
 	}
 	s := syncSnapshot()
@@ -395,7 +412,7 @@ func TestRunHubSyncFirstTunnelOfAHub(t *testing.T) {
 		return MakeBundle("192.0.2.10", b.FrpPort, "", "", "tok", []int{443}), 0, nil
 	}
 	c := loadClusterConfig()
-	if err := runHubSync(c, c.Hubs[0]); err != nil {
+	if err := runHubSync(c, c.Hubs[0], false); err != nil {
 		t.Fatal(err)
 	}
 	if got.Role != "iran" || got.Engine != "backhaul" || got.Transport != "tcpmux" || got.Ports != "443, 2083=8443" || got.LocalGre != "" {
@@ -428,7 +445,7 @@ func TestRunHubSyncAlreadyJoinedIsAFailure(t *testing.T) {
 	}
 	syncRemove = func(id int) error { removed = append(removed, id); return nil }
 	c := loadClusterConfig()
-	if err := runHubSync(c, c.Hubs[0]); err != nil {
+	if err := runHubSync(c, c.Hubs[0], false); err != nil {
 		t.Fatal(err)
 	}
 	st := findStep(syncSnapshot(), "198.51.100.1")
@@ -459,7 +476,7 @@ func TestRunHubSyncHalfMadeTunnelIsRemoved(t *testing.T) {
 	}
 	syncRemove = func(id int) error { removed = append(removed, id); return nil }
 	c := loadClusterConfig()
-	if err := runHubSync(c, c.Hubs[0]); err != nil {
+	if err := runHubSync(c, c.Hubs[0], false); err != nil {
 		t.Fatal(err)
 	}
 	st := findStep(syncSnapshot(), "198.51.100.1")
@@ -473,11 +490,172 @@ func TestStartHubSyncRefusesTwoAtOnce(t *testing.T) {
 	syncHub(t, "203.0.113.9")
 	syncUpdate(func(s *syncState) { s.Running = true })
 	defer syncUpdate(func(s *syncState) { *s = syncState{} })
-	if err := startHubSync("hub-a"); err == nil || !strings.Contains(err.Error(), "already running") {
+	if err := startHubSync("hub-a", true); err == nil || !strings.Contains(err.Error(), "already running") {
 		t.Fatalf("second copy: %v", err)
 	}
 	syncUpdate(func(s *syncState) { s.Running = false })
-	if err := startHubSync("hub-zzz"); err == nil {
+	if err := startHubSync("hub-zzz", true); err == nil {
 		t.Fatal("an unknown hub started a copy")
+	}
+}
+
+// twoWay sets a run up where this hub has the tunnels in mine and the other
+// hub (the fake) the ones in its list.
+func twoWay(t *testing.T, mine []syncTunnel, fake *fakeSyncHub) (ClusterConfig, func()) {
+	t.Helper()
+	newClusterFixture(t, true)
+	syncFresh(t)
+	srv := httptest.NewServer(fake)
+	syncHub(t, "203.0.113.9")
+	_, _ = updateClusterConfig(func(c *ClusterConfig) error { c.Hubs[0].URL = srv.URL; return nil })
+	oldT, oldPoll := syncLocalTunnels, syncPollEvery
+	syncLocalTunnels = func() []syncTunnel { return mine }
+	syncPollEvery = time.Millisecond
+	return loadClusterConfig(), func() { srv.Close(); syncLocalTunnels, syncPollEvery = oldT, oldPoll }
+}
+
+// The button works whichever hub it is pressed on: the other hub has no
+// tunnel and this one has, so the other hub is asked to copy this one's.
+func TestRunHubSyncTwoWayAsksTheEmptyHubToCopy(t *testing.T) {
+	polls := 0
+	fake := &fakeSyncHub{
+		pull: func() (int, syncPullAns) { return 200, syncPullAns{OK: true, Started: 4242} },
+		state: func() syncState {
+			polls++
+			st := syncState{Started: 4242, Hub: "hub-self", Running: polls < 3}
+			st.Steps = []syncStep{{Name: "de", Remote: "198.51.100.1", State: "done", Detail: "serves it now"}}
+			return st
+		},
+	}
+	c, done := twoWay(t, []syncTunnel{{Name: "de", Remote: "198.51.100.1", Engine: "frp", Ports: []int{443}}}, fake)
+	defer done()
+	if err := runHubSync(c, c.Hubs[0], true); err != nil {
+		t.Fatalf("the other hub being empty is not an error when this one has tunnels: %v", err)
+	}
+	s := syncSnapshot()
+	if fake.pulled != 1 || len(s.Other) != 1 || s.Other[0].State != "done" || s.OtherErr != "" || len(s.Steps) != 0 {
+		t.Fatalf("pulled %d, state %+v", fake.pulled, s)
+	}
+}
+
+// A copy that is another one (older Started) is not taken for the asked one.
+func TestRunHubSyncTwoWayIgnoresAnotherCopyOnThePeer(t *testing.T) {
+	polls := 0
+	fake := &fakeSyncHub{
+		pull: func() (int, syncPullAns) { return 200, syncPullAns{OK: true, Started: 500} },
+		state: func() syncState {
+			polls++
+			if polls < 3 {
+				return syncState{Started: 100, Hub: "hub-self", Running: false, Steps: []syncStep{{Name: "old", State: "done"}}}
+			}
+			return syncState{Started: 500, Hub: "hub-self", Steps: []syncStep{{Name: "de", Remote: "198.51.100.1", State: "done"}}}
+		},
+	}
+	c, done := twoWay(t, []syncTunnel{{Name: "de", Remote: "198.51.100.1", Engine: "frp", Ports: []int{443}}}, fake)
+	defer done()
+	if err := runHubSync(c, c.Hubs[0], true); err != nil {
+		t.Fatal(err)
+	}
+	s := syncSnapshot()
+	if len(s.Other) != 1 || s.Other[0].Name != "de" {
+		t.Fatalf("other: %+v", s.Other)
+	}
+}
+
+// Both hubs already serve the same foreign servers: nothing is asked, and the
+// answer says so instead of calling it an error.
+func TestRunHubSyncTwoWayAlreadyEqual(t *testing.T) {
+	same := syncTunnel{Name: "de", Remote: "198.51.100.1", Engine: "frp", Ports: []int{443}}
+	fake := &fakeSyncHub{
+		list: syncList{Tunnels: []syncTunnel{same}},
+		pull: func() (int, syncPullAns) { return 200, syncPullAns{OK: true, Started: 1} },
+	}
+	c, done := twoWay(t, []syncTunnel{same}, fake)
+	defer done()
+	if err := os.WriteFile(filepath.Join(configDir, "peers.json"), []byte(`{"peers":[{"id":1,"name":"de","remote_pub":"198.51.100.1","ports":[443]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runHubSync(c, c.Hubs[0], true); err != nil {
+		t.Fatal(err)
+	}
+	s := syncSnapshot()
+	if fake.pulled != 0 || !strings.Contains(s.Info, "already serve the same") {
+		t.Fatalf("pulled %d, info %q, state %+v", fake.pulled, s.Info, s)
+	}
+}
+
+func TestRunHubSyncTwoWayNeitherHasATunnel(t *testing.T) {
+	c, done := twoWay(t, nil, &fakeSyncHub{})
+	defer done()
+	err := runHubSync(c, c.Hubs[0], true)
+	if err == nil || !strings.Contains(err.Error(), "add a foreign server") {
+		t.Fatalf("error: %v", err)
+	}
+}
+
+// One way (the old behavior) keeps the plain answer when the other hub is empty.
+func TestRunHubSyncOneWayEmptyPeer(t *testing.T) {
+	c, done := twoWay(t, []syncTunnel{{Name: "de", Remote: "198.51.100.1", Engine: "frp", Ports: []int{443}}}, &fakeSyncHub{})
+	defer done()
+	err := runHubSync(c, c.Hubs[0], false)
+	if err == nil || !strings.Contains(err.Error(), "has no tunnel to copy") {
+		t.Fatalf("error: %v", err)
+	}
+}
+
+// An older panel on the other hub has no /pull: say what to do.
+func TestRunHubSyncTwoWayOldPeer(t *testing.T) {
+	c, done := twoWay(t, []syncTunnel{{Name: "de", Remote: "198.51.100.1", Engine: "frp", Ports: []int{443}}}, &fakeSyncHub{})
+	defer done()
+	if err := runHubSync(c, c.Hubs[0], true); err != nil {
+		t.Fatal(err)
+	}
+	if e := syncSnapshot().OtherErr; !strings.Contains(e, "hashem update") {
+		t.Fatalf("other error %q", e)
+	}
+}
+
+// The other hub is busy with its own copy: it says so and nothing is hidden.
+func TestRunHubSyncTwoWayPeerBusy(t *testing.T) {
+	fake := &fakeSyncHub{pull: func() (int, syncPullAns) {
+		return 200, syncPullAns{Error: "a copy of tunnels is already running here: wait for it to end"}
+	}}
+	c, done := twoWay(t, []syncTunnel{{Name: "de", Remote: "198.51.100.1", Engine: "frp", Ports: []int{443}}}, fake)
+	defer done()
+	if err := runHubSync(c, c.Hubs[0], true); err != nil {
+		t.Fatal(err)
+	}
+	if e := syncSnapshot().OtherErr; !strings.Contains(e, "already running") {
+		t.Fatalf("other error %q", e)
+	}
+}
+
+// /_hc/pull starts a one-way copy from the asking hub, and /_hc/syncstate shows it.
+func TestMeshPullStartsAOneWayCopy(t *testing.T) {
+	newClusterFixture(t, true)
+	syncFresh(t)
+	syncHub(t, "203.0.113.9")
+	// the asking hub is unreachable: the job fails fast, but it did start
+	rec := httptest.NewRecorder()
+	syncMux().ServeHTTP(rec, syncSigned(t, "/pull", map[string]string{"id": "hub-a"}))
+	var ans syncPullAns
+	if err := json.Unmarshal(rec.Body.Bytes(), &ans); err != nil || !ans.OK || ans.Started == 0 {
+		t.Fatalf("pull answer %d %s", rec.Code, rec.Body.String())
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for syncSnapshot().Running && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	rec = httptest.NewRecorder()
+	syncMux().ServeHTTP(rec, syncSigned(t, "/syncstate", map[string]string{"id": "hub-a"}))
+	var st syncState
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil || st.Started != ans.Started || st.Both {
+		t.Fatalf("syncstate %d %s", rec.Code, rec.Body.String())
+	}
+	// a stranger gets nothing
+	rec = httptest.NewRecorder()
+	syncMux().ServeHTTP(rec, syncSigned(t, "/pull", map[string]string{"id": "hub-zzz"}))
+	if rec.Code != 404 {
+		t.Fatalf("an unknown hub got %d", rec.Code)
 	}
 }

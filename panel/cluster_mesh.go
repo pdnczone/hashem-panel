@@ -382,8 +382,10 @@ func meshRemoveHub(id string) bool {
 func mountMeshRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+meshRoutePrefix+"/hello", meshHandler(true))
 	mux.HandleFunc("POST "+meshRoutePrefix+"/beat", meshHandler(false))
-	mux.HandleFunc("POST "+meshRoutePrefix+"/tunnels", handleMeshTunnels) // cluster_sync.go
-	mux.HandleFunc("POST "+meshRoutePrefix+"/deliver", handleMeshDeliver) // cluster_sync.go
+	mux.HandleFunc("POST "+meshRoutePrefix+"/tunnels", handleMeshTunnels)     // cluster_sync.go
+	mux.HandleFunc("POST "+meshRoutePrefix+"/deliver", handleMeshDeliver)     // cluster_sync.go
+	mux.HandleFunc("POST "+meshRoutePrefix+"/pull", handleMeshPull)           // cluster_sync.go
+	mux.HandleFunc("POST "+meshRoutePrefix+"/syncstate", handleMeshSyncState) // cluster_sync.go
 }
 
 func meshHandler(hello bool) http.HandlerFunc {
@@ -611,7 +613,7 @@ func handleClusterHubAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]any{"status": "ok", "hub": h}
 	if req.SyncTunnels {
-		if serr := startHubSync(h.ID); serr != nil {
+		if serr := startHubSync(h.ID, true); serr != nil {
 			out["sync_error"] = serr.Error()
 		} else {
 			out["sync"] = "started"

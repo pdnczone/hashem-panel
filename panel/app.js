@@ -11051,33 +11051,45 @@ async function clSyncPoll() {
   if (s.ended) loadClusterStatus();
   if (_clSyncSawRunning) { // it ran while this page watched: say how it ended, whatever view is open
     _clSyncSawRunning = false;
-    const steps = s.steps || [], done = steps.filter(x => x.state === 'done').length, bad = steps.filter(x => x.state === 'failed').length;
-    if (s.error) toastErr(tr('', 'Could not copy the tunnels'), s.error);
-    else if (bad) toastWarn(tr('', 'Tunnels copied with errors'), done + ' ' + tr('', 'made') + ', ' + bad + ' ' + tr('', 'failed'));
-    else toastOk(tr('', 'Tunnels copied from') + ' ' + (s.hub_name || ''), done + ' ' + tr('', 'made'));
+    const all = (s.steps || []).concat(s.other || []);
+    const done = all.filter(x => x.state === 'done').length, bad = all.filter(x => x.state === 'failed').length;
+    if (s.error) toastErr(tr('', 'Could not sync the tunnels'), s.error);
+    else if (bad || s.other_error) toastWarn(tr('', 'Tunnels synced with errors'), done + ' ' + tr('', 'made') + ', ' + bad + ' ' + tr('', 'failed') + (s.other_error ? ' \u2014 ' + s.other_error : ''));
+    else if (!done) toastOk(tr('', 'Nothing to copy'), tr('', s.info || 'Both hubs already serve the same foreign servers.'));
+    else toastOk(tr('', 'Tunnels synced with') + ' ' + (s.hub_name || ''), done + ' ' + tr('', 'made'));
   }
+}
+function clSyncRows(steps) {
+  const mark = { done: '\u2713', skipped: '\u2013', failed: '\u2717' };
+  return (steps || []).map(x => `<div>${mark[x.state] || ''} <b>${esc(x.name)}</b> (${esc(x.remote)}): ${esc(x.detail || x.state)}</div>`).join('');
 }
 function clSyncRender(s) {
   const box = $('clSyncBox');
   if (!box) return;
   if (!s || (!s.running && !s.started)) { box.hidden = true; return; }
-  const steps = s.steps || [];
-  const mark = { done: '\u2713', skipped: '\u2013', failed: '\u2717' };
-  const rows = steps.map(x => `<div>${mark[x.state] || ''} <b>${esc(x.name)}</b> (${esc(x.remote)}): ${esc(x.detail || x.state)}</div>`).join('');
+  const hub = s.hub_name || '';
   let head;
-  if (s.running) head = tr('', 'Copying the tunnels of') + ' ' + (s.hub_name || '') + '\u2026';
-  else if (s.error) head = tr('', 'Could not copy the tunnels') + ': ' + s.error;
-  else head = tr('', 'Tunnels copied from') + ' ' + (s.hub_name || '') + ((s.pools && s.pools.length) ? ' (' + tr('', 'pools on ports') + ' ' + s.pools.join(', ') + ')' : '');
-  box.innerHTML = `<b>${esc(head)}</b>${rows}`;
+  if (s.running) head = tr('', 'Syncing the tunnels with') + ' ' + hub + '\u2026';
+  else if (s.error) head = tr('', 'Could not sync the tunnels') + ': ' + s.error;
+  else if (s.info) head = tr('', s.info);
+  else head = tr('', 'Tunnels synced with') + ' ' + hub + ((s.pools && s.pools.length) ? ' (' + tr('', 'pools on ports') + ' ' + s.pools.join(', ') + ')' : '');
+  let html = `<b>${esc(head)}</b>`;
+  const here = clSyncRows(s.steps), there = clSyncRows(s.other);
+  if (s.both) {
+    if (here) html += `<div class="u-mt-8"><b>${esc(tr('', 'Made on this hub'))}</b></div>${here}`;
+    if (there || s.other_error || s.running) html += `<div class="u-mt-8"><b>${esc(tr('', 'Made on') + ' ' + hub)}</b></div>${there}`;
+    if (s.other_error) html += `<div>\u2717 ${esc(s.other_error)}</div>`;
+  } else html += here;
+  box.innerHTML = html;
   box.hidden = false;
 }
 async function clHubSyncNow(id) {
   try {
     await api('/api/cluster/hubs/sync', { id });
     _clSyncSawRunning = true;
-    toastOk(tr('', 'Copying the tunnels'), tr('', 'Progress shows at the top of the Cluster tab.'));
+    toastOk(tr('', 'Syncing the tunnels'), tr('', 'Progress shows at the top of the Cluster tab.'));
     clSyncWatch();
-  } catch (e) { toastErr(tr('', 'Cannot copy the tunnels'), e.message || String(e)); }
+  } catch (e) { toastErr(tr('', 'Cannot sync the tunnels'), e.message || String(e)); }
 }
 
 async function clHubRemove(id, name) {
@@ -11751,9 +11763,9 @@ function clInsForm(key, d) {
     return clInsHead(h.name || h.id, tr('', 'Linked Iran hub')) + `
       <div class="cl-ins-sec">
         <div class="ent-help u-m-0">${esc(tr('', 'When every foreign server of a pool is down here, its port is forwarded to a hub where the same pool works.'))}</div>
-        <div class="ent-help u-m-0">${esc(tr('', 'Make this hub serve the same foreign servers as that one: tunnels are made here and the foreign servers join by themselves.'))}</div>
+        <div class="ent-help u-m-0">${esc(tr('', 'Make both hubs serve the same foreign servers: what one has and the other lacks is made on the other, and the foreign servers join by themselves. Press it on either hub.'))}</div>
         <div class="u-flex u-gap-8 u-wrap">
-          <button type="button" class="hashem-btn hashem-btn-secondary" onclick="clHubSyncNow(${jsArg(h.id)})">${esc(tr('', 'Copy Its Tunnels Here'))}</button>
+          <button type="button" class="hashem-btn hashem-btn-secondary" onclick="clHubSyncNow(${jsArg(h.id)})">${esc(tr('', 'Sync Tunnels With This Hub'))}</button>
           <button type="button" class="hashem-btn hashem-btn-ghost" onclick="clHubRemove(${jsArg(h.id)},${jsArg(h.name || h.id)}).then(clInsRefresh)">${esc(tr('', 'Unlink'))}</button>
         </div>
       </div>`;

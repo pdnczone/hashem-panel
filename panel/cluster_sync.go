@@ -5,7 +5,11 @@ package main
 // Two Iran hubs that serve the same foreign servers used to need three manual
 // steps for every foreign server: add it on the second hub (Setup), copy the
 // bundle, and paste it into "Join Another Iran Hub" on the foreign server.
-// Now, when hub B is linked to hub A (or presses Sync tunnels), B does it:
+// Now, when hub B is linked to hub A (or presses Sync Tunnels With This Hub),
+// B does it, and the same button on either hub makes both hubs serve the same
+// foreign servers: whatever the other hub has that this one lacks is copied
+// here, and whatever this one has that the other lacks is copied there (this
+// hub asks it to, POST /_hc/pull, and follows its progress). B does it:
 //
 //  1. B asks A, over the signed hub channel, which tunnels it has and which
 //     pools (POST /_hc/tunnels). No token travels: only addresses, ports and
@@ -356,7 +360,7 @@ func handleMeshDeliver(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.Unmarshal(data, &res)
 	ans.OK, ans.Status = true, res.Status
-	clusterEventf("info", "Iran hub %s asked %s to serve it too.", from.Name, req.Remote)
+	clusterEventf("info", "Iran hub %s asked %s to serve it too.", hubLabel(from), req.Remote)
 	meshAnswer(w, c.Secret, ans)
 }
 
@@ -431,14 +435,18 @@ type syncStep struct {
 }
 
 type syncState struct {
-	Running bool       `json:"running"`
-	Hub     string     `json:"hub,omitempty"`
-	HubName string     `json:"hub_name,omitempty"`
-	Started int64      `json:"started,omitempty"`
-	Ended   int64      `json:"ended,omitempty"`
-	Error   string     `json:"error,omitempty"`
-	Steps   []syncStep `json:"steps"`
-	Pools   []int      `json:"pools,omitempty"` // pools made
+	Running  bool       `json:"running"`
+	Both     bool       `json:"both,omitempty"` // this hub also asks the other one to copy from it
+	Hub      string     `json:"hub,omitempty"`
+	HubName  string     `json:"hub_name,omitempty"`
+	Started  int64      `json:"started,omitempty"`
+	Ended    int64      `json:"ended,omitempty"`
+	Error    string     `json:"error,omitempty"`
+	Info     string     `json:"info,omitempty"`
+	Steps    []syncStep `json:"steps"`           // tunnels made on this hub
+	Other    []syncStep `json:"other,omitempty"` // tunnels the other hub made from this one
+	OtherErr string     `json:"other_error,omitempty"`
+	Pools    []int      `json:"pools,omitempty"` // pools made here
 }
 
 var syncJob struct {
@@ -451,6 +459,7 @@ func syncSnapshot() syncState {
 	defer syncJob.Unlock()
 	s := syncJob.s
 	s.Steps = append([]syncStep{}, s.Steps...)
+	s.Other = append([]syncStep(nil), s.Other...)
 	return s
 }
 
@@ -460,9 +469,24 @@ func syncUpdate(fn func(s *syncState)) {
 	fn(&syncJob.s)
 }
 
-// startHubSync starts copying hub id's tunnels, in the background. It
-// refuses while a copy is running.
-func startHubSync(id string) error {
+// hubLabel names a hub for a person: two hubs can have the same host name.
+func hubLabel(h HubPeer) string {
+	n := strings.TrimSpace(h.Name)
+	switch {
+	case n == "" && h.PublicIP == "":
+		return h.ID
+	case h.PublicIP == "" || strings.Contains(n, h.PublicIP):
+		return n
+	case n == "":
+		return h.PublicIP
+	}
+	return n + " (" + h.PublicIP + ")"
+}
+
+// startHubSync starts the copy with hub id, in the background. With both it
+// also asks that hub to copy what this one has and it lacks. It refuses while
+// a copy is running.
+func startHubSync(id string, both bool) error {
 	c := loadClusterConfig()
 	var hub HubPeer
 	for _, h := range c.Hubs {
@@ -476,12 +500,12 @@ func startHubSync(id string) error {
 	syncJob.Lock()
 	if syncJob.s.Running {
 		syncJob.Unlock()
-		return errors.New("a copy of tunnels is already running")
+		return errors.New("a copy of tunnels is already running here: wait for it to end")
 	}
-	syncJob.s = syncState{Running: true, Hub: hub.ID, HubName: hub.Name, Started: time.Now().Unix(), Steps: []syncStep{}}
+	syncJob.s = syncState{Running: true, Both: both, Hub: hub.ID, HubName: hubLabel(hub), Started: time.Now().Unix(), Steps: []syncStep{}}
 	syncJob.Unlock()
 	go func() {
-		err := runHubSync(c, hub)
+		err := runHubSync(c, hub, both)
 		syncUpdate(func(s *syncState) {
 			s.Running = false
 			s.Ended = time.Now().Unix()
@@ -588,13 +612,17 @@ func syncKnownRemotes() map[string]bool {
 	return known
 }
 
-func runHubSync(c ClusterConfig, hub HubPeer) error {
+func runHubSync(c ClusterConfig, hub HubPeer, both bool) error {
 	var list syncList
 	if err := meshCall(hub, c.Secret, "/tunnels", map[string]string{"id": c.NodeID}, &list, syncListTO); err != nil {
-		return fmt.Errorf("cannot read the tunnels of %s: %v", hub.Name, err)
+		return fmt.Errorf("cannot read the tunnels of %s: %v", hubLabel(hub), err)
 	}
-	if len(list.Tunnels) == 0 {
-		return fmt.Errorf("%s has no tunnel to copy", hub.Name)
+	mine := syncLocalTunnels()
+	if len(list.Tunnels) == 0 && (!both || len(mine) == 0) {
+		if both {
+			return errors.New("neither hub has a tunnel yet: add a foreign server in Setup on one of them first")
+		}
+		return fmt.Errorf("%s has no tunnel to copy", hubLabel(hub))
 	}
 	known := syncKnownRemotes()
 	step := func(t syncTunnel, state, detail string) {
@@ -616,14 +644,123 @@ func runHubSync(c ClusterConfig, hub HubPeer) error {
 	}
 	made := syncMirrorPools(list.Pools)
 	syncUpdate(func(s *syncState) { s.Pools = made })
-	n := 0
-	for _, s := range syncSnapshot().Steps {
-		if s.State == "done" {
-			n++
+
+	// the other way: what this hub has and the other lacks is copied there
+	theirs := map[string]bool{}
+	for _, t := range list.Tunnels {
+		theirs[t.Remote] = true
+	}
+	lacking := 0
+	for _, t := range mine {
+		if !theirs[t.Remote] {
+			lacking++
 		}
 	}
-	clusterEventf("info", "Copied %d tunnel(s) and %d pool(s) from Iran hub %s.", n, len(made), hub.Name)
+	if both && lacking > 0 {
+		syncAskPull(c, hub)
+	}
+
+	snap := syncSnapshot()
+	nHere, nThere := 0, 0
+	for _, x := range snap.Steps {
+		if x.State == "done" {
+			nHere++
+		}
+	}
+	for _, x := range snap.Other {
+		if x.State == "done" {
+			nThere++
+		}
+	}
+	if nHere == 0 && nThere == 0 && snap.OtherErr == "" && len(made) == 0 {
+		failed := false
+		for _, x := range append(snap.Steps, snap.Other...) {
+			failed = failed || x.State == "failed"
+		}
+		if !failed {
+			syncUpdate(func(s *syncState) { s.Info = "Both hubs already serve the same foreign servers: nothing to copy." })
+		}
+	}
+	clusterEventf("info", "Synced tunnels with Iran hub %s: %d made here, %d made there, %d pool(s).", hubLabel(hub), nHere, nThere, len(made))
 	return nil
+}
+
+type syncPullAns struct {
+	OK      bool   `json:"ok"`
+	Error   string `json:"error,omitempty"`
+	Started int64  `json:"started,omitempty"`
+}
+
+// syncPullWait is how long this hub follows the other hub's copy.
+var syncPullWait = 30 * time.Minute
+
+// syncAskPull asks the other hub to copy this hub's tunnels, and follows its
+// progress into this job's "other" list.
+func syncAskPull(c ClusterConfig, hub HubPeer) {
+	fail := func(msg string) { syncUpdate(func(s *syncState) { s.OtherErr = msg }) }
+	var ans syncPullAns
+	if err := meshCall(hub, c.Secret, "/pull", map[string]string{"id": c.NodeID}, &ans, syncListTO); err != nil {
+		fail("could not ask " + hubLabel(hub) + " to copy the tunnels of this hub: " + err.Error() + ". Update its panel (hashem update) and press the button again.")
+		return
+	}
+	if !ans.OK {
+		fail(hubLabel(hub) + " did not start: " + ans.Error)
+		return
+	}
+	deadline := time.Now().Add(syncPullWait)
+	misses := 0
+	for time.Now().Before(deadline) {
+		time.Sleep(syncPollEvery)
+		var st syncState
+		if err := meshCall(hub, c.Secret, "/syncstate", map[string]string{"id": c.NodeID}, &st, syncListTO); err != nil {
+			if misses++; misses > 5 {
+				fail("lost contact with " + hubLabel(hub) + " while it copied: " + err.Error())
+				return
+			}
+			continue
+		}
+		misses = 0
+		if st.Started != ans.Started || st.Hub != c.NodeID {
+			continue // not the copy this hub asked for (yet)
+		}
+		syncUpdate(func(s *syncState) { s.Other = st.Steps })
+		if !st.Running {
+			if st.Error != "" {
+				fail(hubLabel(hub) + ": " + st.Error)
+			}
+			return
+		}
+	}
+	fail(hubLabel(hub) + " is still copying: look at its Cluster tab")
+}
+
+// syncPollEvery is how often a hub looks at the other hub's copy (a var for tests).
+var syncPollEvery = 3 * time.Second
+
+// POST /_hc/pull: the asking hub wants this hub to copy the asking hub's
+// tunnels (the same as pressing the button here, one way).
+func handleMeshPull(w http.ResponseWriter, r *http.Request) {
+	c, from, _, ok := meshAuthed(w, r, 1<<12)
+	if !ok {
+		return
+	}
+	ans := syncPullAns{}
+	if err := startHubSync(from.ID, false); err != nil {
+		ans.Error = err.Error()
+	} else {
+		ans.OK, ans.Started = true, syncSnapshot().Started
+		clusterEventf("info", "Iran hub %s asked this hub to copy its tunnels.", hubLabel(from))
+	}
+	meshAnswer(w, c.Secret, ans)
+}
+
+// POST /_hc/syncstate: how this hub's copy is going.
+func handleMeshSyncState(w http.ResponseWriter, r *http.Request) {
+	c, _, _, ok := meshAuthed(w, r, 1<<12)
+	if !ok {
+		return
+	}
+	meshAnswer(w, c.Secret, syncSnapshot())
 }
 
 // syncOne makes this hub's tunnel to one foreign server and has the foreign
@@ -745,19 +882,21 @@ func syncMirrorPools(want []syncPool) []int {
 
 // ---- the panel's API ----
 
-// POST /api/cluster/hubs/sync {id}: copy the tunnels of a linked hub.
+// POST /api/cluster/hubs/sync {id}: make this hub and a linked hub serve the
+// same foreign servers.
 func handleClusterHubSync(w http.ResponseWriter, r *http.Request) {
 	if proRequired(w, r, "cluster", "Cluster") {
 		return
 	}
 	var req struct {
-		ID string `json:"id"`
+		ID     string `json:"id"`
+		OneWay bool   `json:"one_way"` // only copy here: do not ask the other hub to copy from this one
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req) != nil || req.ID == "" {
 		writeAPIError(w, r, "E-CLUSTER-01", "id of a linked hub")
 		return
 	}
-	if err := startHubSync(req.ID); err != nil {
+	if err := startHubSync(req.ID, !req.OneWay); err != nil {
 		writeAPIError(w, r, "E-CLUSTER-05", err.Error())
 		return
 	}

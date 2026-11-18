@@ -4710,8 +4710,8 @@
     <div class="ent-modal-b">
       <div class="ent-help">On the other Iran server open Cluster, Show Join Code, and paste it here. Both panels need the same version, the panel port open between them, and correct clocks.</div>
       <div class="fg"><label for="clHubCode">Join code</label><textarea class="hashem-input u-mono u-resize-none" id="clHubCode" rows="3" placeholder="hc1_…"></textarea></div>
-      <label class="u-check-row"><input type="checkbox" id="clHubSync" checked> Also copy this hub's tunnels here</label>
-      <div class="ent-help u-m-0">For every foreign server of the other hub, this server makes its own tunnel with the same ports, and the foreign server joins it by itself. Nothing to paste on the foreign servers. Their panels must run this version. Tunnels you already have are left as they are.</div>
+      <label class="u-check-row"><input type="checkbox" id="clHubSync" checked> Make both hubs serve the same foreign servers</label>
+      <div class="ent-help u-m-0">Each hub gets its own tunnel to every foreign server the other one has, with the same ports, and the foreign server joins it by itself. Nothing to paste on the foreign servers. Both hubs and the foreign servers must run this version. Tunnels you already have are left as they are.</div>
     </div>
     <div class="ent-modal-f">
       <button type="button" class="hashem-btn hashem-btn-ghost" onclick="clHubAddClose()">Cancel</button>
