@@ -6,6 +6,7 @@ Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 ## Unreleased
 
 - **FRP: a port range forwards every port in it.** `1051-1060` now forwards all ten ports everywhere a port list is typed: Setup (Iran and foreign), Add Another Server, Edit Tunnel, a Nodes tunnel, Swap carrier from Backhaul to FRP, and the `hashem` menus and CLI (`setup-iran`, `setup-foreign`, `add-peer`, Bagher). Before, Edit Tunnel and Swap carrier kept only `1051`, Setup and the CLI dropped the range without a word, and an Iran-side bundle carried it as `1051` and `1060`. One list forwards at most 1000 ports, and a setup bundle may now be up to 8192 characters so it can carry them.
+- **Edit Tunnel: the port field follows the tunnel's engine.** On Backhaul it accepts what Backhaul does, including an `IP:` on either side (`127.0.0.1:55973=55973`), which the form used to refuse. On FRP it says that a mapping or an `IP:` needs Backhaul instead of saving a port that would be forwarded to the wrong place. Several entries can be added at once (`443, 1051-1060`).
 
 ## v3.1.4 — 2026-11-16
 
