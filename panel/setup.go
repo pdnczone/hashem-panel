@@ -619,7 +619,17 @@ func handleSetupPost(w http.ResponseWriter, r *http.Request) {
 			rawPorts = parseRawPorts(body.Ports)
 			ports = extractNumericPorts(rawPorts)
 		} else {
-			ports = parsePorts(body.Ports)
+			// FRP: single ports and ranges, every port of a range forwarded
+			var bad []string
+			var err error
+			ports, bad, err = expandPortList(body.Ports)
+			if err == nil && len(bad) > 0 {
+				err = frpPortEntryErr(bad[0])
+			}
+			if err != nil {
+				writeAPIError(w, r, "E-SETUP-10", err.Error())
+				return
+			}
 			for _, p := range ports {
 				rawPorts = append(rawPorts, strconv.Itoa(p))
 			}
@@ -634,7 +644,8 @@ func handleSetupPost(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, r, "E-SETUP-09", "")
 			return
 		}
-		if isBundle(body.Token) && len(body.Token) > 256 {
+		// an FRP bundle lists every forwarded port: up to maxForwardPorts
+		if isBundle(body.Token) && len(body.Token) > maxBundleLen {
 			writeAPIError(w, r, "E-SETUP-09", "")
 			return
 		}

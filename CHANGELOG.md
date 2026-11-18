@@ -3,6 +3,10 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## Unreleased
+
+- **FRP: a port range forwards every port in it.** `1051-1060` now forwards all ten ports everywhere a port list is typed: Setup (Iran and foreign), Add Another Server, Edit Tunnel, a Nodes tunnel, Swap carrier from Backhaul to FRP, and the `hashem` menus and CLI (`setup-iran`, `setup-foreign`, `add-peer`, Bagher). Before, Edit Tunnel and Swap carrier kept only `1051`, Setup and the CLI dropped the range without a word, and an Iran-side bundle carried it as `1051` and `1060`. One list forwards at most 1000 ports, and a setup bundle may now be up to 8192 characters so it can carry them.
+
 ## v3.1.4 — 2026-11-16
 
 **The Telegram bot says why it was refused.** Run `hashem update` on every server, the central first.

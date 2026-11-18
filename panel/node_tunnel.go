@@ -361,14 +361,14 @@ func (q *nodeTunReq) check() error {
 	}
 	if q.Engine == "frp" {
 		q.AcceptUDP = false
-		// FRP takes single ports only (ranges and 8080=80 are Backhaul's);
-		// split as parsePorts does, so "443 2083" and a repeat are fine
-		seen := map[string]bool{}
-		for _, f := range strings.FieldsFunc(q.Ports, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
-			seen[strings.TrimLeft(f, "0")] = true
+		// FRP takes single ports and ranges (each port of a range forwarded
+		// on its own); 8080=80 and IP: are Backhaul's
+		_, bad, err := expandPortList(q.Ports)
+		if err == nil && len(bad) > 0 {
+			err = frpPortEntryErr(bad[0])
 		}
-		if len(parsePorts(q.Ports)) != len(seen) {
-			return nodeErr{"E-NODE-01", "ports: FRP takes single port numbers (ranges and mappings are for Backhaul)"}
+		if err != nil {
+			return nodeErr{"E-NODE-01", "ports: " + err.Error()}
 		}
 	}
 	for _, id := range []int{q.Server, q.Client} {
@@ -513,7 +513,7 @@ func nodeTunBundleCheck(bundle string, q nodeTunReq, d nodeTunDraft) error {
 	if engine == "" {
 		engine = "frp"
 	}
-	want := extractNumericPorts(parseRawPorts(q.Ports))
+	want := numericPortsFor(q.Engine, parseRawPorts(q.Ports))
 	got := append([]int{}, b.Ports...)
 	slices.Sort(want)
 	slices.Sort(got)
