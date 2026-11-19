@@ -5,7 +5,7 @@ Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
 ## Unreleased
 
-- **A server with several addresses shows which one each tunnel uses.** On the Dashboard the Iran server lists every address its tunnels leave from, and a tunnel set to another one shows it under its name ("via 88.218.18.121"). On the Nodes map the server's card lists them too, and that tunnel's line is labelled with it ("frp:tcp · 88.218.18.121").
+- **A server with several addresses shows which one each tunnel uses.** On the Dashboard the Iran server lists every address its tunnels leave from, and a tunnel set to another one shows it under its name ("via 198.51.100.20"). On the Nodes map the server's card lists them too, and that tunnel's line is labelled with it ("frp:tcp · 198.51.100.20").
 - **Top bar with several foreign servers: no more first-tunnel engine and latency.** It showed "GRE + FRP" and one ping next to "3 servers", both from the first tunnel only; the Dashboard already shows each server's. With one foreign server they stay.
 - **Tunnel tab: the first tunnel's chip reads like the others.** It was called "Tunnel" and showed "frps :7001"; it now has its name and its traffic, as the other tunnels' chips do.
 
