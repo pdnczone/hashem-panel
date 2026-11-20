@@ -164,6 +164,8 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"role":            nilIfEmpty(st.Role),
 		"local_pub":       nilIfEmpty(snap.PublicIP),
 		"display_tz":      displayTZ,
+		"public_ips":      snap.PublicIPs,
+		"public_ipv6":     snap.PublicIPv6,
 		"remote_pub":      nilIfEmpty(st.RemotePub),
 		"active_engine":   engine,
 		"active_carrier":  carrierCfg.ActiveCarrier,
