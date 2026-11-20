@@ -3421,6 +3421,8 @@ window.FA_TEXT = {
 "Pause between two runs for one tunnel": "فاصله‌ی دو اجرا برای یک تونل",
 "Runs for one tunnel in 24 hours": "تعداد اجرا برای یک تونل در ۲۴ ساعت",
 "Quiet hours (server time): no switching": "ساعت‌های سکوت (به وقت سرور): بدون جابه‌جایی",
+"Quiet hours (Tehran time): no switching": "ساعت‌های سکوت (به وقت تهران): بدون جابه‌جایی",
+"Quiet hours ({0}): no switching": "ساعت‌های سکوت ({0}): بدون جابه‌جایی",
 "Click the first hour, then the last one. Click": "اول ساعت شروع و بعد ساعت پایان را بزنید. برای حذف،",
 "for none.": "را بزنید.",
 "Test the path first": "اول تست مسیر",

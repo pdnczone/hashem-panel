@@ -2297,10 +2297,10 @@ function drawChart(hist, isDown) {
   // Pre-compute x tick labels
   const fmtTick = t => {
     const d = new Date(t * 1000);
-    const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+    const z = tzParts(d);
     return (dashRange === '1h' || dashRange === '24h')
-      ? String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0')
-      : M + ' ' + d.getDate();
+      ? z.hh + ':' + z.mm
+      : z.M + ' ' + z.D;
   };
   const approxLabel = 64, nTicks = Math.max(2, Math.min(6, Math.floor(iw / approxLabel)));
 
@@ -2536,12 +2536,37 @@ function drawChart(hist, isDown) {
     startLoop();
   }
 }
+// Times show in the panel's zone (Tehran unless HASHEM_DISPLAY_TZ says
+// otherwise), not the browser's, so they match the Logs page. The server's
+// own zone is never changed (panel/display_tz.go). The dashboard reports the
+// zone in display_tz; "" (HASHEM_DISPLAY_TZ=server) uses the browser's.
+let DISPLAY_TZ = 'Asia/Tehran';
+const _tzFmt = {};
+function tzOpt(o) {
+  if (!DISPLAY_TZ) return o;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: DISPLAY_TZ }); } catch (e) { return o; }
+  return Object.assign({ timeZone: DISPLAY_TZ }, o);
+}
+// tzParts: month name, day and zero-padded clock of d in that zone.
+function tzParts(d) {
+  const key = DISPLAY_TZ || '-';
+  try {
+    const f = _tzFmt[key] || (_tzFmt[key] = new Intl.DateTimeFormat('en-US', tzOpt({ month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })));
+    const o = {};
+    f.formatToParts(d).forEach(x => { o[x.type] = x.value; });
+    return { M: o.month, D: Number(o.day), hh: o.hour, mm: o.minute, ss: o.second };
+  } catch (e) {
+    const p = n => String(n).padStart(2, '0');
+    return { M: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()], D: d.getDate(), hh: p(d.getHours()), mm: p(d.getMinutes()), ss: p(d.getSeconds()) };
+  }
+}
 async function refreshDash() {
   const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
   const setHTML = (id, v) => { const el = $(id); if (el) el.innerHTML = v; };
   const chip = (txt, cls) => '<span class="badge ' + (cls || '') + '"><span class="dot"></span>' + esc(txt) + '</span>';
   try {
     const d = await api('/api/dashboard?range=' + dashRange);
+    if (d && 'display_tz' in d && (d.display_tz || '') !== DISPLAY_TZ) { DISPLAY_TZ = d.display_tz || ''; }
     if (!d || typeof d !== 'object') return;
     window._lastDash = d;
     const on = !!d.online;
@@ -2766,9 +2791,9 @@ async function refreshDash() {
           if (!cv._animId && cv._redraw) cv._redraw();
         }
         const d = new Date(p.t * 1000);
-        const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
-        const hhmm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-        const when = (dashRange === '1h' || dashRange === '24h') ? hhmm : M + ' ' + d.getDate() + ' ' + hhmm;
+        const z = tzParts(d);
+        const hhmm = z.hh + ':' + z.mm;
+        const when = (dashRange === '1h' || dashRange === '24h') ? hhmm : z.M + ' ' + z.D + ' ' + hhmm;
         tip.innerHTML = '<span class="tip-time">' + esc(when) + '</span><span class="tip-sep">·</span>' +
           '<span class="tip-down"><i class="sw-dl"></i>↓ ' + esc(fmtRate(p.down)) + '</span><span class="tip-sep">·</span>' +
           '<span class="tip-up"><i class="sw-ul"></i>↑ ' + esc(fmtRate(p.up)) + '</span>';
@@ -2824,9 +2849,9 @@ async function refreshDash() {
         }
         if (!p || p.t == null) { tip.style.display = 'none'; return; }
         const d = new Date(p.t * 1000);
-        const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
-        const hhmm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-        const when = (dashRange === '1h' || dashRange === '24h') ? hhmm : M + ' ' + d.getDate() + ' ' + hhmm;
+        const z = tzParts(d);
+        const hhmm = z.hh + ':' + z.mm;
+        const when = (dashRange === '1h' || dashRange === '24h') ? hhmm : z.M + ' ' + z.D + ' ' + hhmm;
         tip.innerHTML = '<span class="tip-time">' + esc(when) + '</span><span class="tip-sep">·</span>' +
           '<span class="u-c-ok u-fw-600">● ' + esc(String(p.conns ?? 0)) + ' active connections</span>';
         tip.style.display = 'inline-flex';
@@ -2957,7 +2982,7 @@ async function refreshDash() {
         .catch(() => toastWarn('copy failed', v)); }; } });
     { const dp = $('detPulse'); if (dp) dp.classList.toggle('off', !on); }
     const ck = d.checked ? new Date(d.checked) : null;
-    set('dashChecked', ck && !isNaN(ck) ? tr('', 'Checked') + ' ' + ck.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—');
+    set('dashChecked', ck && !isNaN(ck) ? tr('', 'Checked') + ' ' + ck.toLocaleTimeString([], tzOpt({ hour: '2-digit', minute: '2-digit', second: '2-digit' })) : '—');
   } catch(e) { reportErr('dashboard', e); /* keep old values; N/A already default */ return false; }
   return true;
 }
@@ -3014,10 +3039,10 @@ function drawActivityChart(hist, isDown) {
   // Time ticks on bottom
   const fmtTick = t => {
     const d = new Date(t * 1000);
-    const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+    const z = tzParts(d);
     return (dashRange === '1h' || dashRange === '24h')
-      ? String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0')
-      : M + ' ' + d.getDate();
+      ? z.hh + ':' + z.mm
+      : z.M + ' ' + z.D;
   };
   const nTicks = Math.max(2, Math.min(5, Math.floor(iw / 80)));
   ctx.fillStyle = C_AXIS; ctx.font = '12px -apple-system, system-ui, sans-serif'; ctx.textAlign = 'center';
@@ -4312,7 +4337,7 @@ async function loadVersion(force) {
     const changes = v.changes || [];
     $('updNotesCard').hidden = !changes.length;
     $('updNotes').innerHTML = changes.map(c =>
-      `<section class="upd-rel"><div class="upd-rel-head"><b data-no-i18n>${esc(c.tag)}</b><span class="qs-hint">${esc(c.date ? new Date(c.date).toLocaleDateString() : '')}</span></div><div class="upd-md" data-no-i18n>${mdLite(String(c.notes || '').replace(/^\s*#{1,6}[^\n]*\n?/, m => m.includes(c.tag) ? '' : m)) || '<p>' + esc(tr('', 'No notes for this release.')) + '</p>'}</div></section>`).join('');
+      `<section class="upd-rel"><div class="upd-rel-head"><b data-no-i18n>${esc(c.tag)}</b><span class="qs-hint">${esc(c.date ? new Date(c.date).toLocaleDateString(undefined, tzOpt({})) : '')}</span></div><div class="upd-md" data-no-i18n>${mdLite(String(c.notes || '').replace(/^\s*#{1,6}[^\n]*\n?/, m => m.includes(c.tag) ? '' : m)) || '<p>' + esc(tr('', 'No notes for this release.')) + '</p>'}</div></section>`).join('');
   } catch (e) {
     updDot('warn', tr('', 'Check failed'));
     if (!updState.busy) $('updateMsg').textContent = e.message;
@@ -4346,7 +4371,7 @@ async function loadRollback() {
     const cur = updState.current;
     const rels = r.releases || [];
     sel.innerHTML = rels.map(x => '<option value="' + esc(x.tag) + '">' + esc(x.tag) +
-      (x.date ? ' · ' + esc(new Date(x.date).toLocaleDateString()) : '') +
+      (x.date ? ' · ' + esc(new Date(x.date).toLocaleDateString(undefined, tzOpt({}))) : '') +
       (x.tag === cur ? ' · ' + esc(tr('', 'installed')) : '') + '</option>').join('') ||
       '<option value="">' + esc(tr('', 'No releases')) + '</option>';
     const syncBtn = () => { b.disabled = !sel.value || sel.value === updState.current || updState.busy; };
@@ -4531,7 +4556,15 @@ function apQuietHas(h) {
   return q.from < q.to ? (h >= q.from && h < q.to) : (h >= q.from || h < q.to);
 }
 function apPad(h) { return String(h).padStart(2, '0') + ':00'; }
+// The hours are read in the panel's zone (display_tz.go), Tehran unless
+// HASHEM_DISPLAY_TZ says otherwise; the label says which.
+function apQuietLabel() {
+  if (!DISPLAY_TZ) return tr('', 'Quiet hours (server time): no switching');
+  if (DISPLAY_TZ === 'Asia/Tehran') return tr('', 'Quiet hours (Tehran time): no switching');
+  return docTpl('Quiet hours ({0}): no switching', [DISPLAY_TZ]);
+}
 function apRenderHours() {
+  { const l = $('apQuietLbl'); if (l) l.textContent = apQuietLabel(); }
   $('apHours').innerHTML = Array.from({length: 24}, (_, h) =>
     `<button type="button" class="ap-hr${apQuietHas(h) ? ' h-q' : ''}${_apPick === h ? ' h-pick' : ''}" data-h="${h}" aria-pressed="${apQuietHas(h)}" title="${apPad(h)}">${h}</button>`).join('');
   $('apQuietOut').textContent = _apPick >= 0 ? apPad(_apPick) + ' → …'
@@ -5055,7 +5088,7 @@ function perfAgo(ts) {
   if (d < 90) return docTpl('{0} s ago', [d]);
   if (d < 5400) return docTpl('{0} min ago', [Math.round(d / 60)]);
   if (d < 172800) return docTpl('{0} h ago', [Math.round(d / 3600)]);
-  return new Date(ts * 1000).toLocaleDateString();
+  return new Date(ts * 1000).toLocaleDateString(undefined, tzOpt({}));
 }
 function onOff(v) { return tr('', v ? 'On' : 'Off'); }
 function perfSetText(id, v) { const el = $(id); if (el) el.textContent = v; }
@@ -7166,7 +7199,7 @@ async function wdSaveTelegram() {
 $('wdSaveTgBtn').onclick = async () => {
   if (!await wdSaveTelegram()) return;
   toastOk('Telegram settings saved');
-  $('wdTgMsg').textContent = 'Saved at ' + new Date().toLocaleTimeString();
+  $('wdTgMsg').textContent = 'Saved at ' + new Date().toLocaleTimeString([], tzOpt({}));
   loadWatchdog();
 };
 
@@ -7293,7 +7326,7 @@ $('wdBackupNowBtn').onclick = async () => {
   try {
     const res = await api('/api/watchdog', { action: 'backup-now' });
     toastOk('Backup created');
-    $('wdBackupNowMsg').textContent = 'Done at ' + new Date().toLocaleTimeString();
+    $('wdBackupNowMsg').textContent = 'Done at ' + new Date().toLocaleTimeString([], tzOpt({}));
     loadWatchdog();
   } catch(e) {
     toastErr('backup failed', e.message);
@@ -7860,7 +7893,7 @@ function usageCols(d, tot) {
   for (let i = 0; i < pts.length; i += per) {
     const g = pts.slice(i, i + per);
     const t = new Date(g[0].t * 1000);
-    const hm = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+    const z = tzParts(t), hm = z.hh + ':' + z.mm;
     out.push({ rx: g.reduce((a, p) => a + p.rx, 0), tx: g.reduce((a, p) => a + p.tx, 0), label: hm, title: hm });
   }
   return out;
@@ -7948,7 +7981,7 @@ function limLinkName(k) {
   if (!m) return k;
   return { peer: tr('', 'Peer'), bagher: 'Bagher', xray: 'Xray' }[m[1]] + ' ' + m[2];
 }
-const limDate = sec => new Date(sec * 1000).toLocaleDateString(currentLang === 'fa' ? 'fa-IR' : undefined, { month: 'short', day: 'numeric' });
+const limDate = sec => new Date(sec * 1000).toLocaleDateString(currentLang === 'fa' ? 'fa-IR' : undefined, tzOpt({ month: 'short', day: 'numeric' }));
 function limRow(s) {
   const r = s.rule, ip = s.ip;
   const used = r ? r.used_rx + r.used_tx : 0;
@@ -8395,7 +8428,7 @@ function renderDocHist(h) {
     return;
   }
   const n = es.length, W = Math.max(n, 24) * 6;
-  const dt = t => new Date(t * 1000).toLocaleString(currentLang === 'fa' ? 'fa-IR' : undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const dt = t => new Date(t * 1000).toLocaleString(currentLang === 'fa' ? 'fa-IR' : undefined, tzOpt({ month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
   const bars = es.map((e, i) => {
     const hgt = Math.max(3, e.score), x = W - (n - i) * 6;
     return '<rect class="r-' + esc(e.rating) + '" x="' + (x + 1) + '" y="' + (100 - hgt) + '" width="4" height="' + hgt + '" rx="1"><title>' +
@@ -8646,7 +8679,7 @@ async function refreshRightSidebarLogs() {
     if (!rs) return true;
     const lines = (s.lines || (s.logs ? s.logs.trim().split('\n') : [])).filter(l => l && !/^-- /.test(l));
     const up = $('rsUpdated');
-    if (up) { const d = new Date(); up.textContent = tr('rs_updated', 'Updated') + ' ' + [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':'); }
+    if (up) { const z = tzParts(new Date()); up.textContent = tr('rs_updated', 'Updated') + ' ' + z.hh + ':' + z.mm + ':' + z.ss; }
     const sig = lines.join('\n');
     if (sig === rsState.sig && rs.querySelector('.rs-ev, .ent-empty')) return true;
     rsState.sig = sig;
@@ -12641,7 +12674,7 @@ const custState = c => !c.cut ? ['ok', tr('', 'Active')]
   : c.cut === 'quota' ? ['err', tr('', 'Volume used up')]
   : ['warn', tr('', 'Paused')];
 const custStatusURL = c => location.origin + '/_hs/' + c.token;
-const custDate = sec => new Date(sec * 1000).toLocaleDateString(currentLang === 'fa' ? 'fa-IR' : undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+const custDate = sec => new Date(sec * 1000).toLocaleDateString(currentLang === 'fa' ? 'fa-IR' : undefined, tzOpt({ year: 'numeric', month: 'short', day: 'numeric' }));
 // the engines a sold link can run and their transports (as customers.go)
 const CUST_ENGINES = {
   frp: { label: 'FRP', tr: ['tcp', 'websocket', 'kcp', 'quic'] },

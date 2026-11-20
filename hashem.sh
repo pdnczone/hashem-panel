@@ -12,6 +12,21 @@ HASHEM_BIN="/usr/local/bin/hashem"       # this script, after install
 HASHEM_SCRIPT="/usr/local/bin/hashem.sh" # versioned copy (gre.sh = legacy alias)
 HASHEM_URL_BASE="https://raw.githubusercontent.com/pdnczone/hashem-panel/main"
 
+# Times show in Tehran's zone; the server's own zone is left as it is (a
+# server set to Asia/Tehran is easier to tell apart). Only this script reads it:
+# journalctl lines, dates in its messages. The panel sets it the same way for
+# what it runs (panel/display_tz.go). HASHEM_DISPLAY_TZ=<zone> picks another
+# zone, HASHEM_DISPLAY_TZ=server keeps the server's.
+display_tz_env() {
+    local want="${HASHEM_DISPLAY_TZ:-Asia/Tehran}" zi="${HASHEM_ZONEINFO:-/usr/share/zoneinfo}"
+    [[ -n "${TZ:-}" || "$want" == server ]] && return 0
+    [[ "$want" =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$ ]] || return 0
+    if [[ -f "$zi/$want" ]]; then export TZ="$want"
+    elif [[ "$want" == Asia/Tehran ]]; then export TZ='<+0330>-03:30' # no tzdata: Tehran has no DST
+    fi
+}
+display_tz_env
+
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
