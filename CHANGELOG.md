@@ -3,9 +3,9 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
-## Unreleased
+## v3.2.3 — 2026-11-21
 
-**Sentinel 1.4.0: TUIC, Hysteria, AnyTLS, NaiveProxy, SSH and ShadowTLS links through sing-box, the likely cause of every outage, alerts through Bale or a webhook, a Slow state, a feed per customer, a weekly report, and the whole panel in the Telegram bot.** Run `hashem update`; an installed Sentinel upgrades itself about two minutes after the panel starts.
+**Sentinel 1.4.0 (TUIC, Hysteria, AnyTLS, NaiveProxy, SSH and ShadowTLS through sing-box, the likely cause of every outage, a dashboard that says what needs a look, alerts through Bale or a webhook, a Slow state, a feed per customer, a weekly report and the whole panel in the Telegram bot), times shown in Tehran's zone, and which address each tunnel uses.** Run `hashem update`; an installed Sentinel upgrades itself about two minutes after the panel starts.
 
 - **Sentinel: TUIC, Hysteria, AnyTLS, NaiveProxy, SSH and ShadowTLS links work.** They run in sing-box next to Xray, each on its own local port, so checks, speed tests, the feed and alerts work as for every other link. Subscriptions import them instead of counting them as unusable. One link sing-box refuses is left out with its reason; the others keep running.
 - **Sentinel: Hysteria2 links with `insecure=1` work again.** When the installed Xray refuses insecure certificates and the link has no pinned hash, it runs in sing-box, which still accepts them.
