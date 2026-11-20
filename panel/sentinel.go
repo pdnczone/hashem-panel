@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,6 +36,63 @@ type SentinelConfig struct {
 	// HTTPS: Sentinel serves the panel's certificate; Host is the name on it.
 	HTTPS bool   `json:"https"`
 	Host  string `json:"host,omitempty"`
+	// Health is Sentinel's own summary from status.json, when it has written one.
+	Health *SentinelHealth `json:"health,omitempty"`
+}
+
+// SentinelHealth is status.json (schema 1), which Sentinel rewrites after every
+// round of checks. It holds config names and states only: no links or addresses.
+type SentinelHealth struct {
+	Schema             int             `json:"schema"`
+	GeneratedAt        int64           `json:"generated_at"`
+	SentinelVersion    string          `json:"sentinel_version"`
+	Interval           int64           `json:"interval"`
+	Counts             map[string]int  `json:"counts"`
+	Total              int             `json:"total"`
+	Enabled            int             `json:"enabled"`
+	Worst              []SentinelWorst `json:"worst"`
+	AvgLatencyMs       *float64        `json:"avg_latency_ms"`
+	LastCheckAt        *int64          `json:"last_check_at"`
+	TelegramConfigured bool            `json:"telegram_configured"`
+	PendingAlerts      int             `json:"pending_alerts"`
+	// Stale: no round of checks for three intervals (at least 15 minutes).
+	Stale bool `json:"stale"`
+}
+
+// SentinelWorst is one config that is down or failing.
+type SentinelWorst struct {
+	Name           string `json:"name"`
+	State          string `json:"state"`
+	DownSince      *int64 `json:"down_since"`
+	LastErrorPlain string `json:"last_error_plain"`
+}
+
+func sentinelStatusPath() string { return filepath.Join(sentinelDir, "status.json") }
+
+// readSentinelHealth returns nil when the file is missing, too big, or of another schema.
+func readSentinelHealth(now time.Time) *SentinelHealth {
+	f, err := os.Open(sentinelStatusPath())
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, 256<<10+1))
+	if err != nil || len(data) > 256<<10 {
+		return nil
+	}
+	var h SentinelHealth
+	if json.Unmarshal(data, &h) != nil || h.Schema != 1 || h.GeneratedAt <= 0 {
+		return nil
+	}
+	if len(h.Worst) > 5 {
+		h.Worst = h.Worst[:5]
+	}
+	limit := 3 * h.Interval
+	if limit < 900 {
+		limit = 900
+	}
+	h.Stale = now.Unix()-h.GeneratedAt > limit
+	return &h
 }
 
 // sentinelMu guards the locality config file. Installs take sentinelInstallMu
@@ -186,6 +245,74 @@ func sentinelCredentialsPath() string {
 func sentinelInstalled() bool {
 	st, err := os.Stat(sentinelUnitPath)
 	return err == nil && !st.IsDir()
+}
+
+// sentinelUpgradeDelay lets the panel settle after a start before it
+// reinstalls Sentinel (tests set it to 0).
+var sentinelUpgradeDelay = 2 * time.Minute
+
+// sentinelRunInstaller runs install.sh (tests replace it).
+var sentinelRunInstaller = func(script string) ([]byte, error) {
+	return runCmdTimeout(sentinelInstallTime, "bash", script, "--yes")
+}
+
+// sentinelBundleStamp records which embedded bundle the last install ran.
+func sentinelBundleStamp() string { return filepath.Join(sentinelDir, ".hashem-bundle") }
+
+func sentinelBundleHash() string {
+	sum := sha256.Sum256(sentinelBundleFS)
+	return hex.EncodeToString(sum[:8])
+}
+
+func writeSentinelBundleStamp() {
+	_ = os.WriteFile(sentinelBundleStamp(), []byte(sentinelBundleHash()+"\n"), 0644)
+}
+
+// upgradeSentinelIfStale brings an installed Sentinel up to the bundle in this
+// panel. Sentinel's code only changed on a fresh install, so a panel update
+// never reached it, and its Xray stayed too old for Hysteria2. The installer
+// keeps the database and credentials and replaces an Xray older than it needs.
+// A Sentinel the user stopped stays stopped. Returns true when it reinstalled.
+func upgradeSentinelIfStale() bool {
+	time.Sleep(sentinelUpgradeDelay)
+	if !sentinelInstalled() {
+		return false
+	}
+	if ok, _ := CheckSentinelEligibility("", ""); !ok {
+		return false
+	}
+	if b, _ := os.ReadFile(sentinelBundleStamp()); strings.TrimSpace(string(b)) == sentinelBundleHash() {
+		return false
+	}
+	if !sentinelInstallMu.TryLock() {
+		return false // an install from the UI is running; it writes the stamp
+	}
+	defer sentinelInstallMu.Unlock()
+	wasRunning := sentinelSystemctlActive()
+	script, err := ensureSentinelInstallScript()
+	if err != nil {
+		recordError("E-SENTINEL-02", "sentinel upgrade", err.Error())
+		return false
+	}
+	if out, err := sentinelRunInstaller(script); err != nil {
+		recordError("E-SENTINEL-02", "sentinel upgrade", fmt.Sprintf("%v: %s", err, trimLen(strings.TrimSpace(string(out)), 500)))
+		if wasRunning { // the installer may have stopped it before failing
+			_ = sentinelSystemctl("start")
+		}
+		return false
+	}
+	writeSentinelBundleStamp()
+	syncSentinelTLS()
+	if !wasRunning {
+		_ = sentinelSystemctl("stop")
+	}
+	return true
+}
+
+// sentinelSystemctlActive reports whether the Sentinel service is running (tests replace it).
+var sentinelSystemctlActive = func() bool {
+	_, err := runCmdTimeout(10*time.Second, "systemctl", "is-active", "--quiet", "sentinel.service")
+	return err == nil
 }
 
 // readSentinelCredentials parses credentials.txt written by app.py.
@@ -363,12 +490,18 @@ func GetSentinelStatus() SentinelConfig {
 		HasLicense:    HasFeature("sentinel") || HasFeature("*") || HasFeature("all"),
 		IsIran:        isIran,
 		IsIranDecided: true,
-		Version:       "1.2.0",
+		Version:       "1.4.0",
 	}
 
 	cfg.Installed = sentinelInstalled()
 	if !cfg.Installed {
 		return cfg
+	}
+	if h := readSentinelHealth(time.Now()); h != nil {
+		cfg.Health = h
+		if h.SentinelVersion != "" {
+			cfg.Version = h.SentinelVersion
+		}
 	}
 	cfg.Port, cfg.Path, cfg.Password, _ = readSentinelCredentials()
 
@@ -479,6 +612,7 @@ func handleSentinelPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		writeSentinelBundleStamp()
 		// Serve the panel's certificate from the first start, when it has one.
 		syncSentinelTLS()
 

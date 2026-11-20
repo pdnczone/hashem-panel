@@ -867,6 +867,7 @@ func main() {
 	go pathMTUKeeper()
 	go migrateLegacyBackhaul()
 	go upgradeOldFrp()
+	go upgradeSentinelIfStale()
 	go repairHubFrpc()
 	// systemd stop sends SIGTERM: flush history, then stop serving.
 	sigc := make(chan os.Signal, 1)

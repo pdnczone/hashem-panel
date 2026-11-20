@@ -12396,6 +12396,7 @@ function renderSentinel(d) {
             <button class="hashem-btn hashem-btn-danger" id="btnUninstallSentinel">Uninstall</button>
           </div>
         </div>
+        ${isRunning ? sentinelHealthHtml(d.health) : ''}
       </div>`;
 
     const openBtn = $('btnOpenSentinel');
@@ -12405,6 +12406,48 @@ function renderSentinel(d) {
     const unBtn = $('btnUninstallSentinel');
     if (unBtn) unBtn.onclick = () => controlSentinelAction('uninstall');
   }
+}
+
+// Sentinel's own summary (its status.json): config states and the worst configs, names only.
+function sentinelHealthHtml(h) {
+  if (!h) {
+    return `<div class="u-fs-12 u-c-mu">${esc(faText('Config health shows here after Sentinel finishes its first round of checks.'))}</div>`;
+  }
+  const n = k => (h.counts && h.counts[k]) || 0;
+  const ago = s => s < 90 ? faText('just now') : s < 5400 ? `${Math.round(s / 60)} ${faText('min ago')}` : `${Math.round(s / 3600)} ${faText('h ago')}`;
+  const since = s => s < 3600 ? `${Math.max(1, Math.round(s / 60))}m` : s < 86400 ? `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m` : `${Math.floor(s / 86400)}d`;
+  const now = Math.floor(Date.now() / 1000);
+  const problems = n('down') + n('iran_only') + n('fail');
+  const stat = (label, val, cls) => `<div style="min-width:88px"><div class="u-fs-12 u-c-mu">${esc(faText(label))}</div><div class="u-fs-20 u-fw-700 ${val ? cls : 'u-c-tx'}">${val}</div></div>`;
+  const stateLabel = { down: 'Down', iran_only: 'Iran intranet only', fail: 'Failing checks' };
+  const worst = (h.worst || []).map(w => `
+      <div class="u-flex u-jc-sb u-ai-c u-wrap u-gap-12" style="padding:8px 0;border-top:1px solid var(--ln)">
+        <div style="min-width:0">
+          <div class="u-fs-13 u-fw-600 u-c-tx">${esc(w.name)}</div>
+          <div class="u-fs-12 u-c-mu">${esc(w.last_error_plain || '')}</div>
+        </div>
+        <span class="badge ${w.state === 'down' ? 'err' : 'warn'} sm">${esc(faText(stateLabel[w.state] || w.state))}${w.down_since ? ` · ${since(now - w.down_since)}` : ''}</span>
+      </div>`).join('');
+  return `
+      <div class="u-bg-sunk u-p-16 u-r-8 u-bdd-ln">
+        <div class="u-flex u-jc-sb u-ai-c u-wrap u-gap-12">
+          <div class="u-fs-13 u-fw-600 u-c-tx">${esc(faText('Config health'))}</div>
+          ${h.stale
+            ? `<span class="badge warn sm" title="${esc(faText('Sentinel has not finished a round of checks for a while. Restart it if this stays.'))}">${esc(faText('No recent checks'))}</span>`
+            : `<span class="u-fs-12 u-c-mu">${esc(faText('Last checked'))} ${esc(ago(now - (h.last_check_at || h.generated_at)))}</span>`}
+        </div>
+        <div class="u-flex u-wrap u-gap-12" style="margin-top:12px">
+          ${stat('Healthy', n('up'), 'u-c-ok')}
+          ${stat('Slow', n('slow'), 'u-c-wr')}
+          ${stat('With problems', problems, 'u-c-er')}
+          ${stat('Paused', n('paused'), 'u-c-dim')}
+          <div style="min-width:88px"><div class="u-fs-12 u-c-mu">${esc(faText('Average ping'))}</div><div class="u-fs-20 u-fw-700 u-c-tx">${h.avg_latency_ms != null ? Math.round(h.avg_latency_ms) + ' ms' : '—'}</div></div>
+        </div>
+        ${worst ? `<div style="margin-top:12px">${worst}</div>` : (h.total ? `<div class="u-fs-12 u-c-ok" style="margin-top:10px">${esc(faText('Every config works.'))}</div>` : '')}
+        ${n('no_engine') ? `<div class="u-fs-12 u-c-wr" style="margin-top:10px">${n('no_engine')} ${esc(faText('configs need sing-box and are not checked. Install it in Sentinel under Settings → Engines.'))}</div>` : ''}
+        ${!h.telegram_configured ? `<div class="u-fs-12 u-c-mu" style="margin-top:10px">${esc(faText('Telegram alerts are not set up in Sentinel yet.'))}</div>` : ''}
+        ${h.pending_alerts ? `<div class="u-fs-12 u-c-wr" style="margin-top:6px">${h.pending_alerts} ${esc(faText('alerts waiting to be sent'))}</div>` : ''}
+      </div>`;
 }
 
 async function installSentinelClick() {
