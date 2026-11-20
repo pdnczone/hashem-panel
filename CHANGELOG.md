@@ -3,6 +3,10 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## Unreleased
+
+- **Times show in Tehran's zone; the server's zone is left alone.** Most servers run UTC, so the Logs page, the panel's event times and the charts read 3:30 behind the admins' clock. The panel now shows them in Asia/Tehran: its own times, the journalctl lines of the Logs page and the doctor, the hashem command, and the charts, tooltips and dates in the web page (which used the browser's zone). The server's own zone is never changed, since a server set to Asia/Tehran is easier to tell apart. `HASHEM_DISPLAY_TZ=<zone>` picks another zone and `HASHEM_DISPLAY_TZ=server` keeps the server's. The zone data is built into the panel, so it also works on a server without tzdata.
+
 ## v3.2.0 — 2026-11-18
 
 **Cluster: DNS failover run by one hub, a live map of every tunnel and its traffic, and Iran hubs that sync their tunnels.** Run `hashem update` on every server: each hub must run v3.2.0 for the map to draw its tunnels and for DNS failover and the tunnel sync to work between hubs.

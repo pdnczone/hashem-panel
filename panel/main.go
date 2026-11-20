@@ -525,6 +525,7 @@ func validateConfigDirs() {
 }
 
 func main() {
+	applyDisplayZone() // times in Tehran's zone; the server's zone is left alone
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "--version", "-v", "version":

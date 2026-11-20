@@ -163,6 +163,7 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"snapshot_at":     nilIfEmpty(snapAt),
 		"role":            nilIfEmpty(st.Role),
 		"local_pub":       nilIfEmpty(snap.PublicIP),
+		"display_tz":      displayTZ,
 		"remote_pub":      nilIfEmpty(st.RemotePub),
 		"active_engine":   engine,
 		"active_carrier":  carrierCfg.ActiveCarrier,
