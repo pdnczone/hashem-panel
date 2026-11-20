@@ -47,7 +47,7 @@ type autopilotConfig struct {
 	Notify      bool     `json:"notify"`           // webhook / Telegram of the alerts
 	Carriers    []string `json:"carriers"`         // allowed carriers; empty: every one the tunnel can run
 	Skip        []int    `json:"skip"`             // tunnels Autopilot leaves alone
-	QuietFrom   int      `json:"quiet_from"`       // no switching from this hour (server time) ...
+	QuietFrom   int      `json:"quiet_from"`       // no switching from this hour (display zone, display_tz.go) ...
 	QuietTo     int      `json:"quiet_to"`         // ... to this one; equal: no quiet hours
 }
 

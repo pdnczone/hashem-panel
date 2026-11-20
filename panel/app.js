@@ -4532,7 +4532,15 @@ function apQuietHas(h) {
   return q.from < q.to ? (h >= q.from && h < q.to) : (h >= q.from || h < q.to);
 }
 function apPad(h) { return String(h).padStart(2, '0') + ':00'; }
+// The hours are read in the panel's zone (display_tz.go), Tehran unless
+// HASHEM_DISPLAY_TZ says otherwise; the label says which.
+function apQuietLabel() {
+  if (!DISPLAY_TZ) return tr('', 'Quiet hours (server time): no switching');
+  if (DISPLAY_TZ === 'Asia/Tehran') return tr('', 'Quiet hours (Tehran time): no switching');
+  return docTpl('Quiet hours ({0}): no switching', [DISPLAY_TZ]);
+}
 function apRenderHours() {
+  { const l = $('apQuietLbl'); if (l) l.textContent = apQuietLabel(); }
   $('apHours').innerHTML = Array.from({length: 24}, (_, h) =>
     `<button type="button" class="ap-hr${apQuietHas(h) ? ' h-q' : ''}${_apPick === h ? ' h-pick' : ''}" data-h="${h}" aria-pressed="${apQuietHas(h)}" title="${apPad(h)}">${h}</button>`).join('');
   $('apQuietOut').textContent = _apPick >= 0 ? apPad(_apPick) + ' → …'
