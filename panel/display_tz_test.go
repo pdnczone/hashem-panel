@@ -44,7 +44,10 @@ func TestChildTZ(t *testing.T) {
 	if _, err := exec.LookPath("date"); err == nil {
 		cmd := exec.Command("date", "-u", "-d", "@0", "+%H:%M")
 		cmd.Env = append(os.Environ(), "TZ=<+0330>-03:30")
-		utc, _ := cmd.Output()
+		utc, err := cmd.Output()
+		if err != nil {
+			t.Skip("this date has no -d (not GNU date); the POSIX form is checked on Linux")
+		}
 		cmd = exec.Command("date", "-d", "@0", "+%H:%M")
 		cmd.Env = append(os.Environ(), "TZ=<+0330>-03:30")
 		local, _ := cmd.Output()
