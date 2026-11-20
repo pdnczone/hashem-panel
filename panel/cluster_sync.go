@@ -157,6 +157,31 @@ var syncFrpsServed = func(svc string) []int {
 	return frpsServedPorts(xrayListeners(), pid, own)
 }
 
+// frpsServedTTL is how long the snapshot reuses syncFrpsServed's answer.
+// The ports change only when the foreign server's frpc.toml changes, and the
+// listener scan (ss -p) walks every process, too much for each 5 s tick.
+const frpsServedTTL = 30 * time.Second
+
+var frpsServedCache struct {
+	sync.Mutex
+	svc   string
+	at    time.Time
+	ports []int
+}
+
+// frpsServedCached is syncFrpsServed for svc, read at most once per
+// frpsServedTTL. The snapshot uses it for an Iran server's first FRP tunnel,
+// whose ports are written in the foreign frpc.toml, not here.
+func frpsServedCached(svc string, now time.Time) []int {
+	c := &frpsServedCache
+	c.Lock()
+	defer c.Unlock()
+	if c.svc != svc || c.at.IsZero() || now.Sub(c.at) >= frpsServedTTL || now.Before(c.at) {
+		c.svc, c.at, c.ports = svc, now, syncFrpsServed(svc)
+	}
+	return slices.Clone(c.ports)
+}
+
 // frpsServedPorts picks the ports process pid listens on, without own.
 func frpsServedPorts(ls []xrayListener, pid int, own map[int]bool) []int {
 	var ports []int
