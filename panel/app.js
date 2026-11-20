@@ -1643,7 +1643,9 @@ function linkStrip(s) {
   const nSrv = peers.length + (peers.length && hasBaseTunnel(L) ? 1 : 0);
   const there = nSrv > 1 ? nSrv + ' ' + tr('ls_servers', 'servers')
     : (peers[0] && (peers[0].name || peers[0].remote_pub)) || L.remote_pub || L.gre_peer || (iran ? tr('x003', 'Foreign') : tr('x002', 'Iran'));
-  const eng = LS_ENGINE[L.engine || L.tunnel_engine] || '';
+  // With several foreign servers the engine and latency would be the first
+  // tunnel's alone: the Dashboard shows each server's, so leave them out here.
+  const eng = nSrv > 1 ? '' : (LS_ENGINE[L.engine || L.tunnel_engine] || '');
   const up = !!(L.frp_up || (L.gre && L.gre.exists) || peers.some(p => p.frp_up || p.gre_up));
   // a live session is healthy even unpinged: the server pings only links
   // without one (snapshot.go), so ping_ok alone would show a working tunnel weak
@@ -1651,7 +1653,7 @@ function linkStrip(s) {
   const pinged = good(L) || peers.some(good);
   const lat = L.ping_ok && parseFloat(L.ping_ms) > 0 ? parseFloat(L.ping_ms)
     : (L.health_state === 'healthy' && L.latency_ms > 0 ? L.latency_ms : 0);
-  const ms = lat ? Math.round(lat) + ' ms' : '';
+  const ms = lat && nSrv <= 1 ? Math.round(lat) + ' ms' : '';
   const state = up ? (pinged ? 'ok' : 'warn') : 'err';
   const globe = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>';
   const bolt = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>';
@@ -1831,12 +1833,14 @@ function renderTunChips(st) {
   if (!box) return;
   const chips = [];
   if (hasBaseTunnel(st)) {
+    // like the peers: its name and traffic (the service and port are on its card)
+    const traffic = (st.rx != null && st.tx != null) ? ('↓ ' + fmtBytes(st.rx) + ' · ↑ ' + fmtBytes(st.tx)) : null;
     chips.push({
       key: 'base',
-      name: tr('', 'Tunnel'),
+      name: st.name || tr('', 'Tunnel'),
       up: chipState(st).v !== 'down',
       ping: chipState(st).txt,
-      sub: esc(st.frp_svc || 'frp') + ' :' + esc(st.frp_port || st.bind_port || '?'),
+      sub: traffic || ((st.frp_svc || 'frp') + ' :' + (st.frp_port || st.bind_port || '?')),
     });
   }
   (tunPeerCache || []).forEach((p, i) => {
@@ -2293,10 +2297,10 @@ function drawChart(hist, isDown) {
   // Pre-compute x tick labels
   const fmtTick = t => {
     const d = new Date(t * 1000);
-    const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+    const z = tzParts(d);
     return (dashRange === '1h' || dashRange === '24h')
-      ? String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0')
-      : M + ' ' + d.getDate();
+      ? z.hh + ':' + z.mm
+      : z.M + ' ' + z.D;
   };
   const approxLabel = 64, nTicks = Math.max(2, Math.min(6, Math.floor(iw / approxLabel)));
 
@@ -2532,12 +2536,37 @@ function drawChart(hist, isDown) {
     startLoop();
   }
 }
+// Times show in the panel's zone (Tehran unless HASHEM_DISPLAY_TZ says
+// otherwise), not the browser's, so they match the Logs page. The server's
+// own zone is never changed (panel/display_tz.go). The dashboard reports the
+// zone in display_tz; "" (HASHEM_DISPLAY_TZ=server) uses the browser's.
+let DISPLAY_TZ = 'Asia/Tehran';
+const _tzFmt = {};
+function tzOpt(o) {
+  if (!DISPLAY_TZ) return o;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: DISPLAY_TZ }); } catch (e) { return o; }
+  return Object.assign({ timeZone: DISPLAY_TZ }, o);
+}
+// tzParts: month name, day and zero-padded clock of d in that zone.
+function tzParts(d) {
+  const key = DISPLAY_TZ || '-';
+  try {
+    const f = _tzFmt[key] || (_tzFmt[key] = new Intl.DateTimeFormat('en-US', tzOpt({ month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })));
+    const o = {};
+    f.formatToParts(d).forEach(x => { o[x.type] = x.value; });
+    return { M: o.month, D: Number(o.day), hh: o.hour, mm: o.minute, ss: o.second };
+  } catch (e) {
+    const p = n => String(n).padStart(2, '0');
+    return { M: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()], D: d.getDate(), hh: p(d.getHours()), mm: p(d.getMinutes()), ss: p(d.getSeconds()) };
+  }
+}
 async function refreshDash() {
   const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
   const setHTML = (id, v) => { const el = $(id); if (el) el.innerHTML = v; };
   const chip = (txt, cls) => '<span class="badge ' + (cls || '') + '"><span class="dot"></span>' + esc(txt) + '</span>';
   try {
     const d = await api('/api/dashboard?range=' + dashRange);
+    if (d && 'display_tz' in d && (d.display_tz || '') !== DISPLAY_TZ) { DISPLAY_TZ = d.display_tz || ''; }
     if (!d || typeof d !== 'object') return;
     window._lastDash = d;
     const on = !!d.online;
@@ -2613,7 +2642,10 @@ async function refreshDash() {
       heroLinkEl.classList.toggle('topo', links.length > 0);
       let host = heroLinkEl.querySelector('.hero-topo-host');
       if (!host) { host = document.createElement('div'); host.className = 'hero-topo-host'; heroLinkEl.appendChild(host); }
-      host.innerHTML = links.length ? heroTopo(links, tr('', iran ? 'Iran server' : foreign ? 'Foreign server' : 'This server'), d.local_pub || '—') : '';
+      // this server's address, then any other one a tunnel leaves from (a
+      // peer set to another IP of a server with several)
+      const hubIps = [...new Set([d.local_pub, ...(d.peers || []).map(p => p.local_pub)].filter(Boolean))];
+      host.innerHTML = links.length ? heroTopo(links, tr('', iran ? 'Iran server' : foreign ? 'Foreign server' : 'This server'), hubIps.join(' · ') || '—') : '';
       host.querySelectorAll('[data-goto-link]').forEach(b => {
         b.onclick = () => {
           const k = b.dataset.gotoLink;
@@ -2759,9 +2791,9 @@ async function refreshDash() {
           if (!cv._animId && cv._redraw) cv._redraw();
         }
         const d = new Date(p.t * 1000);
-        const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
-        const hhmm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-        const when = (dashRange === '1h' || dashRange === '24h') ? hhmm : M + ' ' + d.getDate() + ' ' + hhmm;
+        const z = tzParts(d);
+        const hhmm = z.hh + ':' + z.mm;
+        const when = (dashRange === '1h' || dashRange === '24h') ? hhmm : z.M + ' ' + z.D + ' ' + hhmm;
         tip.innerHTML = '<span class="tip-time">' + esc(when) + '</span><span class="tip-sep">·</span>' +
           '<span class="tip-down"><i class="sw-dl"></i>↓ ' + esc(fmtRate(p.down)) + '</span><span class="tip-sep">·</span>' +
           '<span class="tip-up"><i class="sw-ul"></i>↑ ' + esc(fmtRate(p.up)) + '</span>';
@@ -2817,9 +2849,9 @@ async function refreshDash() {
         }
         if (!p || p.t == null) { tip.style.display = 'none'; return; }
         const d = new Date(p.t * 1000);
-        const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
-        const hhmm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-        const when = (dashRange === '1h' || dashRange === '24h') ? hhmm : M + ' ' + d.getDate() + ' ' + hhmm;
+        const z = tzParts(d);
+        const hhmm = z.hh + ':' + z.mm;
+        const when = (dashRange === '1h' || dashRange === '24h') ? hhmm : z.M + ' ' + z.D + ' ' + hhmm;
         tip.innerHTML = '<span class="tip-time">' + esc(when) + '</span><span class="tip-sep">·</span>' +
           '<span class="u-c-ok u-fw-600">● ' + esc(String(p.conns ?? 0)) + ' active connections</span>';
         tip.style.display = 'inline-flex';
@@ -2882,9 +2914,23 @@ async function refreshDash() {
     const bindPort = (f.port && f.port !== NA) ? String(f.port) : '';
     const fwd = ((f.proxy_ports && f.proxy_ports.length) ? f.proxy_ports : (f.proxies || [])).filter(p => p !== '' && p != null);
     const innerPeer = c => { const m = /^(\d+\.\d+\.\d+)\.(\d+)(?:\/\d+)?$/.exec(c || ''); if (!m) return ''; const n = +m[2]; return m[1] + '.' + (n % 2 === 0 ? n - 1 : n + 1); };
+    // This server's other public IPv4 addresses: any of them can be a
+    // tunnel's Iran IP (Edit Tunnel). Its global IPv6 addresses are listed
+    // apart: the 6to4 and 4in6 carriers use them, Edit Tunnel does not.
+    const moreIPs = (d.public_ips || []).filter(ip => ip && ip !== d.local_pub);
+    const ipv6 = (d.public_ipv6 || []).filter(Boolean);
+    // on a hub with more tunnels, these cards describe the first one only
+    { const sc = $('detScope');
+      if (sc) {
+        const scoped = iran && !unset && peers.length > 0;
+        sc.hidden = !scoped;
+        sc.textContent = scoped ? tr('', 'First tunnel') + ' · ' + (d.main_name || otherIP || '—') : '';
+      } }
     const serverCard = detCard(ICO_SRV, tr('card_server_title', 'Server & Role'),
       detRow(tr('', 'Role'), roleCell)
       + detRow(tr('', 'This server'), dpill(d.local_pub), tr('', 'public IP'))
+      + (moreIPs.length ? detStack(tr('', 'Other IPs'), moreIPs.length, dchips(moreIPs)) : '')
+      + (ipv6.length ? detStack('IPv6', ipv6.length, dchips(ipv6)) : '')
       + (otherIP ? detRow(otherLabel, dpill(otherIP), tr('', 'public IP')) : '')
       + (!unset && fwd.length ? detStack(tr('lbl_forwarded_ports', 'Forwarded'), fwd.length, dchips(fwd)) : ''));
     let det, n = 1;
@@ -2936,7 +2982,7 @@ async function refreshDash() {
         .catch(() => toastWarn('copy failed', v)); }; } });
     { const dp = $('detPulse'); if (dp) dp.classList.toggle('off', !on); }
     const ck = d.checked ? new Date(d.checked) : null;
-    set('dashChecked', ck && !isNaN(ck) ? tr('', 'Checked') + ' ' + ck.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—');
+    set('dashChecked', ck && !isNaN(ck) ? tr('', 'Checked') + ' ' + ck.toLocaleTimeString([], tzOpt({ hour: '2-digit', minute: '2-digit', second: '2-digit' })) : '—');
   } catch(e) { reportErr('dashboard', e); /* keep old values; N/A already default */ return false; }
   return true;
 }
@@ -2993,10 +3039,10 @@ function drawActivityChart(hist, isDown) {
   // Time ticks on bottom
   const fmtTick = t => {
     const d = new Date(t * 1000);
-    const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+    const z = tzParts(d);
     return (dashRange === '1h' || dashRange === '24h')
-      ? String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0')
-      : M + ' ' + d.getDate();
+      ? z.hh + ':' + z.mm
+      : z.M + ' ' + z.D;
   };
   const nTicks = Math.max(2, Math.min(5, Math.floor(iw / 80)));
   ctx.fillStyle = C_AXIS; ctx.font = '12px -apple-system, system-ui, sans-serif'; ctx.textAlign = 'center';
@@ -3131,7 +3177,9 @@ function dashLinks(d, bObj, iran, foreign) {
   }
   peers.forEach(p => {
     const bh = p.engine === 'backhaul' || p.engine === 'gre-backhaul' || /backhaul/.test(p.frps_svc || '');
-    L.push({ key: String(p.id), name: p.name || ('peer-' + p.id), ip: p.remote_pub || '',
+    // a tunnel that leaves from another address of this server says which
+    const via = p.local_pub && d.local_pub && p.local_pub !== d.local_pub ? p.local_pub : '';
+    L.push({ key: String(p.id), name: p.name || ('peer-' + p.id), ip: p.remote_pub || '', via,
       state: vizState(p) || ((p.gre_up || p.frp_up) ? 'ok' : 'down'), eng: bh ? 'Backhaul' : 'FRP',
       gre: !(p.engine === 'backhaul' || p.no_gre), lat: msOf(p), rate: linkRate('p' + p.id, p.rx, p.tx, d.counters_at) });
   });
@@ -3184,6 +3232,7 @@ function heroTopo(links, hubName, hubIp) {
     else {
       if (l.lat) meta.push(`<span class="ht-lat">${esc(l.lat)}</span>`);
       if (r) meta.push(`<span class="tv-dn">↓ ${esc(fmtRate(r.dn))}</span><span class="tv-up">↑ ${esc(fmtRate(r.up))}</span>`);
+      if (l.via) meta.push(`<span class="ht-via" data-no-i18n>${esc(tr('', 'via') + ' ' + l.via)}</span>`);
     }
     return `<button type="button" class="ht-node ht-${l.state}" data-goto-link="${esc(l.key)}">
       <i class="ht-dot" aria-hidden="true"></i>
@@ -3196,7 +3245,7 @@ function heroTopo(links, hubName, hubIp) {
     <div class="hero-node ht-hub">
       <span class="hero-node-ic" aria-hidden="true">${ICO_SRV}</span>
       <span class="hero-node-name">${esc(hubName)}</span>
-      <span class="hero-node-ip" data-no-i18n>${esc(hubIp)}</span>
+      ${String(hubIp).split(' · ').map(ip => `<span class="hero-node-ip" data-no-i18n>${esc(ip)}</span>`).join('')}
     </div>
     <svg class="ht-wires" viewBox="0 0 300 ${H}" preserveAspectRatio="none" height="${H}" aria-hidden="true">${shown.map(wire).join('')}${more ? wire({ state: 'more' }, shown.length) : ''}</svg>
     <div class="ht-nodes">${shown.map(node).join('')}${more ? `<button type="button" class="ht-node ht-more" data-goto-link="">+${more} ${esc(tr('', 'more'))}</button>` : ''}</div>
@@ -4288,7 +4337,7 @@ async function loadVersion(force) {
     const changes = v.changes || [];
     $('updNotesCard').hidden = !changes.length;
     $('updNotes').innerHTML = changes.map(c =>
-      `<section class="upd-rel"><div class="upd-rel-head"><b data-no-i18n>${esc(c.tag)}</b><span class="qs-hint">${esc(c.date ? new Date(c.date).toLocaleDateString() : '')}</span></div><div class="upd-md" data-no-i18n>${mdLite(String(c.notes || '').replace(/^\s*#{1,6}[^\n]*\n?/, m => m.includes(c.tag) ? '' : m)) || '<p>' + esc(tr('', 'No notes for this release.')) + '</p>'}</div></section>`).join('');
+      `<section class="upd-rel"><div class="upd-rel-head"><b data-no-i18n>${esc(c.tag)}</b><span class="qs-hint">${esc(c.date ? new Date(c.date).toLocaleDateString(undefined, tzOpt({})) : '')}</span></div><div class="upd-md" data-no-i18n>${mdLite(String(c.notes || '').replace(/^\s*#{1,6}[^\n]*\n?/, m => m.includes(c.tag) ? '' : m)) || '<p>' + esc(tr('', 'No notes for this release.')) + '</p>'}</div></section>`).join('');
   } catch (e) {
     updDot('warn', tr('', 'Check failed'));
     if (!updState.busy) $('updateMsg').textContent = e.message;
@@ -4322,7 +4371,7 @@ async function loadRollback() {
     const cur = updState.current;
     const rels = r.releases || [];
     sel.innerHTML = rels.map(x => '<option value="' + esc(x.tag) + '">' + esc(x.tag) +
-      (x.date ? ' · ' + esc(new Date(x.date).toLocaleDateString()) : '') +
+      (x.date ? ' · ' + esc(new Date(x.date).toLocaleDateString(undefined, tzOpt({}))) : '') +
       (x.tag === cur ? ' · ' + esc(tr('', 'installed')) : '') + '</option>').join('') ||
       '<option value="">' + esc(tr('', 'No releases')) + '</option>';
     const syncBtn = () => { b.disabled = !sel.value || sel.value === updState.current || updState.busy; };
@@ -4507,7 +4556,15 @@ function apQuietHas(h) {
   return q.from < q.to ? (h >= q.from && h < q.to) : (h >= q.from || h < q.to);
 }
 function apPad(h) { return String(h).padStart(2, '0') + ':00'; }
+// The hours are read in the panel's zone (display_tz.go), Tehran unless
+// HASHEM_DISPLAY_TZ says otherwise; the label says which.
+function apQuietLabel() {
+  if (!DISPLAY_TZ) return tr('', 'Quiet hours (server time): no switching');
+  if (DISPLAY_TZ === 'Asia/Tehran') return tr('', 'Quiet hours (Tehran time): no switching');
+  return docTpl('Quiet hours ({0}): no switching', [DISPLAY_TZ]);
+}
 function apRenderHours() {
+  { const l = $('apQuietLbl'); if (l) l.textContent = apQuietLabel(); }
   $('apHours').innerHTML = Array.from({length: 24}, (_, h) =>
     `<button type="button" class="ap-hr${apQuietHas(h) ? ' h-q' : ''}${_apPick === h ? ' h-pick' : ''}" data-h="${h}" aria-pressed="${apQuietHas(h)}" title="${apPad(h)}">${h}</button>`).join('');
   $('apQuietOut').textContent = _apPick >= 0 ? apPad(_apPick) + ' → …'
@@ -5031,7 +5088,7 @@ function perfAgo(ts) {
   if (d < 90) return docTpl('{0} s ago', [d]);
   if (d < 5400) return docTpl('{0} min ago', [Math.round(d / 60)]);
   if (d < 172800) return docTpl('{0} h ago', [Math.round(d / 3600)]);
-  return new Date(ts * 1000).toLocaleDateString();
+  return new Date(ts * 1000).toLocaleDateString(undefined, tzOpt({}));
 }
 function onOff(v) { return tr('', v ? 'On' : 'Off'); }
 function perfSetText(id, v) { const el = $(id); if (el) el.textContent = v; }
@@ -7142,7 +7199,7 @@ async function wdSaveTelegram() {
 $('wdSaveTgBtn').onclick = async () => {
   if (!await wdSaveTelegram()) return;
   toastOk('Telegram settings saved');
-  $('wdTgMsg').textContent = 'Saved at ' + new Date().toLocaleTimeString();
+  $('wdTgMsg').textContent = 'Saved at ' + new Date().toLocaleTimeString([], tzOpt({}));
   loadWatchdog();
 };
 
@@ -7269,7 +7326,7 @@ $('wdBackupNowBtn').onclick = async () => {
   try {
     const res = await api('/api/watchdog', { action: 'backup-now' });
     toastOk('Backup created');
-    $('wdBackupNowMsg').textContent = 'Done at ' + new Date().toLocaleTimeString();
+    $('wdBackupNowMsg').textContent = 'Done at ' + new Date().toLocaleTimeString([], tzOpt({}));
     loadWatchdog();
   } catch(e) {
     toastErr('backup failed', e.message);
@@ -7836,7 +7893,7 @@ function usageCols(d, tot) {
   for (let i = 0; i < pts.length; i += per) {
     const g = pts.slice(i, i + per);
     const t = new Date(g[0].t * 1000);
-    const hm = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+    const z = tzParts(t), hm = z.hh + ':' + z.mm;
     out.push({ rx: g.reduce((a, p) => a + p.rx, 0), tx: g.reduce((a, p) => a + p.tx, 0), label: hm, title: hm });
   }
   return out;
@@ -7924,7 +7981,7 @@ function limLinkName(k) {
   if (!m) return k;
   return { peer: tr('', 'Peer'), bagher: 'Bagher', xray: 'Xray' }[m[1]] + ' ' + m[2];
 }
-const limDate = sec => new Date(sec * 1000).toLocaleDateString(currentLang === 'fa' ? 'fa-IR' : undefined, { month: 'short', day: 'numeric' });
+const limDate = sec => new Date(sec * 1000).toLocaleDateString(currentLang === 'fa' ? 'fa-IR' : undefined, tzOpt({ month: 'short', day: 'numeric' }));
 function limRow(s) {
   const r = s.rule, ip = s.ip;
   const used = r ? r.used_rx + r.used_tx : 0;
@@ -8371,7 +8428,7 @@ function renderDocHist(h) {
     return;
   }
   const n = es.length, W = Math.max(n, 24) * 6;
-  const dt = t => new Date(t * 1000).toLocaleString(currentLang === 'fa' ? 'fa-IR' : undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const dt = t => new Date(t * 1000).toLocaleString(currentLang === 'fa' ? 'fa-IR' : undefined, tzOpt({ month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
   const bars = es.map((e, i) => {
     const hgt = Math.max(3, e.score), x = W - (n - i) * 6;
     return '<rect class="r-' + esc(e.rating) + '" x="' + (x + 1) + '" y="' + (100 - hgt) + '" width="4" height="' + hgt + '" rx="1"><title>' +
@@ -8622,7 +8679,7 @@ async function refreshRightSidebarLogs() {
     if (!rs) return true;
     const lines = (s.lines || (s.logs ? s.logs.trim().split('\n') : [])).filter(l => l && !/^-- /.test(l));
     const up = $('rsUpdated');
-    if (up) { const d = new Date(); up.textContent = tr('rs_updated', 'Updated') + ' ' + [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':'); }
+    if (up) { const z = tzParts(new Date()); up.textContent = tr('rs_updated', 'Updated') + ' ' + z.hh + ':' + z.mm + ':' + z.ss; }
     const sig = lines.join('\n');
     if (sig === rsState.sig && rs.querySelector('.rs-ev, .ent-empty')) return true;
     rsState.sig = sig;
@@ -12660,7 +12717,7 @@ const custState = c => !c.cut ? ['ok', tr('', 'Active')]
   : c.cut === 'quota' ? ['err', tr('', 'Volume used up')]
   : ['warn', tr('', 'Paused')];
 const custStatusURL = c => location.origin + '/_hs/' + c.token;
-const custDate = sec => new Date(sec * 1000).toLocaleDateString(currentLang === 'fa' ? 'fa-IR' : undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+const custDate = sec => new Date(sec * 1000).toLocaleDateString(currentLang === 'fa' ? 'fa-IR' : undefined, tzOpt({ year: 'numeric', month: 'short', day: 'numeric' }));
 // the engines a sold link can run and their transports (as customers.go)
 const CUST_ENGINES = {
   frp: { label: 'FRP', tr: ['tcp', 'websocket', 'kcp', 'quic'] },
@@ -13608,6 +13665,12 @@ function nmLinkState(l) {
   if (l.state === 'down') return ['err', tr('', 'Down')];
   return ['', tr('', 'Not read')];
 }
+// nmIps: a server's address, then any other one its tunnels leave from (an
+// Iran server with several addresses, a tunnel set to its second one).
+function nmIps(s) {
+  const more = (_ntLinks || []).filter(l => Number(l.server) === s.id && l.server_ip && l.server_ip !== s.ip).map(l => l.server_ip);
+  return [...new Set([s.ip, ...more].filter(Boolean))].join(' · ');
+}
 function nmCard(s, rel) {
   const st = nmState(s);
   const tag = s.central ? `<span class="nm-tag">${esc(tr('', 'Central'))}</span>`
@@ -13621,7 +13684,7 @@ function nmCard(s, rel) {
   return `<div class="nm-node${s.central ? ' central' : ''}${s.online ? '' : ' off'}${_nmSel === s.id ? ' sel' : ''}${rel ? ' rel' : ''}" data-nm="${s.id}">
     <button type="button" class="nm-hit" onclick="nodeMapPick(${s.id})" aria-pressed="${_nmSel === s.id}" aria-label="${esc(s.name + ' · ' + st[1])}" title="${esc(st[1])}"></button>
     <div class="nm-top"><span class="nm-ic" aria-hidden="true">${s.central ? NM_ICON_CENTRAL : NM_ICON_SERVER}<i class="nm-dot ${st[0]}"></i></span>
-      <span class="nm-name"><b data-no-i18n>${esc(s.name)}</b><small data-no-i18n>${esc(s.ip || '—')}</small></span>${tag}</div>
+      <span class="nm-name"><b data-no-i18n>${esc(s.name)}</b><small data-no-i18n>${esc(nmIps(s) || '—')}</small></span>${tag}</div>
     <div class="nm-bars" data-no-i18n>${['CPU', 'RAM', tr('', 'Disk')].map(k => `<span class="nm-bar"><span>${esc(k)}<b>—</b></span><i></i></span>`).join('')}</div>
     <div class="nm-rate" data-no-i18n></div>
     <div class="nm-acts">${acts}</div></div>`;
@@ -13670,7 +13733,7 @@ function nodeMapRender() {
   const links = (_ntLinks || []).filter(l => ids.has(Number(l.server)) && ids.has(Number(l.client)) && Number(l.server) !== Number(l.client));
   if (_nmSel !== null && !ids.has(_nmSel)) _nmSel = null;
   const sig = JSON.stringify([currentLang, _nmSel, servers.map(s => [s.id, s.name, s.ip, s.side, s.online, s.held, s.core, nmState(s)[0]]),
-    links.map(l => [l.server, l.client, l.peer_id, l.state, l.working, l.carrier || l.engine || ''])]);
+    links.map(l => [l.server, l.client, l.peer_id, l.state, l.working, l.carrier || l.engine || '', l.server_ip || ''])]);
   if (sig !== _nmSig) {
     _nmSig = sig;
     const rel = new Set();
@@ -13730,6 +13793,8 @@ function nmDraw() {
   const wide = box.width >= 560, labels = links.length <= 6 || _nmSel !== null;
   const placed = []; // label boxes already drawn: a label that would cover one is left out
   const bez = (t, p0, p1, p2, p3) => { const u = 1 - t; return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3; };
+  const ipOf = {};
+  nmServers().forEach(x => { ipOf[x.id] = x.ip; });
   let out = '';
   Object.values(pairs).forEach(group => group.forEach((l, k) => {
     const a = pos(l.server), b = pos(l.client);
@@ -13751,7 +13816,10 @@ function nmDraw() {
     const d = `M${x1.toFixed(1)} ${y1.toFixed(1)} C${c1[0].toFixed(1)} ${c1[1].toFixed(1)} ${c2[0].toFixed(1)} ${c2[1].toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}`;
     const st = nmLinkState(l), s = Number(l.server), c = Number(l.client);
     const isRel = _nmSel !== null && (s === _nmSel || c === _nmSel);
-    const carrier = String(l.carrier || l.engine || 'frp');
+    // a tunnel that leaves from another address of the server says which
+    const srvIp = ipOf[s] || '';
+    const via = l.server_ip && srvIp && l.server_ip !== srvIp ? l.server_ip : '';
+    const carrier = String(l.carrier || l.engine || 'frp') + (via ? ' · ' + via : '');
     const title = `${ntName(s)} → ${ntName(c)} · ${carrier} · ${st[1]}${l.name ? ' · ' + l.name : ''}`;
     // the carrier's label: on the curve where it covers no other label
     let lbl = null;

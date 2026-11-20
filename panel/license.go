@@ -193,7 +193,7 @@ func verifyLicenseKey(token string) (*LicensePayload, error) {
 
 	now := time.Now().Unix()
 	if payload.ExpiresAt > 0 && now > payload.ExpiresAt {
-		return nil, fmt.Errorf("license expired on %s", time.Unix(payload.ExpiresAt, 0).Format("2006-01-02 15:04:05 UTC"))
+		return nil, fmt.Errorf("license expired on %s", time.Unix(payload.ExpiresAt, 0).UTC().Format("2006-01-02 15:04:05 UTC"))
 	}
 
 	mHash := getMachineHash()
@@ -340,7 +340,7 @@ func handleLicenseGet(w http.ResponseWriter, r *http.Request) {
 			res["customer"] = lic.Customer
 			res["expires_at"] = lic.ExpiresAt
 			if lic.ExpiresAt > 0 {
-				res["expires_human"] = time.Unix(lic.ExpiresAt, 0).Format("2006-01-02 15:04:05 UTC")
+				res["expires_human"] = time.Unix(lic.ExpiresAt, 0).UTC().Format("2006-01-02 15:04:05 UTC")
 				res["days_remaining"] = int((lic.ExpiresAt - now) / 86400)
 			} else {
 				res["expires_human"] = "Lifetime (Permanent)"

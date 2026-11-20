@@ -100,7 +100,7 @@ func (h *labHost) run(ctx context.Context, name string, args ...string) ([]byte,
 			}
 			return []byte(b.String()), nil
 		}
-		if len(args) >= 4 && args[0] == "-o" {
+		if len(args) >= 3 && args[0] == "-o" {
 			var b strings.Builder
 			b.WriteString("5: gre-tunnel    inet 10.10.0.1/30 scope global gre-tunnel\\       valid_lft forever preferred_lft forever\n")
 			for i := 1; i <= h.sc.n; i++ {

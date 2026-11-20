@@ -625,6 +625,7 @@
     padding:3px 9px; border-radius:8px; letter-spacing:-.01em; white-space:nowrap; }
   /* a long IPv6 address wraps inside a tunnel card instead of overflowing it */
   .peer-card .det-v.mono { white-space:normal; overflow-wrap:anywhere; min-width:0; }
+  .ht-via { font-family:var(--mono, ui-monospace, monospace); opacity:.7; }
   /* peer cards: bottom action row + inline remove confirm */
   .peer-card .peer-acts .armed {
     border-color:var(--er)!important; color:#fff!important;
@@ -2076,6 +2077,7 @@
               <div class="det-head-live">
                 <span class="det-pulse" id="detPulse"></span>
                 <p class="tc-title" data-i18n="details">Details</p>
+                <span class="qs-hint u-ml-8" id="detScope" hidden></span>
               </div>
               <span class="det-checked" id="dashChecked">—</span>
             </div>
@@ -3782,7 +3784,7 @@
               <input type="range" class="ap-range" id="apPerDay" min="1" max="24" step="1" value="6">
             </div>
             <div class="ap-rule">
-              <div class="ap-rule-h"><span class="ap-lbl">Quiet hours (server time): no switching</span><output id="apQuietOut">None</output></div>
+              <div class="ap-rule-h"><span class="ap-lbl" id="apQuietLbl">Quiet hours (Tehran time): no switching</span><output id="apQuietOut">None</output></div>
               <div class="ap-hours" id="apHours" role="group" aria-label="Quiet hours"></div>
               <div class="qs-hint u-m-0">Click the first hour, then the last one. Click <button type="button" class="ap-link" id="apQuietClear">Clear</button> for none.</div>
             </div>
