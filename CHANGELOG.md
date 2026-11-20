@@ -5,6 +5,9 @@ Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
 ## Unreleased
 
+- **A server with several addresses shows which one each tunnel uses.** On the Dashboard the Iran server lists every address its tunnels leave from, and a tunnel set to another one shows it under its name ("via 198.51.100.20"). On the Nodes map the server's card lists them too, and that tunnel's line is labelled with it ("frp:tcp · 198.51.100.20").
+- **Top bar with several foreign servers: no more first-tunnel engine and latency.** It showed "GRE + FRP" and one ping next to "3 servers", both from the first tunnel only; the Dashboard already shows each server's. With one foreign server they stay.
+- **Tunnel tab: the first tunnel's chip reads like the others.** It was called "Tunnel" and showed "frps :7001"; it now has its name and its traffic, as the other tunnels' chips do.
 - **Iran server: the first FRP tunnel shows its forwarded ports.** Its ports are written in the foreign server's frpc.toml, so the Iran side showed "—" under Forwarded on the Tunnel tab, in Details and in the dashboard's Tunnels card. The snapshot now takes them from what its frps serves (`syncFrpsServed`, TCP and UDP), read at most once every 30 seconds, and only while the config names none.
 - **Details says which tunnel it shows, and lists the server's other addresses.** On an Iran server with more than one tunnel the Details title reads "First tunnel · <name>", since its cards describe that one. The Server card lists the server's other public IPv4 addresses under "Other IPs" (any of them can be a tunnel's Iran IP in Edit Tunnel) and its global IPv6 addresses on a separate "IPv6" row (used by the 6to4 and 4in6 carriers). Temporary, deprecated and private IPv6 addresses are left out.
 
