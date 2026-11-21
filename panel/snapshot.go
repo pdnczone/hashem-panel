@@ -544,15 +544,20 @@ func buildSnapshot() *HubSnapshot {
 	return s
 }
 
-// localTraffic is the base tunnel's counters: the gre-tunnel interface, the
-// Backhaul unit's port counters, or (Bagher only) all carrier counters.
+// localTraffic is the base tunnel's counters: the gre-tunnel interface plus
+// its FRP or Backhaul port counters, or (Bagher only) all carrier counters.
+// Both are summed as for the hub's main tunnel (mainTunnelFrom): a foreign
+// server whose FRP or Backhaul dials the Iran hub's public IP next to an idle
+// GRE showed almost no speed on its link while the Live traffic card,
+// which counts the ports, showed MB/s. Traffic inside GRE is not counted
+// twice: the port counters match the uplink interface only.
 func localTraffic(st tunnelStatus, v *hostView) (rx, tx *uint64) {
+	var gr, gt *uint64
 	if st.Gre.Exists {
-		if rx, tx = v.traffic("gre-tunnel"); rx != nil {
-			return rx, tx
-		}
+		gr, gt = v.traffic("gre-tunnel")
 	}
-	if rx, tx = v.carrierTraffic(st.FrpSvc); rx != nil {
+	cr, ct := v.carrierTraffic(st.FrpSvc)
+	if rx, tx = sumCounters(gr, gt, cr, ct); rx != nil {
 		return rx, tx
 	}
 	if st.FrpSvc == "" && !st.Gre.Exists { // Bagher only: its links

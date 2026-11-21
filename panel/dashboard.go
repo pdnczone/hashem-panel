@@ -37,6 +37,7 @@ type cpuSample struct {
 func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// Everything host-derived comes from the shared snapshot: this handler never forks.
 	snap := currentSnapshot()
+	mainRx, mainTx := mainCounters(snap)
 	setSnapshotAgeHeader(w, snap)
 	st := snap.Local
 	traffic := snap.Traffic
@@ -197,6 +198,12 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"bagher":      bagherStatus,
 		"xray":        xrayDashLinks(snap),
 		"checked":     time.Now().UTC().Format(time.RFC3339),
+		// the base tunnel's counters, read with the peers' (see mainCounters)
+		"main_rx": mainRx,
+		"main_tx": mainTx,
+		// each Bagher link's counters ("bagher-1" the first, "bagher-<id>"
+		// the others): its speed on the Dashboard, as the other tunnels have
+		"bagher_counters": bagherCounters(snap),
 	}
 	writeJSON(w, d)
 }

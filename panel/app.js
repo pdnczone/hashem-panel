@@ -3167,9 +3167,12 @@ function dashLinks(d, bObj, iran, foreign) {
   const msOf = o => { const p = linkPing(o); return p.ok ? p.txt : ''; };
   if (g.exists || f.up || f.svc) {
     const up = !!(g.exists || f.up);
-    let rate = linkRate('main', st.rx, st.tx, _statusCountersAt);
+    // the dashboard's own counters (every 5 s, with the peers'): the 15 s
+    // status poll left this speed behind Live traffic and stuck in between
+    let rate = d.main_rx != null ? linkRate('main', d.main_rx, d.main_tx, d.counters_at)
+      : linkRate('main', st.rx, st.tx, _statusCountersAt);
     const t = d.traffic || {};
-    if (!rate && st.rx == null && !peers.length && t.speed_down != null) rate = { dn: t.speed_down, up: t.speed_up };
+    if (!rate && d.main_rx == null && st.rx == null && !peers.length && t.speed_down != null) rate = { dn: t.speed_down, up: t.speed_up };
     L.push({ key: 'main', name: d.main_name || tr('', peers.length ? 'Main tunnel' : (foreign ? 'Iran server' : 'Foreign server')),
       ip: d.remote_pub || g.peer || '', state: vizState(st) || (up ? 'ok' : 'down'),
       eng: /backhaul/.test(eng) || /^backhaul/.test(f.svc || '') ? 'Backhaul' : 'FRP', gre: !!g.exists,
@@ -3184,13 +3187,16 @@ function dashLinks(d, bObj, iran, foreign) {
       gre: !(p.engine === 'backhaul' || p.no_gre), lat: msOf(p), rate: linkRate('p' + p.id, p.rx, p.tx, d.counters_at) });
   });
   if (bObj && (bObj.is_active || bObj.has_config || bObj.remote_host)) {
+    // Bagher's speed from its port counters (bagher-1 the first link)
+    const bc = d.bagher_counters || {};
+    const bRate = (tag) => bc[tag] ? linkRate(tag, bc[tag][0], bc[tag][1], d.counters_at) : null;
     L.push({ key: 'bagher', name: bObj.name || 'Bagher', ip: bObj.remote_host || '',
       state: bObj.connected ? 'ok' : (bObj.is_active ? 'warn' : 'down'), eng: 'SSH', gre: false,
-      lat: bObj.latency_ms > 0 ? Math.round(bObj.latency_ms) + 'ms' : '', rate: null });
+      lat: bObj.latency_ms > 0 ? Math.round(bObj.latency_ms) + 'ms' : '', rate: bRate('bagher-1') });
     // more foreign servers on the same Bagher hub
     (Array.isArray(bObj.links) ? bObj.links : []).forEach(l => L.push({ key: 'bagher' + l.id, name: l.name || 'Bagher ' + l.id,
       ip: l.remote_host || '', state: l.connected ? 'ok' : (l.is_active ? 'warn' : 'down'), eng: 'SSH', gre: false,
-      lat: l.latency_ms > 0 ? Math.round(l.latency_ms) + 'ms' : '', rate: null }));
+      lat: l.latency_ms > 0 ? Math.round(l.latency_ms) + 'ms' : '', rate: bRate('bagher-' + l.id) }));
   }
   // Xray tunnel links (their foreign end: "listening" waits for Iran)
   (d.xray || []).forEach(x => L.push({ key: 'xray' + x.id, name: x.name || ('Xray ' + x.id), ip: x.remote || '',
