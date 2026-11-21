@@ -3,6 +3,10 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## Unreleased
+
+- **Foreign server: the tunnel's speed counts FRP and Backhaul next to GRE.** On a foreign server whose FRP or Backhaul dials the Iran hub's public IP while GRE stays idle, the link to the hub showed almost no speed (bytes per second) while the Live traffic card showed MB/s: the link took GRE's counters alone whenever the interface existed. It now adds the carrier's port counters, as the hub's main tunnel already does. Traffic inside GRE is not counted twice, since those counters match the uplink interface only.
+
 ## v3.2.3 — 2026-11-21
 
 **Sentinel 1.4.0 (TUIC, Hysteria, AnyTLS, NaiveProxy, SSH and ShadowTLS through sing-box, the likely cause of every outage, a dashboard that says what needs a look, alerts through Bale or a webhook, a Slow state, a feed per customer, a weekly report and the whole panel in the Telegram bot), times shown in Tehran's zone, and which address each tunnel uses.** Run `hashem update`; an installed Sentinel upgrades itself about two minutes after the panel starts.
