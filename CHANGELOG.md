@@ -6,6 +6,8 @@ Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 ## Unreleased
 
 - **Foreign server: the tunnel's speed counts FRP and Backhaul next to GRE.** On a foreign server whose FRP or Backhaul dials the Iran hub's public IP while GRE stays idle, the link to the hub showed almost no speed (bytes per second) while the Live traffic card showed MB/s: the link took GRE's counters alone whenever the interface existed. It now adds the carrier's port counters, as the hub's main tunnel already does. Traffic inside GRE is not counted twice, since those counters match the uplink interface only.
+- **Dashboard: the first tunnel's speed keeps up with Live traffic.** It was worked out from /api/status, polled every 15 s, while Live traffic and the other tunnels' speeds come from the dashboard every 5 s. So it trailed them, repeated the same number for two refreshes, and averaged over 15 s it could read far off Live traffic. /api/dashboard now sends the first tunnel's counters (`main_rx`, `main_tx`) read with the others, and the Dashboard uses them.
+- **Dashboard: Bagher links show their speed.** They showed none; /api/dashboard now sends each Bagher link's counters (`bagher_counters`).
 
 ## v3.2.3 — 2026-11-21
 

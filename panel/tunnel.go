@@ -32,7 +32,6 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	lv := localView{tunnelStatus: snap.Local, LatencyMs: -1}
 	if m := snap.Main; m != nil {
 		lv.HealthState, lv.ICMPFiltered, lv.LatencyMs, lv.LatencyKind, lv.Reasons = m.HealthState, m.ICMPFiltered, m.LatencyMs, m.LatencyKind, m.Reasons
-		lv.Rx, lv.Tx = m.Rx, m.Tx
 	} else if st := snap.Local; st.Gre.Exists || st.FrpUp {
 		// a foreign server has no hub link: its health comes from its own
 		// session, as on the dashboard. A live session is not pinged
@@ -45,15 +44,35 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	lv.CarrierID = mainCarrierID(snap.Local)
 	lv.Name = linkLabel("main")
-	if lv.Rx == nil {
-		lv.Rx, lv.Tx = snap.LocalRx, snap.LocalTx
-	}
+	lv.Rx, lv.Tx = mainCounters(snap)
 	resp := map[string]any{"local": lv, "peers": peers, "peer_count": len(peers), "peer_max": maxPeers(), "snapshot_age_ms": snap.AgeMs(),
 		"counters_at": countersAtMs(snap), "server": statusServer(snap)}
 	if c, err := r.Cookie("gre_session"); err == nil && c.Value != "" {
 		resp["csrf_token"] = GenerateCSRFToken(c.Value)
 	}
 	writeJSON(w, resp)
+}
+
+// mainCounters is the base tunnel's byte counters: the hub's main link, or on
+// a foreign server its own tunnel. /api/status and /api/dashboard both send
+// them, so the Dashboard's speed for it moves with the others (every 5 s)
+// instead of waiting for the 15 s status poll.
+func mainCounters(snap *HubSnapshot) (rx, tx *uint64) {
+	if m := snap.Main; m != nil && m.Rx != nil {
+		return m.Rx, m.Tx
+	}
+	return snap.LocalRx, snap.LocalTx
+}
+
+// bagherCounters is the Bagher links' byte counters by carrier tag.
+func bagherCounters(snap *HubSnapshot) map[string][2]uint64 {
+	out := map[string][2]uint64{}
+	for tag, c := range snap.CarrierTags {
+		if strings.HasPrefix(tag, "bagher-") {
+			out[tag] = c
+		}
+	}
+	return out
 }
 
 // statusServer names this machine for the topbar: its host name and public IP
