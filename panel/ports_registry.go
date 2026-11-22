@@ -71,6 +71,17 @@ func portClaimsWith(bagher SSHFwdConfig) []portClaim {
 			both(p.FrpPort, claimRelay, p.ID, "the control port of "+owner)
 		}
 	}
+	// The first tunnel when no peer record is it: an Iran server's first FRP
+	// tunnel has its ports in the foreign frpc.toml, so they are what its frps
+	// serves (the snapshot reads them). Without them a second foreign server
+	// on the same port got no failover pool and could not take the port.
+	if basePeer(peers) == nil {
+		if s := snapPtr.Load(); s != nil && strings.HasPrefix(s.Local.Role, "iran") {
+			for _, port := range s.Local.ProxyPorts {
+				both(port, claimPeer, mainTunnelID, "the first tunnel")
+			}
+		}
+	}
 	out = append(out, relayConfClaims()...)
 	out = append(out, customerPortClaims()...)
 
