@@ -3817,5 +3817,7 @@ window.FA_TEXT = {
   "Remove this Telegram account?": "این حساب تلگرام حذف شود؟",
   "It can no longer use the bot.": "دیگر نمی‌تواند از ربات استفاده کند.",
   "Telegram bot — Hashem Pro": "ربات تلگرام — هاشم پرو",
-  "The Telegram bot is a Hashem Pro feature: run this panel from a Telegram chat.": "ربات تلگرام یک ویژگی هاشم پرو است: این پنل را از یک چت تلگرام اداره کنید."
+  "The Telegram bot is a Hashem Pro feature: run this panel from a Telegram chat.": "ربات تلگرام یک ویژگی هاشم پرو است: این پنل را از یک چت تلگرام اداره کنید.",
+  "Use the Watchdog's Bot": "استفاده از ربات نگهبان",
+  "The bot now uses the Watchdog tab's token": "ربات حالا از توکن تب نگهبان استفاده می‌کند"
 };

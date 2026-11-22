@@ -67,7 +67,8 @@ Commands: `/menu /status /tunnels /watchdog /autopilot /customers /doctor
 - Only accounts paired from the panel, and only in a **private chat** with the
   bot. Groups and channels are ignored, so nobody in a group can send it
   commands. An unpaired account gets one short answer with its Telegram ID.
-- **Admin** may do everything above; **Viewer** may only look.
+- **Admin** may do everything above; **Viewer** may only look at the menus (not `/api`, the cluster, limits, Sentinel or carrier advice, whose full answers can hold tunnel tokens and keys).
+- Every button carries a tag of its server: when two servers share one bot token, a button from one server's message does nothing on the other.
 - A new pairing is announced to the other admins. Remove an account, or change
   its role, on the card.
 - Five wrong pairing codes in ten minutes and that account is not heard for a

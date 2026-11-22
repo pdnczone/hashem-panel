@@ -26,6 +26,7 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -468,11 +469,30 @@ type tgScreen struct {
 	Doc     []byte
 }
 
+// tgTag marks this server's buttons. Two servers polling one bot token
+// share its updates: a button pressed under one server's message may reach
+// the other, which must not act on its own tunnel with that ID.
+func tgTag() string {
+	h := sha256.Sum256([]byte("hashem-tgbot:" + getMachineHash()))
+	return hex.EncodeToString(h[:2]) + "|"
+}
+
 func tgMarkup(keys [][]tgBtn) map[string]any {
 	if len(keys) == 0 {
 		return map[string]any{"inline_keyboard": [][]tgBtn{}}
 	}
-	return map[string]any{"inline_keyboard": keys}
+	tag := tgTag()
+	out := make([][]tgBtn, len(keys))
+	for i, row := range keys {
+		out[i] = make([]tgBtn, len(row))
+		for j, b := range row {
+			if b.Data != "" {
+				b.Data = tag + b.Data
+			}
+			out[i][j] = b
+		}
+	}
+	return map[string]any{"inline_keyboard": out}
 }
 
 // tgSendDoc sends data as a file.
@@ -735,7 +755,13 @@ func tgHandle(tok string, u tgUpdate) {
 		return
 	}
 	chat, msg := cb.Message.Chat.ID, cb.Message.MessageID
-	if n, ok := strings.CutPrefix(cb.Data, "ok:"); ok {
+	data, mine := strings.CutPrefix(cb.Data, tgTag())
+	if !mine {
+		answer(tgT(c, "این دکمه مال سرور دیگری است که همین ربات را دارد (یا از نسخه‌ی قبلی است): از /menu همین سرور شروع کنید. برای هر سرور یک ربات جدا بسازید.",
+			"This button belongs to another server that uses this bot (or to an older version): start from this server's /menu. Give each server a bot of its own."))
+		return
+	}
+	if n, ok := strings.CutPrefix(data, "ok:"); ok {
 		p, ok := tgTakePending(n, usr.ID)
 		if !ok {
 			answer(tgT(c, "این دکمه منقضی شده یا قبلاً استفاده شده؛ دوباره از منو انجام دهید.", "This button has expired or was used: do it again from the menu."))
@@ -751,14 +777,35 @@ func tgHandle(tok string, u tgUpdate) {
 		tgShow(tok, chat, msg, tgScreen{Text: out, Keys: [][]tgBtn{{{Text: tgT(c, "🏠 منو", "🏠 Menu"), Data: "m"}}}})
 		return
 	}
-	if n, ok := strings.CutPrefix(cb.Data, "no:"); ok {
+	if n, ok := strings.CutPrefix(data, "no:"); ok {
 		tgTakePending(n, usr.ID)
 		answer("")
 		tgShow(tok, chat, msg, tgMenu(c, usr))
 		return
 	}
 	answer("")
-	tgShow(tok, chat, msg, tgOnButton(c, usr, chat, cb.Data))
+	if tgSlow(data) {
+		tgShow(tok, chat, msg, tgScreen{Text: tgT(c, "⏳ لطفاً صبر کنید…", "⏳ Working…")})
+	}
+	tgShow(tok, chat, msg, tgOnButton(c, usr, chat, data))
+}
+
+// tgSlow: buttons that take a while (they say so first).
+func tgSlow(data string) bool {
+	key, arg, _ := strings.Cut(data, ":")
+	switch key {
+	case "tr", "tg", "tp", "lg", "bks":
+		return true
+	case "dr":
+		return arg == "run"
+	case "to":
+		return arg == "health" || arg == "tune"
+	case "up":
+		return arg == "chk"
+	case "wd":
+		return arg == "test" || arg == "bkn"
+	}
+	return false
 }
 
 // tgStranger answers an account that is not paired, now and then: its ID

@@ -4850,6 +4850,7 @@ function tgbRender(r) {
   $('tgbState').textContent = st + (r.username ? ' · @' + r.username : '');
   $('tgbState').className = 'badge ' + (r.state === 'running' ? 'ok' : r.state === 'error' ? 'err' : 'dim');
   $('tgbEnabled').checked = !!r.enabled;
+  $('tgbUseWd').classList.toggle('hidden', !r.own_token);
   $('tgbLang').value = r.lang || 'fa';
   $('tgbToken').placeholder = r.own_token ? r.token_masked : (r.watchdog_token ? tr('', 'Using the Watchdog tab\'s bot') + ' (' + r.token_masked + ')' : '123456:ABC-…');
   $('tgbMsg').textContent = r.error ? tr('', 'Last error') + ': ' + r.error : (!r.own_token && !r.watchdog_token ? tr('', 'Set a bot token here or in the Watchdog tab.') : '');
@@ -4869,6 +4870,10 @@ $('tgbSave').onclick = async () => {
   const tok = $('tgbToken').value.trim();
   if (tok) body.token = tok;
   try { tgbRender(await api('/api/telegram-bot', body)); $('tgbToken').value = ''; toastOk(tr('', 'Telegram bot saved')); }
+  catch (e) { toastErr(tr('', 'Telegram bot'), e.message); }
+};
+$('tgbUseWd').onclick = async () => {
+  try { tgbRender(await api('/api/telegram-bot', { token: '' })); toastOk(tr('', 'The bot now uses the Watchdog tab\'s token')); }
   catch (e) { toastErr(tr('', 'Telegram bot'), e.message); }
 };
 $('tgbTest').onclick = async () => {

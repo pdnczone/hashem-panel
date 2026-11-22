@@ -1000,10 +1000,12 @@ func tgTools(c tgBotConfig, usr *tgBotUser, arg string) tgScreen {
 			[]tgBtn{{Text: tgT(c, "🚀 بهینه‌سازی شبکه", "🚀 Optimize network"), Data: "to:opt"}, {Text: tgT(c, "↩️ برگرداندن", "↩️ Restore"), Data: "to:rst"}},
 			[]tgBtn{{Text: tgT(c, "📈 وضعیت تنظیم شبکه", "📈 Tuning status"), Data: "to:tune"}, {Text: tgT(c, "🧪 تست سلامت تونل‌ها", "🧪 Tunnel health test"), Data: "to:health"}})
 	}
-	keys = append(keys,
-		[]tgBtn{{Text: tgT(c, "💡 پیشنهاد حامل", "💡 Carrier advice"), Data: "to:adv"}, {Text: tgT(c, "🚦 محدودیت‌ها", "🚦 Limits"), Data: "to:lim"}},
-		[]tgBtn{{Text: "🛰 Sentinel", Data: "to:sp"}},
-		tgBack(c, "m"))
+	if usr.admin() {
+		keys = append(keys,
+			[]tgBtn{{Text: tgT(c, "💡 پیشنهاد حامل", "💡 Carrier advice"), Data: "to:adv"}, {Text: tgT(c, "🚦 محدودیت‌ها", "🚦 Limits"), Data: "to:lim"}},
+			[]tgBtn{{Text: "🛰 Sentinel", Data: "to:sp"}})
+	}
+	keys = append(keys, tgBack(c, "m"))
 	return tgScreen{Text: tgT(c, "🛠 ابزارها:\nبرای هر کار دیگری از /api استفاده کنید (راهنما: /help).", "🛠 Tools:\nFor anything else use /api (see /help)."), Keys: keys}
 }
 
@@ -1154,6 +1156,9 @@ func tgPrettyRaw(data []byte) string {
 }
 
 func tgGeneric(c tgBotConfig, usr *tgBotUser, title, pathQuery string) tgScreen {
+	if !usr.admin() { // the whole answer is shown: it may hold secrets
+		return tgScreen{Text: tgT(c, "⛔ فقط ادمین.", "⛔ Admins only."), Keys: [][]tgBtn{tgBack(c, "m")}}
+	}
 	code, data, err := tgAPI(usr, http.MethodGet, pathQuery, nil)
 	if err == nil && code >= 300 {
 		err = fmt.Errorf("%s", tgAPIErrText(code, data))
@@ -1178,6 +1183,9 @@ func tgGenericPost(c tgBotConfig, usr *tgBotUser, title, path string, body any, 
 // tgRawAPI: /api METHOD /api/path [json]. A GET runs at once; anything else
 // is asked again.
 func tgRawAPI(c tgBotConfig, usr *tgBotUser, rest string) tgScreen {
+	if !usr.admin() { // a GET can hold secrets too (tunnel tokens, kits, keys)
+		return tgScreen{Text: tgT(c, "⛔ /api فقط برای ادمین است.", "⛔ /api is for admins only.")}
+	}
 	usage := tgT(c, "نمونه‌ها:\n/api GET /api/status\n/api GET /api/peers\n/api POST /api/action {\"action\":\"ping\",\"peer_id\":2}\n/api PATCH /api/peers {\"id\":2,\"ports\":\"443, 8443\"}\n\nفهرست کامل در docs/API.md است.",
 		"Examples:\n/api GET /api/status\n/api GET /api/peers\n/api POST /api/action {\"action\":\"ping\",\"peer_id\":2}\n/api PATCH /api/peers {\"id\":2,\"ports\":\"443, 8443\"}\n\nThe full list is in docs/API.md.")
 	parts := strings.SplitN(rest, " ", 3)
@@ -1226,7 +1234,7 @@ func tgHelp(c tgBotConfig) tgScreen {
 /api برای هر کار دیگری که پنل دارد (درخواست مستقیم به API پنل)، مثلاً:
 /api GET /api/peers
 /api POST /api/action {"action":"ping","peer_id":2}
-هر درخواستی جز GET یک بار دیگر تأیید می‌خواهد.
+فقط ادمین؛ هر درخواستی جز GET یک بار دیگر تأیید می‌خواهد.
 
 کارهایی که از ربات نمی‌شود:
 • ترمینال سرور
@@ -1248,7 +1256,7 @@ Use the buttons, or these commands:
 /api for anything else the panel does (a request straight to the panel's API), e.g.:
 /api GET /api/peers
 /api POST /api/action {"action":"ping","peer_id":2}
-Anything but GET asks once more.
+Admins only; anything but GET asks once more.
 
 What the bot cannot do:
 • the server terminal

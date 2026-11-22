@@ -184,6 +184,10 @@ func tgMsg(id int64, from int64, chatType, text string) tgUpdate {
 }
 
 func tgPress(id int64, from int64, data string) tgUpdate {
+	if !strings.HasPrefix(data, tgTag()) && !strings.HasPrefix(data, "raw:") {
+		data = tgTag() + data
+	}
+	data = strings.TrimPrefix(data, "raw:")
 	return tgUpdate{UpdateID: id, Callback: &tgCallback{ID: "cb", From: tgUser{ID: from}, Data: data,
 		Message: &tgMessage{MessageID: 7, Chat: tgChat{ID: from, Type: "private"}}}}
 }
@@ -468,7 +472,7 @@ func TestTGBotEveryMenuRenders(t *testing.T) {
 			}
 			for _, row := range s.Keys {
 				for _, b := range row {
-					if len(b.Data) > 64 || (b.Data == "" && b.URL == "") {
+					if len(tgTag()+b.Data) > 64 || (b.Data == "" && b.URL == "") {
 						t.Errorf("%s (%d): button %q data %q", d, id, b.Text, b.Data)
 					}
 				}
@@ -499,5 +503,44 @@ func TestTGBotRenewCustomer(t *testing.T) {
 	tgTick(t)
 	if strings.Join(f.actions, ",") != "renew days=30 reset=false" {
 		t.Fatalf("renew: %v", f.actions)
+	}
+}
+
+// A viewer reads the curated menus only: /api and whole-answer dumps can
+// hold tunnel tokens and keys.
+func TestTGBotViewerGetsNoRawAnswers(t *testing.T) {
+	f := newTGHarness(t, true)
+	tgTick(t)
+	f.push(tgMsg(1, 43, "private", "/api GET /api/peer/config"), tgPress(2, 43, "cl"), tgPress(3, 43, "to:adv"))
+	tgTick(t)
+	if n := strings.Count(f.texts(), "dmin"); n != 3 {
+		t.Fatalf("a viewer must be refused 3 times: %s", f.texts())
+	}
+	for _, row := range tgTools(loadTGBotConfig(), loadTGBotConfig().user(43), "").Keys {
+		for _, b := range row {
+			if strings.HasPrefix(b.Data, "to:") {
+				t.Fatalf("a viewer sees %q", b.Data)
+			}
+		}
+	}
+}
+
+// Two servers on one bot token: a button from the other server's message
+// (another tag) does nothing here.
+func TestTGBotButtonsBelongToTheirServer(t *testing.T) {
+	f := newTGHarness(t, true)
+	tgTick(t)
+	f.push(tgPress(1, 42, "raw:ffff|tp:0"), tgPress(2, 42, "raw:tp:0"))
+	tgTick(t)
+	if len(f.actions) != 0 {
+		t.Fatalf("another server's button ran here: %v", f.actions)
+	}
+	f.push(tgPress(3, 42, "tp:0"))
+	tgTick(t)
+	if strings.Join(f.actions, ",") != "ping" {
+		t.Fatalf("this server's button: %v", f.actions)
+	}
+	if tgSlow("tp:0") != true || tgSlow("m") {
+		t.Fatal("slow buttons")
 	}
 }
