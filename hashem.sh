@@ -5331,6 +5331,12 @@ cli_add_peer() {
         echo -e "${RED}[!] GRE IP ${LOCAL_GRE} is already used by another peer.${NC}"; return 1
     fi
     [[ -z "$NAME" ]] && NAME="peer-${ID}"
+    # this server's first tunnel (the hub copy makes it with add-peer too):
+    # what setup-iran does around it, so a fresh hub is set up the same way
+    local FIRST_TUN=1
+    tunnel_present && FIRST_TUN=0
+    grep -q '"id"' "$PEERS_FILE" 2>/dev/null && FIRST_TUN=0
+    [[ "$FIRST_TUN" -eq 1 ]] && { backup_configs "pre_setup_iran" >/dev/null 2>&1 || true; ensure_dependencies_smart; }
     install_frp_binaries || return 1
     if [[ "$ID" -eq 1 ]] && ! tunnel_present; then
         # first tunnel keeps legacy names (gre-tunnel, frps) — old setups untouched
@@ -5354,6 +5360,11 @@ cli_add_peer() {
         return 1
     fi
     frps_ufw_open "$FRP_PORT" "$CLEANED"
+    if [[ "$FIRST_TUN" -eq 1 ]]; then
+        tune_apply >/dev/null 2>&1 || true
+        watchdog_timer_ensure >/dev/null 2>&1 || true  # drives Auto-Pool + schedules, not just alerts
+        init_watchdog_json >/dev/null 2>&1 || true
+    fi
     if [[ "${PEER_FRP_TRANSPORT:-tcp}" == "wss" ]]; then
         local _fsuf=""; [[ "$LEGACY" == "true" ]] || _fsuf="-${ID}"
         frps_wss_front_ensure "$_fsuf" "$FRP_PORT" || echo -e "${YELLOW}[!] WSS TLS front could not be started for this peer.${NC}"
@@ -5527,6 +5538,10 @@ cli_add_backhaul_peer() {
     fi
 
     [[ -z "$NAME" ]] && NAME="peer-${ID}"
+    local FIRST_TUN=1
+    tunnel_present && FIRST_TUN=0
+    grep -q '"id"' "$PEERS_FILE" 2>/dev/null && FIRST_TUN=0
+    [[ "$FIRST_TUN" -eq 1 ]] && { backup_configs "pre_setup_iran" >/dev/null 2>&1 || true; ensure_dependencies_smart; }
     install_backhaul_binaries || return 1
     backhaul_ensure_tls "$TRANSPORT"
 
@@ -5565,6 +5580,11 @@ cli_add_backhaul_peer() {
         return 1
     fi
 
+    if [[ "$FIRST_TUN" -eq 1 ]]; then
+        tune_apply >/dev/null 2>&1 || true
+        watchdog_timer_ensure >/dev/null 2>&1 || true
+        init_watchdog_json >/dev/null 2>&1 || true
+    fi
     # Record peer into peers.json
     local NUM_PORTS_JSON
     NUM_PORTS_JSON=$(python3 -c '
@@ -8722,10 +8742,26 @@ restart_all_lite() {
         if (( broken )); then
             # a relay that is not running (failed, or stopped after a crash):
             # "is-failed" alone left a stopped one down for good
+            # (an engine switch of the first tunnel stops the old engine and
+            # leaves it enabled: frps and backhaul-server are never both
+            # started, and a stopped one is left alone while the other runs)
+            local base_on=""
+            for u in frps backhaul-server; do
+                systemctl is-active --quiet "$u" 2>/dev/null && base_on="$u"
+            done
             for u in "$dir"/frps*.service "$dir"/backhaul-server*.service; do
                 [[ -f "$u" ]] || continue
-                systemctl is-enabled --quiet "$(basename "$u")" 2>/dev/null || continue
-                systemctl is-active --quiet "$(basename "$u")" 2>/dev/null || systemctl restart "$(basename "$u")" >/dev/null 2>&1
+                u=$(basename "$u" .service)
+                if systemctl is-failed --quiet "$u.service" 2>/dev/null; then
+                    [[ -n "$base_on" && "$base_on" != "$u" && ( "$u" == frps || "$u" == backhaul-server ) ]] && continue
+                    systemctl restart "$u.service" >/dev/null 2>&1
+                    continue
+                fi
+                [[ "$u" == frps-wss* ]] && continue  # a WSS front: only when it failed
+                systemctl is-active --quiet "$u.service" 2>/dev/null && continue
+                systemctl is-enabled --quiet "$u.service" 2>/dev/null || continue
+                [[ ( "$u" == frps || "$u" == backhaul-server ) && -n "$base_on" ]] && continue
+                systemctl restart "$u.service" >/dev/null 2>&1
             done
         fi
         return 0
@@ -8744,6 +8780,20 @@ restart_all_lite() {
     for u in "${list[@]}"; do
         systemctl restart "$u" >/dev/null 2>&1
     done
+    # the other Iran hubs this server serves (join-hub): their GRE interface
+    # when it does not work, their client when it is not running. They were
+    # never restarted, so a foreign server lost its second hub for good.
+    if (( broken )); then
+        for u in "$dir"/gre-h[0-9]*.service; do
+            [[ -f "$u" ]] || continue
+            ifc=$(basename "$u" .service)
+            gre_if_healthy "$ifc" || systemctl restart "${ifc}.service" >/dev/null 2>&1
+        done
+        for u in "$dir"/frpc-h[0-9]*.service "$dir"/backhaul-client-h[0-9]*.service; do
+            [[ -f "$u" ]] || continue
+            systemctl is-active --quiet "$(basename "$u")" 2>/dev/null || systemctl restart "$(basename "$u")" >/dev/null 2>&1
+        done
+    fi
 }
 
 

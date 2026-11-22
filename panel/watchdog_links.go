@@ -22,8 +22,9 @@ package main
 //     it stays down; a tunnel a carrier swap or Autopilot is working on is left
 //     alone;
 //   - the recovery message says how long it was down;
-//   - a tunnel is watched once it has been up: one that was never connected
-//     (being set up) raises nothing.
+//   - every tunnel there is when the watchdog starts is watched at once, also
+//     one that is already down; a tunnel added later is watched once it has
+//     been up, so one being set up raises nothing.
 //
 // The panel writes watchdog_panel.json while it does this; hashem.sh's timer
 // then leaves the tunnel check to it and still runs the backups, the restart
@@ -114,7 +115,20 @@ func wdBackoff(n int) time.Duration {
 	return d
 }
 
-func wdKey(l peerLive) string { return fmt.Sprintf("%d|%s|%d", l.ID, l.RemotePub, l.FrpPort) }
+// wdKey names what a tunnel is, so its state follows it. The first tunnel is
+// keyed on its relay unit: its foreign address and ports are read from its
+// live GRE interface and its frps, and both are gone exactly when it is down.
+// A peer is keyed on its record.
+func wdKey(l peerLive, s *HubSnapshot) string {
+	if l.ID == mainTunnelID {
+		svc := l.FrpsSvc
+		if svc == "" && s != nil {
+			svc = s.Local.FrpSvc
+		}
+		return "main|" + svc
+	}
+	return fmt.Sprintf("%d|%s|%d", l.ID, l.RemotePub, l.FrpPort)
+}
 
 func wdName(l peerLive) string {
 	n := strings.TrimSpace(l.Name)
@@ -162,8 +176,12 @@ func watchdogOnSnapshot(s *HubSnapshot) {
 		wd.Unlock()
 		return
 	}
+	// First run (this version just started, or the watchdog was just turned
+	// on): every tunnel there is now is watched at once, also one that is
+	// already down. Tunnels added later are watched once they have been up.
+	seed := false
 	if !wd.loaded {
-		wdLoadLocked()
+		seed = !wdLoadLocked()
 	}
 	need := wdNeed(c)
 	seen := map[string]bool{}
@@ -171,14 +189,21 @@ func watchdogOnSnapshot(s *HubSnapshot) {
 	var restarts []func()
 	dirty := false
 	for _, l := range apLinks(s) {
-		k := wdKey(l)
+		k := wdKey(l, s)
 		seen[k] = true
 		st := wd.links[k]
 		if st == nil {
 			st = &wdLink{Key: k, ID: l.ID}
+			if seed {
+				st.LastUp = now.Unix()
+			}
 			wd.links[k] = st
+			dirty = true
 		}
-		st.Name, st.Remote = wdName(l), l.RemotePub
+		// a first tunnel that is down has lost its address: keep the last one
+		if l.RemotePub != "" || st.Name == "" {
+			st.Name, st.Remote = wdName(l), l.RemotePub
+		}
 		switch {
 		case l.HealthState == "":
 			continue // not measured yet
@@ -327,15 +352,17 @@ func wdSendReal(text string) error {
 	return err
 }
 
-func wdLoadLocked() {
+// wdLoadLocked reads what the panel knew before it restarted. It reports
+// whether there was such a file.
+func wdLoadLocked() bool {
 	wd.loaded = true
 	data, err := os.ReadFile(wdPanelPath())
 	if err != nil {
-		return
+		return false
 	}
 	var f wdPanelFile
 	if json.Unmarshal(data, &f) != nil {
-		return
+		return false
 	}
 	for i := range f.Links {
 		l := f.Links[i]
@@ -344,6 +371,7 @@ func wdLoadLocked() {
 		}
 		wd.links[l.Key] = &l
 	}
+	return true
 }
 
 func wdSaveLocked(now time.Time) {

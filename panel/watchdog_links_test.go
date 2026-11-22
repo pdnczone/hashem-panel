@@ -107,10 +107,11 @@ func TestWatchdogWatchesEveryTunnel(t *testing.T) {
 func TestWatchdogAlertOnlyAndNeverUpTunnels(t *testing.T) {
 	apLicense(t, true)
 	h := newWDHarness(t, false)
-	// a tunnel that has never been up (being set up): nothing
-	h.tick(wdPeer(4, "new", "198.51.100.4", stateDegraded))
+	h.tick(wdPeer(5, "fi", "198.51.100.5", stateHealthy)) // the first run
+	// a tunnel added later that has never been up (being set up): nothing
+	h.tick(wdPeer(5, "fi", "198.51.100.5", stateHealthy), wdPeer(4, "new", "198.51.100.4", stateDegraded))
 	h.clock = h.clock.Add(10 * time.Minute)
-	h.tick(wdPeer(4, "new", "198.51.100.4", stateDegraded))
+	h.tick(wdPeer(5, "fi", "198.51.100.5", stateHealthy), wdPeer(4, "new", "198.51.100.4", stateDegraded))
 	if len(h.sent) != 0 {
 		t.Fatalf("a tunnel never up must raise nothing: %v", h.sent)
 	}
@@ -142,6 +143,43 @@ func TestWatchdogOffOrUnlicensed(t *testing.T) {
 	}
 	if _, err := os.Stat(wdPanelPath()); !os.IsNotExist(err) {
 		t.Fatalf("no heartbeat without the license: %v", err)
+	}
+}
+
+// The user's case: a tunnel that is already down when this version first
+// starts (or when the watchdog is turned on) is watched at once.
+func TestWatchdogFirstRunWatchesATunnelAlreadyDown(t *testing.T) {
+	apLicense(t, true)
+	h := newWDHarness(t, true)
+	h.tick(wdPeer(3, "nl", "198.51.100.3", stateDegraded))
+	h.clock = h.clock.Add(3 * time.Minute)
+	h.tick(wdPeer(3, "nl", "198.51.100.3", stateDegraded))
+	if len(h.sent) != 1 || !strings.Contains(h.sent[0], "DOWN: nl") || len(h.restarts) == 0 {
+		t.Fatalf("already down at the first run: sent %v restarted %v", h.sent, h.restarts)
+	}
+}
+
+// The first FRP tunnel's address comes from its live GRE interface: when it
+// goes fully down the address is gone too. Its state must follow it anyway.
+func TestWatchdogFirstTunnelKeepsItsStateWhenItLosesItsAddress(t *testing.T) {
+	apLicense(t, true)
+	h := newWDHarness(t, true)
+	up := &peerLive{peerRecord: peerRecord{ID: mainTunnelID, Name: "Tunnel · 198.51.100.9", RemotePub: "198.51.100.9", FrpPort: 7000},
+		FrpUp: true, GreUp: true, Linked: true, PingOK: true, HealthState: stateHealthy}
+	down := &peerLive{peerRecord: peerRecord{ID: mainTunnelID, Name: "Tunnel"}, HealthState: stateDown}
+	snap := func(m *peerLive) *HubSnapshot {
+		return &HubSnapshot{At: h.clock, Local: tunnelStatus{Role: "iran (server)", FrpSvc: "frps"}, Main: m}
+	}
+	watchdogOnSnapshot(snap(up))
+	h.clock = h.clock.Add(time.Minute)
+	watchdogOnSnapshot(snap(down))
+	h.clock = h.clock.Add(3 * time.Minute)
+	watchdogOnSnapshot(snap(down))
+	if len(h.sent) != 1 || !strings.Contains(h.sent[0], "198.51.100.9") {
+		t.Fatalf("DOWN naming the first tunnel with its last address: %v", h.sent)
+	}
+	if strings.Join(h.restarts, " ") != "gre-tunnel.service frps" {
+		t.Fatalf("restarted %v, want gre-tunnel.service and frps", h.restarts)
 	}
 }
 

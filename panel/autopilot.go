@@ -300,6 +300,10 @@ func apGate(c autopilotConfig, now time.Time, l peerLive, ts *apTunnelState, dow
 	if !l.FrpUp {
 		return "its service is not running on this server, which is not a blocked path"
 	}
+	if !l.NoGre && !l.GreUp {
+		// a local fault the watchdog restarts; another carrier does not help
+		return "its GRE interface is missing on this server, which is not a blocked path"
+	}
 	if ts.LastUp == 0 {
 		return "it has not been up yet since Autopilot was turned on"
 	}

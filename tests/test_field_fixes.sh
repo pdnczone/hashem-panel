@@ -302,6 +302,11 @@ chk "foreign, broken only: the engine, not a working GRE" "$(grep '^restart ' "$
 : > "$T/pingok"; : > "$T/busy"; : > "$T/systemctl.log"
 restart_all_lite --broken-only > /dev/null
 chk "foreign, GRE dead: both" "$(grep '^restart ' "$T/systemctl.log" | sort | tr '\n' ' ')" "restart frpc.service restart gre-tunnel.service "
+# a second Iran hub this server serves (join-hub): its client when it stopped
+: > "$T/units/frpc-h2.service"; echo "frpc-h2.service" > "$T/stopped"; : > "$T/systemctl.log"
+restart_all_lite --broken-only > /dev/null
+has "$T/systemctl.log" "restart frpc-h2.service" "foreign, broken only: the stopped client of the second hub"
+: > "$T/stopped"; rm -f "$T/units/frpc-h2.service"
 unset -f sleep
 # the Watchdog never asks for the full restart
 chk "watchdog_tick uses --broken-only" "$(awk '/^watchdog_tick\(\) \{/,/^}/' "$ROOT/hashem.sh" | grep 'restart_all_lite' | grep -vc -- '--broken-only')" "0"

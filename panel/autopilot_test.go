@@ -33,7 +33,7 @@ func apLicense(t *testing.T, on bool) {
 func TestAutopilotGate(t *testing.T) {
 	now := time.Date(2026, 11, 12, 14, 0, 0, 0, time.Local)
 	c := defaultAutopilotConfig()
-	up := peerLive{peerRecord: peerRecord{ID: 2, Engine: "frp"}, FrpUp: true}
+	up := peerLive{peerRecord: peerRecord{ID: 2, Engine: "frp"}, FrpUp: true, GreUp: true}
 	seen := func() *apTunnelState { return &apTunnelState{LastUp: now.Add(-time.Hour).Unix()} }
 	long := now.Add(-10 * time.Minute)
 
@@ -52,6 +52,7 @@ func TestAutopilotGate(t *testing.T) {
 		{"never seen up", c, up, &apTunnelState{}, long, "not been up yet"},
 		{"service stopped here", c, peerLive{peerRecord: up.peerRecord}, seen(), long, "not running"},
 		{"xray tunnel", c, peerLive{peerRecord: peerRecord{ID: 2, Engine: "xray"}, FrpUp: true}, seen(), long, "no carrier to swap"},
+		{"GRE missing here", c, peerLive{peerRecord: up.peerRecord, FrpUp: true}, seen(), long, "GRE interface is missing"},
 		{"cooldown", c, up, &apTunnelState{LastUp: 1, LastRun: now.Add(-10 * time.Minute).Unix()}, long, "next run in"},
 		{"daily limit", c, up, &apTunnelState{LastUp: 1, Runs: []int64{now.Unix() - 100, now.Unix() - 200, now.Unix() - 300, now.Unix() - 400, now.Unix() - 500, now.Unix() - 600}}, long, "the limit"},
 	}
@@ -263,7 +264,7 @@ func newAPHarness(t *testing.T) *apHarness {
 
 func (h *apHarness) tick(state string) {
 	autopilotOnSnapshot(&HubSnapshot{At: h.clock, Local: tunnelStatus{Role: "iran"},
-		Peers: []peerLive{{peerRecord: peerRecord{ID: 2, Name: "kish", Engine: "frp"}, FrpUp: true, HealthState: state}}})
+		Peers: []peerLive{{peerRecord: peerRecord{ID: 2, Name: "kish", Engine: "frp"}, FrpUp: true, GreUp: true, HealthState: state}}})
 }
 
 func (h *apHarness) lastEvent(t *testing.T) apEvent {
@@ -613,7 +614,7 @@ func TestAutopilotForgetsATunnelWhoseIDWasReused(t *testing.T) {
 	// id 2 now is another tunnel (another foreign server), never up
 	snap := func(state string) {
 		autopilotOnSnapshot(&HubSnapshot{At: h.clock, Local: tunnelStatus{Role: "iran"},
-			Peers: []peerLive{{peerRecord: peerRecord{ID: 2, Name: "new", Engine: "frp", RemotePub: "203.0.113.9", FrpPort: 7005}, FrpUp: true, HealthState: state}}})
+			Peers: []peerLive{{peerRecord: peerRecord{ID: 2, Name: "new", Engine: "frp", RemotePub: "203.0.113.9", FrpPort: 7005}, FrpUp: true, GreUp: true, HealthState: state}}})
 	}
 	snap(stateDown)
 	h.clock = h.clock.Add(6 * time.Minute)
