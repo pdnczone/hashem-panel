@@ -34,6 +34,9 @@ type alertEvent struct {
 	Why  string `json:"why,omitempty"`
 	At   string `json:"at"`
 	Host string `json:"host"`
+	// Tunnel: the event is about a tunnel. The watchdog sends those to
+	// Telegram itself when it watches the tunnels, so they are not sent twice.
+	Tunnel bool `json:"-"`
 }
 
 func alertConfigPath() string { return filepath.Join(configDir, "alerts.json") }
@@ -68,7 +71,10 @@ func validWebhookURL(u string) bool {
 
 // ---- state-change tracker (pure, tested) ----
 
-type linkSnap struct{ Name, State, Why string }
+type linkSnap struct {
+	Name, State, Why string
+	Tunnel           bool // a tunnel (not the disk, RAM or a certificate)
+}
 
 type alertTracker struct {
 	mu       sync.Mutex
@@ -121,7 +127,7 @@ func (t *alertTracker) observe(now time.Time, links []linkSnap, cfg alertConfig)
 			continue // flapping: suppress, state is still recorded
 		}
 		t.lastSent[l.Name] = now
-		out = append(out, alertEvent{Link: l.Name, From: prev, To: l.State, Why: l.Why, At: now.UTC().Format(time.RFC3339)})
+		out = append(out, alertEvent{Link: l.Name, From: prev, To: l.State, Why: l.Why, At: now.UTC().Format(time.RFC3339), Tunnel: l.Tunnel})
 	}
 	for k := range t.last {
 		if !seen[k] {
@@ -256,7 +262,7 @@ func deliverAlerts(cfg alertConfig, events []alertEvent) {
 				recordError("E-WD-01", "alerts", "webhook failed: "+err.Error())
 			}
 		}
-		if cfg.Telegram {
+		if cfg.Telegram && !(e.Tunnel && watchdogSendsTunnels()) {
 			if err := sendTelegram(wd, alertText(e)); err != nil {
 				recordError("E-WD-01", "alerts", "telegram failed: "+err.Error())
 			}
@@ -286,7 +292,7 @@ func alertLinks(s *HubSnapshot, now time.Time, t *alertTracker) []linkSnap {
 		if name == "" {
 			name = fmt.Sprintf("peer-%d", l.ID)
 		}
-		links = append(links, linkSnap{Name: name, State: l.HealthState, Why: reasonsText(l.Reasons)})
+		links = append(links, linkSnap{Name: name, State: l.HealthState, Why: reasonsText(l.Reasons), Tunnel: true})
 	}
 	if d, ok := doctorAlertLink(); ok { // scheduled Diagnostics (doctor_more.go)
 		links = append(links, d)

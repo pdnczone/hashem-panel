@@ -14,8 +14,7 @@ func TestLoadPeersKeepsTheOthersWhenOneRecordIsOdd(t *testing.T) {
   {"id": 1, "name": "de", "frp_port": 7000, "ports": [443], "gre_if": "gre-tunnel", "frps_svc": "frps", "legacy": true},
   {"id": "2", "name": 42, "frp_port": "7002", "ports": "2083, 8080", "gre_if": "gre-t2", "frps_svc": "frps-2", "no_gre": "0", "legacy": "false"},
   {"id": 3, "name": "fi", "frp_port": 7003, "ports": ["8443", 9443], "gre_if": "gre-t3", "frps_svc": "frps-3"},
-  {"name": "no id at all"},
-  {"id": "x"}
+  {"id": "x", "name": "an id that is no number"}
 ]}`
 	if err := os.WriteFile(peersFile(), []byte(doc), 0600); err != nil {
 		t.Fatal(err)

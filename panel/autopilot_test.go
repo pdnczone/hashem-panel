@@ -622,3 +622,37 @@ func TestAutopilotForgetsATunnelWhoseIDWasReused(t *testing.T) {
 		t.Fatalf("a new tunnel on a reused id was never up: it is not switched, got %v", h.swaps)
 	}
 }
+
+// The real blocked path: frps runs and GRE is up, but the foreign server holds
+// no session. The health model calls that degraded (down needs the service
+// stopped too, which apGate leaves alone), and Autopilot used to act on down
+// only, so it never moved a real tunnel. It must move this one.
+func TestAutopilotActsOnABlockedPath(t *testing.T) {
+	apLicense(t, true)
+	h := newAPHarness(t)
+	h.testErr = errors.New("no path test here")
+	blocked := func() {
+		sig := LinkSignals{ServiceActive: true, GreIfUp: true, ICMPFresh: true}
+		l := peerLive{peerRecord: peerRecord{ID: 2, Name: "kish", Engine: "frp"}, FrpUp: true, GreUp: true}
+		l.applyHealth(sig, icmpResult{Known: true})
+		if l.HealthState == stateHealthy {
+			t.Fatalf("a link without a session must not be healthy: %+v", l)
+		}
+		autopilotOnSnapshot(&HubSnapshot{At: h.clock, Local: tunnelStatus{Role: "iran"}, Peers: []peerLive{l}})
+	}
+	h.tick(stateHealthy)
+	blocked()
+	h.clock = h.clock.Add(6 * time.Minute)
+	blocked()
+	if len(h.swaps) == 0 {
+		t.Fatal("a tunnel blocked for 6 minutes (service up, no session) must be moved")
+	}
+	// degraded is not "seen up": a tunnel that was never healthy is left alone
+	h2 := newAPHarness(t)
+	h2.tick(stateDegraded)
+	h2.clock = h2.clock.Add(10 * time.Minute)
+	h2.tick(stateDegraded)
+	if len(h2.swaps) != 0 {
+		t.Fatalf("a tunnel never seen healthy must not be moved, got %v", h2.swaps)
+	}
+}

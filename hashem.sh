@@ -8474,7 +8474,8 @@ watchdog_check() {
     else
         if systemctl list-units --type=service 2>/dev/null | grep -q 'frps'; then
             FRP_NAME="frps"
-            FRP_OK=1
+            # list-units also lists failed units: only a running one is "ok"
+            systemctl list-units --type=service --state=active --plain --no-legend 'frps*' 2>/dev/null | grep -q . && FRP_OK=1
         fi
     fi
 
@@ -8624,6 +8625,11 @@ except Exception:
     local CURL_OUT
     CURL_OUT=$(curl "${CURL_ARGS[@]}" -d "chat_id=${TG_CHAT_ID}" --data-urlencode "text=${FULL_MSG}" "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" 2>&1)
     local RET=$?
+    if [[ "$TG_ROUTE" == "tunnel" ]] && { [[ $RET -ne 0 ]] || ! grep -Eq '"ok" *: *true' <<<"$CURL_OUT"; }; then
+        # the tunnel the message goes through may be the one that is down
+        CURL_OUT=$(curl -sS --max-time 15 -d "chat_id=${TG_CHAT_ID}" --data-urlencode "text=${FULL_MSG}" "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" 2>&1)
+        RET=$?
+    fi
 
     if [[ $RET -ne 0 ]]; then
         local REDACTED_ERR
@@ -8694,7 +8700,16 @@ restart_all_lite() {
     # do not recover broken client routes by restarting; restarting frps severs all
     # active client/user sessions across ALL other healthy connected spokes simultaneously.
     # Only restart GRE tunnel interfaces on the hub.
-    if [[ -f "${CONFIG_DIR:-/etc/frp}/frps.toml" ]] || systemctl list-unit-files 2>/dev/null | grep -q "^frps\.service"; then
+    # an Iran hub: any relay unit (frps, frps-N, backhaul-server, backhaul-server-N).
+    # Only frps.toml was looked at, so a hub whose first tunnel was removed or
+    # whose tunnels are all Backhaul was taken for a foreign server and nothing
+    # was restarted.
+    local hub=0
+    [[ -f "${CONFIG_DIR:-/etc/frp}/frps.toml" ]] && hub=1
+    for u in "$dir"/frps.service "$dir"/frps-[0-9]*.service "$dir"/backhaul-server.service "$dir"/backhaul-server-[0-9]*.service; do
+        [[ -f "$u" ]] && hub=1
+    done
+    if (( hub )); then
         for u in "$dir"/gre-t*.service; do   # gre-tunnel.service too: listing it again restarted it twice
             [[ -f "$u" ]] || continue
             ifc=$(basename "$u" .service)
@@ -8705,9 +8720,12 @@ restart_all_lite() {
             systemctl restart "${ifc}.service" >/dev/null 2>&1
         done
         if (( broken )); then
+            # a relay that is not running (failed, or stopped after a crash):
+            # "is-failed" alone left a stopped one down for good
             for u in "$dir"/frps*.service "$dir"/backhaul-server*.service; do
                 [[ -f "$u" ]] || continue
-                systemctl is-failed --quiet "$(basename "$u")" 2>/dev/null && systemctl restart "$(basename "$u")" >/dev/null 2>&1
+                systemctl is-enabled --quiet "$(basename "$u")" 2>/dev/null || continue
+                systemctl is-active --quiet "$(basename "$u")" 2>/dev/null || systemctl restart "$(basename "$u")" >/dev/null 2>&1
             done
         fi
         return 0
@@ -8728,6 +8746,18 @@ restart_all_lite() {
     done
 }
 
+
+# watchdog_panel_watches: 0 while the panel watches the tunnels itself. It
+# rewrites watchdog_panel.json at least every 30 s while it does.
+watchdog_panel_watches() {
+    local f="${PANEL_CONFIG_DIR}/watchdog_panel.json" at now
+    [[ -f "$f" ]] || return 1
+    systemctl is-active --quiet gre-panel 2>/dev/null || return 1
+    at=$(sed -n 's/^[[:space:]]*"at":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$f" 2>/dev/null | head -n1)
+    [[ "$at" =~ ^[0-9]+$ ]] || return 1
+    now=$(date +%s)
+    (( now - at <= 150 ))
+}
 
 watchdog_tick() {
     local LOCKFILE="/var/lock/hashem-watchdog.lock"
@@ -8779,6 +8809,12 @@ except Exception as e:
     local DO_RESTART_SCHED="False"
     read -r IS_ENABLED DO_BACKUP DO_RESTART_SCHED <<< "$TICK_ACTION"
 
+    if [[ "$IS_ENABLED" == "True" || "$IS_ENABLED" == "true" ]] && watchdog_panel_watches; then
+        # the panel watches every tunnel of this Iran server itself (alerts
+        # and restarts per tunnel): checking only the first one here too would
+        # send a second, vaguer message
+        IS_ENABLED="panel"
+    fi
     if [[ "$IS_ENABLED" == "True" || "$IS_ENABLED" == "true" ]]; then
         local CHECK_OUT
         CHECK_OUT=$(watchdog_check)

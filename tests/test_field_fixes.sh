@@ -40,6 +40,7 @@ cat > "$T/bin/systemctl" <<EOF
 echo "\$*" >> "$T/systemctl.log"
 case "\$1" in
   is-failed) grep -qxF "\${@: -1}" "$T/failed" 2>/dev/null ;;
+  is-active) ! grep -qxF "\${@: -1}" "$T/failed" 2>/dev/null && ! grep -qxF "\${@: -1}" "$T/stopped" 2>/dev/null ;;
   list-unit-files) exit 0 ;;
 esac
 EOF
@@ -278,6 +279,20 @@ has "$T/out" "gre-t2 is carrying traffic" "says why gre-t2 was skipped"
 restart_all_lite > /dev/null       # the Restart Tunnel Now button: every interface, never frps
 R=$(grep '^restart ' "$T/systemctl.log" | sort | tr '\n' ' ')
 chk "hub, manual restart" "$R" "restart gre-t2.service restart gre-t3.service restart gre-tunnel.service "
+
+# a relay that is stopped (not failed) is started again too
+: > "$T/systemctl.log"; echo "frps-2.service" > "$T/stopped"
+restart_all_lite --broken-only > /dev/null
+chk "hub, broken only: a stopped engine" "$(grep '^restart frps' "$T/systemctl.log" | tr '\n' ' ')" "restart frps-2.service "
+: > "$T/stopped"
+
+# a hub whose tunnels are all Backhaul (no frps.toml): still a hub
+rm -f "$T/frp/frps.toml" "$T/units"/frps*.service
+: > "$T/units/backhaul-server-2.service"; echo "backhaul-server-2.service" > "$T/failed"; : > "$T/systemctl.log"
+restart_all_lite --broken-only > /dev/null
+R=$(grep '^restart ' "$T/systemctl.log" | sort | tr '\n' ' ')
+chk "Backhaul-only hub: its engine, never a foreign server's units" "$R" "restart backhaul-server-2.service restart gre-t3.service "
+rm -f "$T/units/backhaul-server-2.service"; : > "$T/failed"
 
 # foreign server: frpc, no frps
 rm -f "$T/frp/frps.toml" "$T/units"/frps*.service "$T/units"/gre-t[23].service
