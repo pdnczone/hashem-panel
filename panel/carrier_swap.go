@@ -438,11 +438,12 @@ func updatePeerRecord(id int, fn func(p *peerRecord)) error {
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return err
 	}
-	var peers []peerRecord
-	if raw, ok := doc["peers"]; ok {
-		if err := json.Unmarshal(raw, &peers); err != nil {
-			return err
-		}
+	peers, skipped, err := decodePeers(data)
+	if err != nil {
+		return err
+	}
+	if len(skipped) > 0 { // writing would drop them
+		return fmt.Errorf("peers.json has records that cannot be read: %s", strings.Join(skipped, "; "))
 	}
 	found := false
 	for i := range peers {
@@ -463,7 +464,7 @@ func updatePeerRecord(id int, fn func(p *peerRecord)) error {
 	if err != nil {
 		return err
 	}
-	if err := writeTokenFile(peersFile(), append(out, '\n')); err != nil {
+	if err := savePeersFile(append(out, '\n')); err != nil {
 		return err
 	}
 	invalidatePeerIfsCache()
@@ -841,13 +842,11 @@ func pruneTunnelLinks() {
 	keep := map[int]bool{}
 	data, err := os.ReadFile(peersFile())
 	if err == nil {
-		var v struct {
-			Peers []peerRecord `json:"peers"`
-		}
-		if json.Unmarshal(data, &v) != nil {
+		recs, skipped, derr := decodePeers(data)
+		if derr != nil || len(skipped) > 0 { // unknown ids: forget nothing
 			return
 		}
-		for _, p := range v.Peers {
+		for _, p := range recs {
 			keep[p.ID] = true
 		}
 	} else if !os.IsNotExist(err) {

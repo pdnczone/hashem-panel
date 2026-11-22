@@ -5113,7 +5113,7 @@ peer_list() { peer_init; cat "$PEERS_FILE"; }
 peer_next_id() {
     peer_require_py || return 1
     PEERS_F="$PEERS_FILE" MAX_PEERS="$MAX_PEERS" python3 -c \
-'import json,os; d=json.load(open(os.environ["PEERS_F"])); used={p["id"] for p in d.get("peers",[])}; ids=[i for i in range(1,int(os.environ["MAX_PEERS"])+1) if i not in used]; print(ids[0] if ids else 0)'
+'import json,os; d=json.load(open(os.environ["PEERS_F"])); used={int(str(p.get("id","0")).strip() or 0) for p in d.get("peers",[]) if str(p.get("id","")).strip().isdigit()}; ids=[i for i in range(1,int(os.environ["MAX_PEERS"])+1) if i not in used]; print(ids[0] if ids else 0)'
 }
 
 # space-separated "port:peername" of all claimed reverse ports
@@ -5125,8 +5125,10 @@ peer_ports_used() {
 
 # $1=id -> compact JSON record or empty
 peer_get() {
+    # the id may have been written as a string ("3"): it must still be found,
+    # or the tunnel can never be removed
     PEERS_F="$PEERS_FILE" PEER_ID="$1" python3 -c \
-'import json,os; d=json.load(open(os.environ["PEERS_F"])); m=[p for p in d.get("peers",[]) if p["id"]==int(os.environ["PEER_ID"])]; print(json.dumps(m[0]) if m else "")'
+'import json,os; d=json.load(open(os.environ["PEERS_F"])); m=[p for p in d.get("peers",[]) if str(p.get("id","")).strip()==os.environ["PEER_ID"]]; print(json.dumps(m[0]) if m else "")'
 }
 
 peer_token() {
@@ -5371,7 +5373,10 @@ rec = {"id": int(iid), "name": name, "local_pub": lip,
 if os.environ.get("FRP_TRANS", "tcp") != "tcp":
     rec["frp_transport"] = os.environ["FRP_TRANS"]
 d.setdefault("peers", []).append(rec)
-json.dump(d, open(f, "w"), indent=2)
+tmp = f + ".tmp"
+json.dump(d, open(tmp, "w"), indent=2)
+os.chmod(tmp, 0o600)
+os.replace(tmp, f)
 PYEOF
     echo -e "${GREEN}[OK] Peer '${NAME}' (id ${ID}) added: GRE ${LOCAL_PUB} <-> ${REMOTE_PUB} (${LOCAL_GRE} peer ${PEER_GRE} on ${GRE_IF}), ${FRPS_SVC} :${FRP_PORT}${NC}"
     echo -e "${YELLOW}Token for '${NAME}': ${TOKEN} (enter it on the FOREIGN side with ports: ${CLEANED})${NC}"
@@ -5393,10 +5398,10 @@ cli_remove_peer() {
     rec=$(peer_get "$ID")
     [[ -n "$rec" ]] || { echo -e "${RED}[!] No peer with id $ID.${NC}"; return 1; }
     local NAME GIF SVC LEG
-    NAME=$(echo "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')
-    GIF=$(echo "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin)["gre_if"])')
-    SVC=$(echo "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin)["frps_svc"])')
-    LEG=$(echo "$rec" | python3 -c 'import json,sys; print("1" if json.load(sys.stdin).get("legacy") else "0")')
+    NAME=$(echo "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("name") or "peer-'"$ID"'")')
+    GIF=$(echo "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("gre_if") or "gre-t'"$ID"'")')
+    SVC=$(echo "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("frps_svc") or "frps-'"$ID"'")')
+    LEG=$(echo "$rec" | python3 -c 'import json,sys; print("1" if str(json.load(sys.stdin).get("legacy")).lower() in ("true","1") else "0")')
     if [[ "$FORCE" -ne 1 ]]; then
         read -p "Remove peer '${NAME}' (id ${ID})? GRE + its frps go away. (y/N): " CONFIRM
         [[ "$CONFIRM" =~ ^[Yy]$ ]] || { echo -e "${YELLOW}[*] Aborted.${NC}"; return 0; }
@@ -5407,7 +5412,12 @@ cli_remove_peer() {
     else
         frps_wss_front_remove "-${ID}"
         [[ "$SVC" == backhaul-* ]] && backhaul_udp_remove "$SVC"
-        systemctl stop "$SVC" "${GIF}.service" >/dev/null 2>&1
+        # a unit stuck in its stop job held the removal (and the panel's
+        # request) for minutes: stop it with a limit, then kill it
+        if ! timeout 25 systemctl stop "$SVC" "${GIF}.service" >/dev/null 2>&1; then
+            systemctl kill -s KILL "$SVC" "${GIF}.service" >/dev/null 2>&1 || true
+            systemctl stop --no-block "$SVC" "${GIF}.service" >/dev/null 2>&1 || true
+        fi
         systemctl disable "$SVC" "${GIF}.service" >/dev/null 2>&1
         rm -f "/etc/systemd/system/${SVC}.service" "/etc/systemd/system/${GIF}.service" "/etc/frp/frps-${ID}.toml" "/etc/backhaul/server-${ID}.toml"
         systemctl daemon-reload; systemctl reset-failed >/dev/null 2>&1 || true
@@ -5416,7 +5426,7 @@ cli_remove_peer() {
         fi
     fi
     [[ -f "$PEERS_FILE" ]] && PEERS_F="$PEERS_FILE" PEER_ID="$ID" python3 -c \
-'import json,os; f=os.environ["PEERS_F"]; d=json.load(open(f)); d["peers"]=[p for p in d.get("peers",[]) if p["id"]!=int(os.environ["PEER_ID"])]; json.dump(d,open(f,"w"),indent=2)'
+'import json,os; f=os.environ["PEERS_F"]; d=json.load(open(f)); d["peers"]=[p for p in d.get("peers",[]) if str(p.get("id","")).strip()!=os.environ["PEER_ID"]]; t=f+".tmp"; json.dump(d,open(t,"w"),indent=2); os.chmod(t,0o600); os.replace(t,f)'
     # what the panel learned about that server's panel (address, pinned certificate)
     tunnel_link_forget "$ID"
     # its ports: out of the firewall and the kernel's reserved list again
@@ -5590,7 +5600,10 @@ d.setdefault("peers", []).append({
   "ports": json.loads(pjson), "gre_if": gif, "frps_svc": svc, "legacy": False,
   "engine": eng, "transport": trans, "no_gre": nogre == "1", "raw_ports": raw_list
 })
-json.dump(d, open(f, "w"), indent=2)
+tmp = f + ".tmp"
+json.dump(d, open(tmp, "w"), indent=2)
+os.chmod(tmp, 0o600)
+os.replace(tmp, f)
 PYEOF
 
     echo -e "${GREEN}[OK] Backhaul Peer '${NAME}' (id ${ID}) added [Engine: ${ENGINE}, Transport: ${TRANSPORT}]!${NC}"
@@ -5776,7 +5789,10 @@ for p in d.get("peers", []):
             p["use_compression"] = True
         elif comp in ("off", "false", "0"):
             p["use_compression"] = False
-json.dump(d, open(f, "w"), indent=2)
+tmp = f + ".tmp"
+json.dump(d, open(tmp, "w"), indent=2)
+os.chmod(tmp, 0o600)
+os.replace(tmp, f)
 PYEOF
 
     local FINAL_NAME="${NAME:-$CUR_NAME}"
@@ -6748,7 +6764,7 @@ remove_tunnel_force() {
         # Remove configs
         rm -rf "$CONFIG_DIR" "$BACKHAUL_CONFIG_DIR" "$BACKHAUL_LEGACY_DIR"
         rm -f /usr/local/bin/hashem-backhaul.sh
-        rm -f "$PEERS_FILE"
+        rm -f "$PEERS_FILE" "${PEERS_FILE}.bak"
         tunnel_link_forget all
         hashem_ufw_release
         reserve_service_ports
@@ -12483,7 +12499,10 @@ d.setdefault("hubs", []).append({"id": int(iid), "name": name, "iran_pub": pub, 
     "svc": svc, "conf": conf, "gre_if": gif, "port": int(port), "iran_gre": igre, "foreign_gre": fgre,
     "transport": tr, "ports": [int(x) for x in ports.replace("-", " ").replace(",", " ").split() if x.isdigit()],
     "dial": dial})
-json.dump(d, open(f, "w"), indent=2)
+tmp = f + ".tmp"
+json.dump(d, open(tmp, "w"), indent=2)
+os.chmod(tmp, 0o600)
+os.replace(tmp, f)
 PYEOF
     sleep 2
     if systemctl is-active --quiet "$SVC"; then
