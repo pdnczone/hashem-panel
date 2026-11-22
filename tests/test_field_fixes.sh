@@ -40,6 +40,7 @@ cat > "$T/bin/systemctl" <<EOF
 echo "\$*" >> "$T/systemctl.log"
 case "\$1" in
   is-failed) grep -qxF "\${@: -1}" "$T/failed" 2>/dev/null ;;
+  is-active) ! grep -qxF "\${@: -1}" "$T/failed" 2>/dev/null && ! grep -qxF "\${@: -1}" "$T/stopped" 2>/dev/null ;;
   list-unit-files) exit 0 ;;
 esac
 EOF
@@ -279,6 +280,20 @@ restart_all_lite > /dev/null       # the Restart Tunnel Now button: every interf
 R=$(grep '^restart ' "$T/systemctl.log" | sort | tr '\n' ' ')
 chk "hub, manual restart" "$R" "restart gre-t2.service restart gre-t3.service restart gre-tunnel.service "
 
+# a relay that is stopped (not failed) is started again too
+: > "$T/systemctl.log"; echo "frps-2.service" > "$T/stopped"
+restart_all_lite --broken-only > /dev/null
+chk "hub, broken only: a stopped engine" "$(grep '^restart frps' "$T/systemctl.log" | tr '\n' ' ')" "restart frps-2.service "
+: > "$T/stopped"
+
+# a hub whose tunnels are all Backhaul (no frps.toml): still a hub
+rm -f "$T/frp/frps.toml" "$T/units"/frps*.service
+: > "$T/units/backhaul-server-2.service"; echo "backhaul-server-2.service" > "$T/failed"; : > "$T/systemctl.log"
+restart_all_lite --broken-only > /dev/null
+R=$(grep '^restart ' "$T/systemctl.log" | sort | tr '\n' ' ')
+chk "Backhaul-only hub: its engine, never a foreign server's units" "$R" "restart backhaul-server-2.service restart gre-t3.service "
+rm -f "$T/units/backhaul-server-2.service"; : > "$T/failed"
+
 # foreign server: frpc, no frps
 rm -f "$T/frp/frps.toml" "$T/units"/frps*.service "$T/units"/gre-t[23].service
 : > "$T/units/frpc.service"; : > "$T/systemctl.log"
@@ -287,6 +302,11 @@ chk "foreign, broken only: the engine, not a working GRE" "$(grep '^restart ' "$
 : > "$T/pingok"; : > "$T/busy"; : > "$T/systemctl.log"
 restart_all_lite --broken-only > /dev/null
 chk "foreign, GRE dead: both" "$(grep '^restart ' "$T/systemctl.log" | sort | tr '\n' ' ')" "restart frpc.service restart gre-tunnel.service "
+# a second Iran hub this server serves (join-hub): its client when it stopped
+: > "$T/units/frpc-h2.service"; echo "frpc-h2.service" > "$T/stopped"; : > "$T/systemctl.log"
+restart_all_lite --broken-only > /dev/null
+has "$T/systemctl.log" "restart frpc-h2.service" "foreign, broken only: the stopped client of the second hub"
+: > "$T/stopped"; rm -f "$T/units/frpc-h2.service"
 unset -f sleep
 # the Watchdog never asks for the full restart
 chk "watchdog_tick uses --broken-only" "$(awk '/^watchdog_tick\(\) \{/,/^}/' "$ROOT/hashem.sh" | grep 'restart_all_lite' | grep -vc -- '--broken-only')" "0"

@@ -306,10 +306,29 @@ func directView(recs []peerRecord) *hostView {
 	return v
 }
 
+// baseTunnelConfigured: st describes a first tunnel that exists, up or down
+// (the same test as hasBaseTunnel in app.js, plus its GRE unit file). A
+// per-peer unit (frps-N, backhaul-server-N) is a peer's, not the first tunnel.
+func baseTunnelConfigured(st tunnelStatus) bool {
+	if st.Gre.Exists || st.FrpUp || len(st.Proxies) > 0 {
+		return true
+	}
+	if st.FrpSvc != "" && !perPeerUnitRe.MatchString(st.FrpSvc) {
+		return true
+	}
+	return fileExists(filepath.Join(systemdUnitDir, "gre-tunnel.service"))
+}
+
 // mainTunnelFrom describes the base tunnel as a hub spoke, or nil when this
 // machine is not an Iran hub or has no base tunnel configured.
+//
+// A first tunnel that is fully down (its GRE interface gone and its service
+// stopped) is still one: its config or unit is on the server. It used to drop
+// out of the snapshot then, so the dashboard did not show it, no alert said it
+// went down, Autopilot and the watchdog forgot it, and it could not be
+// removed from where it was missing.
 func mainTunnelFrom(st tunnelStatus, v *hostView) *peerLive {
-	if !strings.HasPrefix(st.Role, "iran") || !(st.Gre.Exists || st.FrpUp || len(st.Proxies) > 0) {
+	if !strings.HasPrefix(st.Role, "iran") || !baseTunnelConfigured(st) {
 		return nil
 	}
 	name := "Tunnel"
@@ -636,6 +655,7 @@ func snapshotTick() bool {
 	usageOnSnapshot(snap)
 	carrierAdvisorOnSnapshot(snap)
 	autopilotOnSnapshot(snap)
+	watchdogOnSnapshot(snap)
 	return true
 }
 

@@ -5,7 +5,7 @@ package main
 //
 // It only connects what already exists:
 //
-//  1. The health model says a tunnel is down (snapshot.go). Autopilot waits
+//  1. The health model says a tunnel is not healthy (snapshot.go). Autopilot waits
 //     until it was down for down_minutes, and only for a tunnel it has seen up
 //     before (a tunnel still being set up is nobody's to switch).
 //  2. The path test (pathtest.go) is started on this server and the foreign
@@ -300,6 +300,10 @@ func apGate(c autopilotConfig, now time.Time, l peerLive, ts *apTunnelState, dow
 	if !l.FrpUp {
 		return "its service is not running on this server, which is not a blocked path"
 	}
+	if !l.NoGre && !l.GreUp {
+		// a local fault the watchdog restarts; another carrier does not help
+		return "its GRE interface is missing on this server, which is not a blocked path"
+	}
 	if ts.LastUp == 0 {
 		return "it has not been up yet since Autopilot was turned on"
 	}
@@ -474,12 +478,17 @@ func autopilotOnSnapshot(s *HubSnapshot) {
 			ts.Key = apKey(l)
 			dirty = true
 		}
+		// A blocked path is "degraded" in the health model (the service runs
+		// and GRE is up, but the foreign server holds no session); "down" is
+		// only a stopped service with no GRE, which apGate leaves alone. So
+		// Autopilot acting on "down" alone never moved a tunnel: any state but
+		// healthy is an outage here, and only healthy is "seen up".
 		switch l.HealthState {
-		case stateDown:
+		case stateDown, stateDegraded:
 			if _, ok := ap.downSince[l.ID]; !ok {
 				ap.downSince[l.ID] = now
 			}
-		case stateHealthy, stateDegraded:
+		case stateHealthy:
 			delete(ap.downSince, l.ID)
 			if ts := st.tun(l.ID); now.Sub(time.Unix(ts.LastUp, 0)) > apUpEvery {
 				ts.LastUp = now.Unix()

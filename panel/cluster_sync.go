@@ -41,6 +41,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -647,11 +648,15 @@ var syncRemove = func(id int) error {
 
 // syncGrePair picks the first inner address pair that neither this hub, the
 // other hub's tunnel nor the foreign server uses.
+//
+// A GRE pair is a /30: a pair is taken when any address in use falls in its
+// /30, not only when one of its two addresses is used (10.11.0.5 and 10.11.0.6
+// on another tunnel are a different /30, 10.11.0.1 is not).
 func syncGrePair(used []string, avoid ...string) (string, string) {
 	taken := map[string]bool{}
 	for _, a := range append(append([]string{}, used...), avoid...) {
-		if a != "" {
-			taken[a] = true
+		if n := gre30(a); n != "" {
+			taken[n] = true
 		}
 	}
 	pairs := [][2]string{{defaultIranGRE, defaultForeignGRE}}
@@ -659,11 +664,21 @@ func syncGrePair(used []string, avoid ...string) (string, string) {
 		pairs = append(pairs, [2]string{fmt.Sprintf("10.1%d.0.2", k), fmt.Sprintf("10.1%d.0.1", k)})
 	}
 	for _, p := range pairs {
-		if !taken[p[0]] && !taken[p[1]] {
+		if !taken[gre30(p[0])] && !taken[gre30(p[1])] {
 			return p[0], p[1]
 		}
 	}
 	return "", ""
+}
+
+// gre30 is the /30 network of an IPv4 address ("10.11.0.2" -> "10.11.0.0"),
+// "" for anything else.
+func gre30(a string) string {
+	ip := net.ParseIP(strings.TrimSpace(strings.SplitN(a, "/", 2)[0])).To4()
+	if ip == nil {
+		return ""
+	}
+	return ip.Mask(net.CIDRMask(30, 32)).String()
 }
 
 func syncPortsText(t syncTunnel) string {
@@ -805,6 +820,7 @@ func syncAskPull(c ClusterConfig, hub HubPeer, theirVersion string) {
 		return
 	}
 	deadline := time.Now().Add(syncPullWait)
+	progress := 0 // steps the other hub has finished: each one moves the deadline
 	misses := 0
 	var lost time.Time // since when the peer shows another copy than the asked one
 	for time.Now().Before(deadline) {
@@ -829,6 +845,15 @@ func syncAskPull(c ClusterConfig, hub HubPeer, theirVersion string) {
 			continue
 		}
 		lost = time.Time{}
+		if len(st.Steps) > progress {
+			// A copy of 6-7 foreign servers can take longer than syncPullWait
+			// (each one may wait minutes for its foreign server to join): wait
+			// as long as it keeps finishing tunnels.
+			progress = len(st.Steps)
+			if d := time.Now().Add(syncPullWait); d.After(deadline) {
+				deadline = d
+			}
+		}
 		syncUpdate(func(s *syncState) { s.Other = st.Steps })
 		if !st.Running {
 			if st.Error != "" {
@@ -894,9 +919,13 @@ func syncOne(c ClusterConfig, hub HubPeer, t syncTunnel) (string, error) {
 		body.FRPTransport = t.FRPTransport
 		body.Transport = ""
 	}
-	if !plan.Exists && len(plan.Peers) == 0 {
-		body.Role = "iran" // a hub with no tunnel yet: this is its first
-	}
+	// Always an added peer, also for the first tunnel of a hub that has none:
+	// hashem.sh gives it the first tunnel's names and, unlike a first tunnel
+	// made with "iran", records its ports in peers.json. A first FRP tunnel's
+	// ports live only on the foreign server, so the next copy on the same
+	// ports saw no clash, made no failover pool, and its relay could not take
+	// the ports the first one held: with many foreign servers on the same
+	// ports only the first one carried users.
 	if t.Engine != "backhaul" {
 		body.LocalGre, body.PeerGre = syncGrePair(plan.GreUsed, t.LocalGre, t.PeerGre)
 		if body.LocalGre == "" {

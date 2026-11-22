@@ -345,7 +345,7 @@ func removeViaInstaller(mode string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), removePeerTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "bash", script, "remove-tunnel", mode)
 	cmd.Env = append(os.Environ(), "GRE_SKIP_PANEL=1", "TERM=dumb", "GRE_PANEL_DIR="+configDir)
@@ -437,19 +437,11 @@ type peerLive struct {
 
 func peersFile() string { return configDir + "/peers.json" }
 
+// loadPeers reads peers.json record by record (peers_load.go): a record with a
+// value of the wrong type no longer hides every tunnel, and a file nothing can
+// read falls back to its last good copy.
 func loadPeers() []peerRecord {
-	data, err := os.ReadFile(peersFile())
-	if err != nil {
-		return nil
-	}
-	var v struct {
-		Peers []peerRecord `json:"peers"`
-	}
-	if err := json.Unmarshal(data, &v); err != nil {
-		logPeersDecodeErr(err)
-		return nil
-	}
-	return v.Peers
+	return loadPeersFile()
 }
 
 var peersDecodeErr sync.Once
@@ -457,7 +449,9 @@ var peersDecodeErr sync.Once
 // logPeersDecodeErr says once why peers.json was not read: every peer tunnel
 // disappears from the panel then, while its services keep running.
 func logPeersDecodeErr(err error) {
-	peersDecodeErr.Do(func() { log.Printf("peers.json: cannot read it, peer tunnels are hidden: %v", err) })
+	peersDecodeErr.Do(func() {
+		log.Printf("peers.json: cannot read it (%v); using its last good copy %s when there is one", err, peersBackupFile())
+	})
 }
 
 func findPeer(id int) *peerRecord {
@@ -570,12 +564,21 @@ func (l *peerLive) applyHealth(sig LinkSignals, ic icmpResult) {
 	l.FrpOnly = l.Linked && !l.PingOK
 }
 
+// removePeerTimeout bounds `hashem.sh remove-peer`. It stops the tunnel's
+// units, releases its firewall rules and its reserved ports: on a hub with many
+// tunnels and ufw that took longer than the 30 s it had, the installer was
+// killed, and the tunnel could never be removed from the panel.
+var removePeerTimeout = 120 * time.Second
+
 func removePeerViaInstaller(id int) (string, error) {
 	script, err := greScriptPath()
 	if err != nil {
+		if p := findPeer(id); p != nil {
+			return removePeerDirect(p)
+		}
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), removePeerTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "bash", script, "remove-peer", "--id", fmt.Sprint(id), "--force")
 	cmd.Env = append(os.Environ(), "GRE_SKIP_PANEL=1", "TERM=dumb", "GRE_PANEL_DIR="+configDir)
@@ -585,14 +588,24 @@ func removePeerViaInstaller(id int) (string, error) {
 		o = fmt.Sprintf("peer %d removed", id)
 	}
 	if runErr != nil {
-		// Stale installer without remove-peer: fall back to direct removal
-		// from the registry record (same units the installer would stop).
-		if p := findPeer(id); p != nil && isMissingRemovePeer(o) {
+		// The installer failed (an old one without remove-peer, a peers.json
+		// it cannot read, a unit that does not stop, the timeout): while the
+		// record is still there, remove the tunnel from its record here, with
+		// the same units the installer would stop. A tunnel the panel shows
+		// can always be removed from the panel.
+		if p := findPeer(id); p != nil {
 			if fo, ferr := removePeerDirect(p); ferr == nil {
-				return fo, nil
+				invalidatePeerIfsCache()
+				return o + "\n" + fo, nil
 			} else {
-				return o, fmt.Errorf("remove-peer failed (%v) and fallback failed: %v", runErr, ferr)
+				return o, fmt.Errorf("remove-peer failed (%v) and the direct removal failed too: %v", runErr, ferr)
 			}
+		}
+		if ctx.Err() != nil {
+			// killed after it dropped the record: the tunnel is gone
+			invalidatePeerIfsCache()
+			pruneTunnelLinks()
+			return o, nil
 		}
 		return o, fmt.Errorf("remove-peer failed: %w", runErr)
 	}
@@ -629,8 +642,8 @@ func stripANSI(s string) string {
 // Legacy peer 1 is the first tunnel; an installer this old can only remove
 // every tunnel with it, so it is refused until hashem.sh is updated.
 func removePeerDirect(p *peerRecord) (string, error) {
-	if p.Legacy {
-		return "", fmt.Errorf("this hashem.sh cannot remove the first tunnel alone; run `hashem update` first")
+	if p.Legacy || p.GreIf == "gre-tunnel" || slices.Contains(baseUnits, p.FrpsSvc) {
+		return "", fmt.Errorf("the first tunnel cannot be removed without hashem.sh; run `hashem update`, then remove it again")
 	}
 	greSvc := p.GreIf
 	if greSvc == "" {
@@ -640,14 +653,32 @@ func removePeerDirect(p *peerRecord) (string, error) {
 	if frpsSvc == "" {
 		frpsSvc = fmt.Sprintf("frps-%d", p.ID)
 	}
-	exec.Command("systemctl", "stop", frpsSvc, greSvc+".service").CombinedOutput()
-	exec.Command("systemctl", "disable", frpsSvc, greSvc+".service").CombinedOutput()
-	os.Remove("/etc/systemd/system/" + frpsSvc + ".service")
-	os.Remove("/etc/systemd/system/" + greSvc + ".service")
+	units := []string{frpsSvc}
+	if greSvc != "none" {
+		units = append(units, greSvc+".service")
+	}
+	if strings.HasPrefix(frpsSvc, "frps") {
+		units = append(units, fmt.Sprintf("frps-wss-%d", p.ID)) // its WSS front, when it has one
+	}
+	if strings.HasPrefix(frpsSvc, "backhaul-") {
+		units = append(units, "backhaul-udp-"+strings.TrimPrefix(frpsSvc, "backhaul-")) // its UDP companion
+	}
+	stopUnitsHard(units)
+	for _, u := range units {
+		u = strings.TrimSuffix(u, ".service")
+		os.Remove(filepath.Join(systemdUnitDir, u+".service"))
+	}
 	os.Remove(filepath.Join(frpDir, fmt.Sprintf("frps-%d.toml", p.ID)))
-	exec.Command("systemctl", "daemon-reload").CombinedOutput()
-	exec.Command("systemctl", "reset-failed").CombinedOutput()
-	exec.Command("ip", "tunnel", "del", greSvc).CombinedOutput()
+	os.Remove(filepath.Join(backhaulDir, fmt.Sprintf("server-%d.toml", p.ID)))
+	if strings.HasPrefix(frpsSvc, "backhaul-") {
+		os.Remove(filepath.Join(backhaulDir, "udp", frpsSvc+".toml"))
+	}
+	runCmdTimeout(30*time.Second, "systemctl", "daemon-reload")
+	runCmdTimeout(10*time.Second, "systemctl", "reset-failed")
+	if greSvc != "none" {
+		runCmdTimeout(5*time.Second, "ip", "link", "del", greSvc)
+		runCmdTimeout(5*time.Second, "ip", "tunnel", "del", greSvc)
+	}
 	peers := loadPeers()
 	keep := peers[:0]
 	for _, q := range peers {
@@ -655,12 +686,25 @@ func removePeerDirect(p *peerRecord) (string, error) {
 			keep = append(keep, q)
 		}
 	}
-	data, _ := json.MarshalIndent(map[string]any{"peers": keep}, "", "  ")
-	if err := os.WriteFile(peersFile(), append(data, '\n'), 0600); err != nil {
+	if err := writePeers(keep); err != nil {
 		return "", err
 	}
+	invalidatePeerIfsCache()
 	pruneTunnelLinks()
 	return fmt.Sprintf("peer '%s' (id %d) removed", p.Name, p.ID), nil
+}
+
+// stopUnitsHard stops and disables units, and kills what does not stop in
+// 20 s: a unit stuck in its stop job held the removal of its tunnel forever.
+func stopUnitsHard(units []string) {
+	if len(units) == 0 {
+		return
+	}
+	if _, err := runCmdTimeout(25*time.Second, "systemctl", append([]string{"stop"}, units...)...); err != nil {
+		runCmdTimeout(10*time.Second, "systemctl", append([]string{"kill", "-s", "KILL"}, units...)...)
+		runCmdTimeout(10*time.Second, "systemctl", append([]string{"stop", "--no-block"}, units...)...)
+	}
+	runCmdTimeout(20*time.Second, "systemctl", append([]string{"disable"}, units...)...)
 }
 
 // ---- local inspection (reads systemd + ip, never writes except via actions) ----

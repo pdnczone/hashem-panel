@@ -231,6 +231,14 @@ func TestSyncGrePair(t *testing.T) {
 	if l2 == l {
 		t.Fatal("a pair this hub uses was handed out again")
 	}
+	// an address of another tunnel inside the pair's /30 takes the whole pair
+	l3, p3 := syncGrePair([]string{"10.11.0.3"}, defaultIranGRE, defaultForeignGRE)
+	if gre30(l3) == "10.11.0.0" || gre30(p3) == "10.11.0.0" || l3 == "" {
+		t.Fatalf("a pair overlapping 10.11.0.3/30: %s %s", l3, p3)
+	}
+	if gre30("10.11.0.6") != "10.11.0.4" || gre30("nope") != "" {
+		t.Fatal("gre30")
+	}
 }
 
 // fakeSyncHub is the other hub: it answers /tunnels and /deliver, signed.
@@ -409,14 +417,16 @@ func TestRunHubSyncFirstTunnelOfAHub(t *testing.T) {
 	syncPlan = func(string, int) setupPlan { return setupPlan{Public: "192.0.2.10", RelayPort: 7001} } // no tunnel yet
 	syncSetup = func(b setupRequest) (string, int, error) {
 		got = b
-		return MakeBundle("192.0.2.10", b.FrpPort, "", "", "tok", []int{443}), 0, nil
+		return MakeBundle("192.0.2.10", b.FrpPort, "", "", "tok", []int{443}), 1, nil
 	}
 	c := loadClusterConfig()
 	if err := runHubSync(c, c.Hubs[0], false); err != nil {
 		t.Fatal(err)
 	}
-	if got.Role != "iran" || got.Engine != "backhaul" || got.Transport != "tcpmux" || got.Ports != "443, 2083=8443" || got.LocalGre != "" {
-		t.Fatalf("a hub with no tunnel makes its first one, with Backhaul's ports as written and no GRE: %+v", got)
+	// an added peer, so its ports are recorded and a second foreign server on
+	// the same ports gets a failover pool instead of a silent clash
+	if got.Role != "add-peer" || got.Engine != "backhaul" || got.Transport != "tcpmux" || got.Ports != "443, 2083=8443" || got.LocalGre != "" {
+		t.Fatalf("a hub with no tunnel makes its first one as an added peer, with Backhaul's ports as written and no GRE: %+v", got)
 	}
 	if st := findStep(syncSnapshot(), "198.51.100.1"); st.State != "done" {
 		t.Fatalf("step: %+v", st)

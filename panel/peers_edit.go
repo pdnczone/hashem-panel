@@ -605,11 +605,7 @@ func editPeerDirect(peer *peerRecord, req peerPatchRequest) (string, error) {
 			}
 		}
 	}
-	data, err := json.MarshalIndent(map[string]any{"peers": peers}, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("marshal peers: %w", err)
-	}
-	if err := os.WriteFile(peersFile(), append(data, '\n'), 0600); err != nil {
+	if err := writePeers(peers); err != nil {
 		return "", fmt.Errorf("write peers.json: %w", err)
 	}
 
@@ -771,9 +767,7 @@ func editMainTunnelDirect(req peerPatchRequest, legacyPeer *peerRecord) (string,
 				}
 			}
 		}
-		if data, err := json.MarshalIndent(map[string]any{"peers": peers}, "", "  "); err == nil {
-			_ = os.WriteFile(peersFile(), append(data, '\n'), 0600)
-		}
+		_ = writePeers(peers)
 	}
 
 	// 2. Remote IP change for gre-tunnel
@@ -1078,10 +1072,7 @@ func editMainTunnelPortsDirect(newPorts []int) error {
 		}
 	}
 	if editedAny {
-		data, err := json.MarshalIndent(map[string]any{"peers": peers}, "", "  ")
-		if err == nil {
-			_ = os.WriteFile(peersFile(), append(data, '\n'), 0600)
-		}
+		_ = writePeers(peers)
 	}
 
 	// 2. Foreign client toml (/etc/frp/frpc.toml): the only place FRP

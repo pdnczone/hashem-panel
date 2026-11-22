@@ -5113,7 +5113,7 @@ peer_list() { peer_init; cat "$PEERS_FILE"; }
 peer_next_id() {
     peer_require_py || return 1
     PEERS_F="$PEERS_FILE" MAX_PEERS="$MAX_PEERS" python3 -c \
-'import json,os; d=json.load(open(os.environ["PEERS_F"])); used={p["id"] for p in d.get("peers",[])}; ids=[i for i in range(1,int(os.environ["MAX_PEERS"])+1) if i not in used]; print(ids[0] if ids else 0)'
+'import json,os; d=json.load(open(os.environ["PEERS_F"])); used={int(str(p.get("id","0")).strip() or 0) for p in d.get("peers",[]) if str(p.get("id","")).strip().isdigit()}; ids=[i for i in range(1,int(os.environ["MAX_PEERS"])+1) if i not in used]; print(ids[0] if ids else 0)'
 }
 
 # space-separated "port:peername" of all claimed reverse ports
@@ -5125,8 +5125,10 @@ peer_ports_used() {
 
 # $1=id -> compact JSON record or empty
 peer_get() {
+    # the id may have been written as a string ("3"): it must still be found,
+    # or the tunnel can never be removed
     PEERS_F="$PEERS_FILE" PEER_ID="$1" python3 -c \
-'import json,os; d=json.load(open(os.environ["PEERS_F"])); m=[p for p in d.get("peers",[]) if p["id"]==int(os.environ["PEER_ID"])]; print(json.dumps(m[0]) if m else "")'
+'import json,os; d=json.load(open(os.environ["PEERS_F"])); m=[p for p in d.get("peers",[]) if str(p.get("id","")).strip()==os.environ["PEER_ID"]]; print(json.dumps(m[0]) if m else "")'
 }
 
 peer_token() {
@@ -5329,6 +5331,12 @@ cli_add_peer() {
         echo -e "${RED}[!] GRE IP ${LOCAL_GRE} is already used by another peer.${NC}"; return 1
     fi
     [[ -z "$NAME" ]] && NAME="peer-${ID}"
+    # this server's first tunnel (the hub copy makes it with add-peer too):
+    # what setup-iran does around it, so a fresh hub is set up the same way
+    local FIRST_TUN=1
+    tunnel_present && FIRST_TUN=0
+    grep -q '"id"' "$PEERS_FILE" 2>/dev/null && FIRST_TUN=0
+    [[ "$FIRST_TUN" -eq 1 ]] && { backup_configs "pre_setup_iran" >/dev/null 2>&1 || true; ensure_dependencies_smart; }
     install_frp_binaries || return 1
     if [[ "$ID" -eq 1 ]] && ! tunnel_present; then
         # first tunnel keeps legacy names (gre-tunnel, frps) — old setups untouched
@@ -5352,6 +5360,11 @@ cli_add_peer() {
         return 1
     fi
     frps_ufw_open "$FRP_PORT" "$CLEANED"
+    if [[ "$FIRST_TUN" -eq 1 ]]; then
+        tune_apply >/dev/null 2>&1 || true
+        watchdog_timer_ensure >/dev/null 2>&1 || true  # drives Auto-Pool + schedules, not just alerts
+        init_watchdog_json >/dev/null 2>&1 || true
+    fi
     if [[ "${PEER_FRP_TRANSPORT:-tcp}" == "wss" ]]; then
         local _fsuf=""; [[ "$LEGACY" == "true" ]] || _fsuf="-${ID}"
         frps_wss_front_ensure "$_fsuf" "$FRP_PORT" || echo -e "${YELLOW}[!] WSS TLS front could not be started for this peer.${NC}"
@@ -5371,7 +5384,10 @@ rec = {"id": int(iid), "name": name, "local_pub": lip,
 if os.environ.get("FRP_TRANS", "tcp") != "tcp":
     rec["frp_transport"] = os.environ["FRP_TRANS"]
 d.setdefault("peers", []).append(rec)
-json.dump(d, open(f, "w"), indent=2)
+tmp = f + ".tmp"
+json.dump(d, open(tmp, "w"), indent=2)
+os.chmod(tmp, 0o600)
+os.replace(tmp, f)
 PYEOF
     echo -e "${GREEN}[OK] Peer '${NAME}' (id ${ID}) added: GRE ${LOCAL_PUB} <-> ${REMOTE_PUB} (${LOCAL_GRE} peer ${PEER_GRE} on ${GRE_IF}), ${FRPS_SVC} :${FRP_PORT}${NC}"
     echo -e "${YELLOW}Token for '${NAME}': ${TOKEN} (enter it on the FOREIGN side with ports: ${CLEANED})${NC}"
@@ -5393,10 +5409,10 @@ cli_remove_peer() {
     rec=$(peer_get "$ID")
     [[ -n "$rec" ]] || { echo -e "${RED}[!] No peer with id $ID.${NC}"; return 1; }
     local NAME GIF SVC LEG
-    NAME=$(echo "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')
-    GIF=$(echo "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin)["gre_if"])')
-    SVC=$(echo "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin)["frps_svc"])')
-    LEG=$(echo "$rec" | python3 -c 'import json,sys; print("1" if json.load(sys.stdin).get("legacy") else "0")')
+    NAME=$(echo "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("name") or "peer-'"$ID"'")')
+    GIF=$(echo "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("gre_if") or "gre-t'"$ID"'")')
+    SVC=$(echo "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("frps_svc") or "frps-'"$ID"'")')
+    LEG=$(echo "$rec" | python3 -c 'import json,sys; print("1" if str(json.load(sys.stdin).get("legacy")).lower() in ("true","1") else "0")')
     if [[ "$FORCE" -ne 1 ]]; then
         read -p "Remove peer '${NAME}' (id ${ID})? GRE + its frps go away. (y/N): " CONFIRM
         [[ "$CONFIRM" =~ ^[Yy]$ ]] || { echo -e "${YELLOW}[*] Aborted.${NC}"; return 0; }
@@ -5407,7 +5423,12 @@ cli_remove_peer() {
     else
         frps_wss_front_remove "-${ID}"
         [[ "$SVC" == backhaul-* ]] && backhaul_udp_remove "$SVC"
-        systemctl stop "$SVC" "${GIF}.service" >/dev/null 2>&1
+        # a unit stuck in its stop job held the removal (and the panel's
+        # request) for minutes: stop it with a limit, then kill it
+        if ! timeout 25 systemctl stop "$SVC" "${GIF}.service" >/dev/null 2>&1; then
+            systemctl kill -s KILL "$SVC" "${GIF}.service" >/dev/null 2>&1 || true
+            systemctl stop --no-block "$SVC" "${GIF}.service" >/dev/null 2>&1 || true
+        fi
         systemctl disable "$SVC" "${GIF}.service" >/dev/null 2>&1
         rm -f "/etc/systemd/system/${SVC}.service" "/etc/systemd/system/${GIF}.service" "/etc/frp/frps-${ID}.toml" "/etc/backhaul/server-${ID}.toml"
         systemctl daemon-reload; systemctl reset-failed >/dev/null 2>&1 || true
@@ -5416,7 +5437,7 @@ cli_remove_peer() {
         fi
     fi
     [[ -f "$PEERS_FILE" ]] && PEERS_F="$PEERS_FILE" PEER_ID="$ID" python3 -c \
-'import json,os; f=os.environ["PEERS_F"]; d=json.load(open(f)); d["peers"]=[p for p in d.get("peers",[]) if p["id"]!=int(os.environ["PEER_ID"])]; json.dump(d,open(f,"w"),indent=2)'
+'import json,os; f=os.environ["PEERS_F"]; d=json.load(open(f)); d["peers"]=[p for p in d.get("peers",[]) if str(p.get("id","")).strip()!=os.environ["PEER_ID"]]; t=f+".tmp"; json.dump(d,open(t,"w"),indent=2); os.chmod(t,0o600); os.replace(t,f)'
     # what the panel learned about that server's panel (address, pinned certificate)
     tunnel_link_forget "$ID"
     # its ports: out of the firewall and the kernel's reserved list again
@@ -5517,6 +5538,10 @@ cli_add_backhaul_peer() {
     fi
 
     [[ -z "$NAME" ]] && NAME="peer-${ID}"
+    local FIRST_TUN=1
+    tunnel_present && FIRST_TUN=0
+    grep -q '"id"' "$PEERS_FILE" 2>/dev/null && FIRST_TUN=0
+    [[ "$FIRST_TUN" -eq 1 ]] && { backup_configs "pre_setup_iran" >/dev/null 2>&1 || true; ensure_dependencies_smart; }
     install_backhaul_binaries || return 1
     backhaul_ensure_tls "$TRANSPORT"
 
@@ -5555,6 +5580,11 @@ cli_add_backhaul_peer() {
         return 1
     fi
 
+    if [[ "$FIRST_TUN" -eq 1 ]]; then
+        tune_apply >/dev/null 2>&1 || true
+        watchdog_timer_ensure >/dev/null 2>&1 || true
+        init_watchdog_json >/dev/null 2>&1 || true
+    fi
     # Record peer into peers.json
     local NUM_PORTS_JSON
     NUM_PORTS_JSON=$(python3 -c '
@@ -5590,7 +5620,10 @@ d.setdefault("peers", []).append({
   "ports": json.loads(pjson), "gre_if": gif, "frps_svc": svc, "legacy": False,
   "engine": eng, "transport": trans, "no_gre": nogre == "1", "raw_ports": raw_list
 })
-json.dump(d, open(f, "w"), indent=2)
+tmp = f + ".tmp"
+json.dump(d, open(tmp, "w"), indent=2)
+os.chmod(tmp, 0o600)
+os.replace(tmp, f)
 PYEOF
 
     echo -e "${GREEN}[OK] Backhaul Peer '${NAME}' (id ${ID}) added [Engine: ${ENGINE}, Transport: ${TRANSPORT}]!${NC}"
@@ -5776,7 +5809,10 @@ for p in d.get("peers", []):
             p["use_compression"] = True
         elif comp in ("off", "false", "0"):
             p["use_compression"] = False
-json.dump(d, open(f, "w"), indent=2)
+tmp = f + ".tmp"
+json.dump(d, open(tmp, "w"), indent=2)
+os.chmod(tmp, 0o600)
+os.replace(tmp, f)
 PYEOF
 
     local FINAL_NAME="${NAME:-$CUR_NAME}"
@@ -6748,7 +6784,7 @@ remove_tunnel_force() {
         # Remove configs
         rm -rf "$CONFIG_DIR" "$BACKHAUL_CONFIG_DIR" "$BACKHAUL_LEGACY_DIR"
         rm -f /usr/local/bin/hashem-backhaul.sh
-        rm -f "$PEERS_FILE"
+        rm -f "$PEERS_FILE" "${PEERS_FILE}.bak"
         tunnel_link_forget all
         hashem_ufw_release
         reserve_service_ports
@@ -8458,7 +8494,8 @@ watchdog_check() {
     else
         if systemctl list-units --type=service 2>/dev/null | grep -q 'frps'; then
             FRP_NAME="frps"
-            FRP_OK=1
+            # list-units also lists failed units: only a running one is "ok"
+            systemctl list-units --type=service --state=active --plain --no-legend 'frps*' 2>/dev/null | grep -q . && FRP_OK=1
         fi
     fi
 
@@ -8608,6 +8645,11 @@ except Exception:
     local CURL_OUT
     CURL_OUT=$(curl "${CURL_ARGS[@]}" -d "chat_id=${TG_CHAT_ID}" --data-urlencode "text=${FULL_MSG}" "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" 2>&1)
     local RET=$?
+    if [[ "$TG_ROUTE" == "tunnel" ]] && { [[ $RET -ne 0 ]] || ! grep -Eq '"ok" *: *true' <<<"$CURL_OUT"; }; then
+        # the tunnel the message goes through may be the one that is down
+        CURL_OUT=$(curl -sS --max-time 15 -d "chat_id=${TG_CHAT_ID}" --data-urlencode "text=${FULL_MSG}" "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" 2>&1)
+        RET=$?
+    fi
 
     if [[ $RET -ne 0 ]]; then
         local REDACTED_ERR
@@ -8678,7 +8720,16 @@ restart_all_lite() {
     # do not recover broken client routes by restarting; restarting frps severs all
     # active client/user sessions across ALL other healthy connected spokes simultaneously.
     # Only restart GRE tunnel interfaces on the hub.
-    if [[ -f "${CONFIG_DIR:-/etc/frp}/frps.toml" ]] || systemctl list-unit-files 2>/dev/null | grep -q "^frps\.service"; then
+    # an Iran hub: any relay unit (frps, frps-N, backhaul-server, backhaul-server-N).
+    # Only frps.toml was looked at, so a hub whose first tunnel was removed or
+    # whose tunnels are all Backhaul was taken for a foreign server and nothing
+    # was restarted.
+    local hub=0
+    [[ -f "${CONFIG_DIR:-/etc/frp}/frps.toml" ]] && hub=1
+    for u in "$dir"/frps.service "$dir"/frps-[0-9]*.service "$dir"/backhaul-server.service "$dir"/backhaul-server-[0-9]*.service; do
+        [[ -f "$u" ]] && hub=1
+    done
+    if (( hub )); then
         for u in "$dir"/gre-t*.service; do   # gre-tunnel.service too: listing it again restarted it twice
             [[ -f "$u" ]] || continue
             ifc=$(basename "$u" .service)
@@ -8689,9 +8740,28 @@ restart_all_lite() {
             systemctl restart "${ifc}.service" >/dev/null 2>&1
         done
         if (( broken )); then
+            # a relay that is not running (failed, or stopped after a crash):
+            # "is-failed" alone left a stopped one down for good
+            # (an engine switch of the first tunnel stops the old engine and
+            # leaves it enabled: frps and backhaul-server are never both
+            # started, and a stopped one is left alone while the other runs)
+            local base_on=""
+            for u in frps backhaul-server; do
+                systemctl is-active --quiet "$u" 2>/dev/null && base_on="$u"
+            done
             for u in "$dir"/frps*.service "$dir"/backhaul-server*.service; do
                 [[ -f "$u" ]] || continue
-                systemctl is-failed --quiet "$(basename "$u")" 2>/dev/null && systemctl restart "$(basename "$u")" >/dev/null 2>&1
+                u=$(basename "$u" .service)
+                if systemctl is-failed --quiet "$u.service" 2>/dev/null; then
+                    [[ -n "$base_on" && "$base_on" != "$u" && ( "$u" == frps || "$u" == backhaul-server ) ]] && continue
+                    systemctl restart "$u.service" >/dev/null 2>&1
+                    continue
+                fi
+                [[ "$u" == frps-wss* ]] && continue  # a WSS front: only when it failed
+                systemctl is-active --quiet "$u.service" 2>/dev/null && continue
+                systemctl is-enabled --quiet "$u.service" 2>/dev/null || continue
+                [[ ( "$u" == frps || "$u" == backhaul-server ) && -n "$base_on" ]] && continue
+                systemctl restart "$u.service" >/dev/null 2>&1
             done
         fi
         return 0
@@ -8710,8 +8780,34 @@ restart_all_lite() {
     for u in "${list[@]}"; do
         systemctl restart "$u" >/dev/null 2>&1
     done
+    # the other Iran hubs this server serves (join-hub): their GRE interface
+    # when it does not work, their client when it is not running. They were
+    # never restarted, so a foreign server lost its second hub for good.
+    if (( broken )); then
+        for u in "$dir"/gre-h[0-9]*.service; do
+            [[ -f "$u" ]] || continue
+            ifc=$(basename "$u" .service)
+            gre_if_healthy "$ifc" || systemctl restart "${ifc}.service" >/dev/null 2>&1
+        done
+        for u in "$dir"/frpc-h[0-9]*.service "$dir"/backhaul-client-h[0-9]*.service; do
+            [[ -f "$u" ]] || continue
+            systemctl is-active --quiet "$(basename "$u")" 2>/dev/null || systemctl restart "$(basename "$u")" >/dev/null 2>&1
+        done
+    fi
 }
 
+
+# watchdog_panel_watches: 0 while the panel watches the tunnels itself. It
+# rewrites watchdog_panel.json at least every 30 s while it does.
+watchdog_panel_watches() {
+    local f="${PANEL_CONFIG_DIR}/watchdog_panel.json" at now
+    [[ -f "$f" ]] || return 1
+    systemctl is-active --quiet gre-panel 2>/dev/null || return 1
+    at=$(sed -n 's/^[[:space:]]*"at":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$f" 2>/dev/null | head -n1)
+    [[ "$at" =~ ^[0-9]+$ ]] || return 1
+    now=$(date +%s)
+    (( now - at <= 150 ))
+}
 
 watchdog_tick() {
     local LOCKFILE="/var/lock/hashem-watchdog.lock"
@@ -8763,6 +8859,12 @@ except Exception as e:
     local DO_RESTART_SCHED="False"
     read -r IS_ENABLED DO_BACKUP DO_RESTART_SCHED <<< "$TICK_ACTION"
 
+    if [[ "$IS_ENABLED" == "True" || "$IS_ENABLED" == "true" ]] && watchdog_panel_watches; then
+        # the panel watches every tunnel of this Iran server itself (alerts
+        # and restarts per tunnel): checking only the first one here too would
+        # send a second, vaguer message
+        IS_ENABLED="panel"
+    fi
     if [[ "$IS_ENABLED" == "True" || "$IS_ENABLED" == "true" ]]; then
         local CHECK_OUT
         CHECK_OUT=$(watchdog_check)
@@ -12483,7 +12585,10 @@ d.setdefault("hubs", []).append({"id": int(iid), "name": name, "iran_pub": pub, 
     "svc": svc, "conf": conf, "gre_if": gif, "port": int(port), "iran_gre": igre, "foreign_gre": fgre,
     "transport": tr, "ports": [int(x) for x in ports.replace("-", " ").replace(",", " ").split() if x.isdigit()],
     "dial": dial})
-json.dump(d, open(f, "w"), indent=2)
+tmp = f + ".tmp"
+json.dump(d, open(tmp, "w"), indent=2)
+os.chmod(tmp, 0o600)
+os.replace(tmp, f)
 PYEOF
     sleep 2
     if systemctl is-active --quiet "$SVC"; then

@@ -29,6 +29,24 @@ func autoPoolForClash(ports []int) ([]LBPool, error) {
 		pooled[p.Port] = true
 	}
 	links := lbLinksFrom(lbSnapshot())
+	// A tunnel added seconds ago (the hub copy adds several in a row) may not
+	// be in the snapshot yet: its peers.json record names its relay.
+	inSnap := map[int]bool{}
+	for _, l := range links {
+		inSnap[l.ID] = true
+	}
+	for _, p := range loadPeers() {
+		if inSnap[p.ID] || p.FrpsSvc == "" {
+			continue
+		}
+		addr := lbAddrFor(p.FrpsSvc)
+		if addr == "" {
+			continue
+		}
+		_, engine := lbConfFor(p.FrpsSvc)
+		links = append(links, lbLink{ID: p.ID, Name: p.Name, Remote: p.RemotePub, Svc: p.FrpsSvc, Engine: engine,
+			CtrlPort: p.FrpPort, PeerGre: p.PeerGre, NoGre: p.NoGre, Ports: peerUserPorts(p), Addr: addr})
+	}
 	var made []LBPool
 	for _, port := range ports {
 		if pooled[port] {

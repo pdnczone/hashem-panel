@@ -71,6 +71,8 @@ type watchdogStatusResponse struct {
 	Backups           []backupItem   `json:"backups"`
 	TunnelPorts       []int          `json:"tunnel_ports"`
 	RecentEvents      []errEvent     `json:"recent_events"`
+	WatchedByPanel    bool           `json:"watched_by_panel"` // the panel checks every tunnel (watchdog_links.go)
+	Links             []wdLink       `json:"links,omitempty"`  // each tunnel's watchdog state
 }
 
 type watchdogPostRequest struct {
@@ -282,7 +284,12 @@ func handleWatchdogGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c := loadWatchdogConfig()
-	checkResult, _ := runWatchdogCmd("watchdog", "check")
+	// On an Iran server the panel watches every tunnel (watchdog_links.go);
+	// hashem.sh's check looks at the first tunnel only.
+	checkResult, links, byPanel := watchdogPanelResult()
+	if !byPanel {
+		checkResult, _ = runWatchdogCmd("watchdog", "check")
+	}
 
 	status := "disabled"
 	if c.Enabled {
@@ -325,6 +332,8 @@ func handleWatchdogGet(w http.ResponseWriter, r *http.Request) {
 		Backups:           listBackups(),
 		TunnelPorts:       collectTunnelPorts(),
 		RecentEvents:      collectWatchdogEvents(),
+		WatchedByPanel:    byPanel,
+		Links:             links,
 	}
 
 	writeJSON(w, resp)
