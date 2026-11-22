@@ -321,4 +321,13 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 | `E-ACCESS-02` | 401 | current password is incorrect | Verify your current password before changing access settings. |
 | `E-ACCESS-03` | 409 | port conflict detected | The requested port is reserved or used by a tunnel/proxy. Pick a free port. |
 
-Total: 170 codes.
+## E-TG-xx — TG
+
+| Code | HTTP | Meaning | What to do |
+| --- | --- | --- | --- |
+| `E-TG-01` | 502 | telegram bot cannot reach Telegram | Check the bot token, and the watchdog's Telegram route if Telegram is blocked here. Each server needs a bot of its own. |
+| `E-TG-02` | 502 | telegram bot message not sent | Telegram refused or could not be reached: see the detail. |
+| `E-TG-03` | 500 | telegram bot update failed | An internal error while answering a Telegram message: see the detail. |
+| `E-TG-04` | 400 | bad telegram bot request | Check the request parameters. |
+
+Total: 174 codes.

@@ -51,6 +51,7 @@
 - **یک مدل سلامت** برای داشبورد، هدر، نقشه‌ی نودها و همه‌ی کارت‌ها، با تأخیر هر لینک و هشدار وبهوک یا تلگرام وقتی وضعیت تونلی عوض شود.
 - **تعویض حامل** از هر کدام از دو سرور: هر دو طرف با هم عوض می‌شوند و اگر حامل تازه تا ۴۵ ثانیه وصل نشود، هر دو برمی‌گردند.
 - **Autopilot** (Pro): تونلی که قطع بماند تست مسیر می‌شود و روی هر دو سرور به سریع‌ترین حاملی می‌رود که رد می‌شود، در محدوده‌ای که شما تعیین می‌کنید. [راهنما](docs/AUTOPILOT.fa.md)
+- **ربات تلگرام** (Pro): وضعیت، ری‌استارت، نگهبان، Autopilot، مشتری‌ها، نسخه‌های پشتیبان، آپدیت و هر درخواست دیگر به API پنل، از یک چت خصوصی تلگرام و فقط برای حساب‌هایی که جفت می‌کنید. [راهنما](docs/TELEGRAM_BOT.fa.md)
 - **واچ‌داگ** که فقط چیزی را ری‌استارت می‌کند که واقعاً خراب است و به تونل سالم دست نمی‌زند.
 
 **چند سرور**
@@ -136,14 +137,14 @@ bash <(curl -fsSL https://raw.githubusercontent.com/pdnczone/hashem-panel/main/i
 
 ## Hashem Pro
 
-GRE + FRP، پنل و آپدیت‌ها رایگان‌اند. **لایسنس Pro** راه‌اندازی Backhaul، Xray، باقر، اسپوف، محدودیت‌ها، کلاستر، Autopilot، تست مسیر، عیب‌یابی، تنظیمات کارایی، واچ‌داگ و بنچمارک را باز می‌کند. هر لایسنس Pro همه‌ی امکانات Pro را باز می‌کند، حتی آن‌هایی که بعداً اضافه می‌شوند، و تونل‌ها و تنظیماتی که کار می‌کنند بدون لایسنس هم کار می‌کنند. خرید لایسنس: [pdnczone.ir](https://pdnczone.ir)
+GRE + FRP، پنل و آپدیت‌ها رایگان‌اند. **لایسنس Pro** راه‌اندازی Backhaul، Xray، باقر، اسپوف، محدودیت‌ها، کلاستر، Autopilot، تست مسیر، عیب‌یابی، تنظیمات کارایی، واچ‌داگ، بنچمارک و ربات تلگرام را باز می‌کند. هر لایسنس Pro همه‌ی امکانات Pro را باز می‌کند، حتی آن‌هایی که بعداً اضافه می‌شوند، و تونل‌ها و تنظیماتی که کار می‌کنند بدون لایسنس هم کار می‌کنند. خرید لایسنس: [pdnczone.ir](https://pdnczone.ir)
 
 ## مستندات
 
 | | |
 | --- | --- |
 | **شروع** | [انتخاب تونل](docs/ENGINES.md) · [رفع اشکال و کار روزانه](docs/OPERATIONS.fa.md) · [استقرار امن](docs/DEPLOYMENT.md) |
-| **راهنماها** | [نودها](docs/NODES.fa.md) · [Autopilot](docs/AUTOPILOT.fa.md) · [کلاستر](docs/CLUSTER.fa.md) · [آموزش کلاستر](docs/CLUSTER_TUTORIAL.fa.md) · [مشتری‌ها](docs/CUSTOMERS.fa.md) · [تونل Xray](docs/XRAY_TUNNEL.fa.md) · [IPv6](docs/IPV6.fa.md) · [ترنسپورت‌های FRP](docs/FRP_TUNNELS_GUIDE.md) |
+| **راهنماها** | [نودها](docs/NODES.fa.md) · [Autopilot](docs/AUTOPILOT.fa.md) · [ربات تلگرام](docs/TELEGRAM_BOT.fa.md) · [کلاستر](docs/CLUSTER.fa.md) · [آموزش کلاستر](docs/CLUSTER_TUTORIAL.fa.md) · [مشتری‌ها](docs/CUSTOMERS.fa.md) · [تونل Xray](docs/XRAY_TUNNEL.fa.md) · [IPv6](docs/IPV6.fa.md) · [ترنسپورت‌های FRP](docs/FRP_TUNNELS_GUIDE.md) |
 | **مرجع** | [مرجع کامل (انگلیسی)](docs/OPERATIONS.md) · [API](docs/API.md) · [کدهای خطا](docs/ERROR_CODES.md) · [CHANGELOG](CHANGELOG.md) |
 | **پروژه** | [مشارکت](CONTRIBUTING.md) · [توسعه](docs/dev/DEVELOPMENT.md) · [امنیت](SECURITY.md) |
 

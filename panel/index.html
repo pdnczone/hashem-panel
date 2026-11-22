@@ -4097,6 +4097,22 @@
                 <button class="hashem-btn hashem-btn-secondary" id="alTest">Send Test</button>
               </div>
             </div>
+            <div class="tunnel-card" id="tgbCard">
+              <div class="tc-header"><div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></span><p class="tc-title">Telegram bot <span class="eng-pro hidden" id="tgbPro" data-no-i18n>PRO</span></p></div><span class="badge dim" id="tgbState">—</span></div>
+              <div class="ent-help">Run this panel from a Telegram chat: status, tunnels, watchdog, Autopilot, customers, doctor, backups and updates. Only the accounts you pair here can use it, and only in a private chat with the bot. Removing, restoring and updating ask once more. Each server needs a bot of its own.</div>
+              <div class="set-sws"><label class="set-sw"><input type="checkbox" id="tgbEnabled"> Enable the bot</label></div>
+              <div class="fg"><label for="tgbToken">Bot token from @BotFather (empty: the Watchdog tab's bot)</label><input class="hashem-input" id="tgbToken" placeholder="123456:ABC-…" autocomplete="off"></div>
+              <div class="fg"><label for="tgbLang">Bot language</label><select class="hashem-input" id="tgbLang"><option value="fa">Persian</option><option value="en">English</option></select></div>
+              <div class="set-acts">
+                <button class="hashem-btn hashem-btn-primary" id="tgbSave">Save</button>
+                <button class="hashem-btn hashem-btn-secondary" id="tgbTest">Send Test</button>
+              </div>
+              <div class="fg"><label for="tgbRole">Pair a Telegram account as</label><select class="hashem-input" id="tgbRole"><option value="admin">Admin: may change things</option><option value="viewer">Viewer: may only look</option></select></div>
+              <div class="set-acts"><button class="hashem-btn hashem-btn-secondary" id="tgbPair">Get a Pairing Code</button></div>
+              <div class="ent-help" id="tgbCode"></div>
+              <div id="tgbUsers"></div>
+              <div class="ent-help" id="tgbMsg"></div>
+            </div>
             <div class="tunnel-card" id="historyCard">
               <div class="tc-header"><div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span><p class="tc-title">Link history (last hours)</p></div></div>
               <div class="set-fields">

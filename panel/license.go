@@ -291,9 +291,10 @@ const (
 	proLimits      = "limits"
 	proCustomers   = "customers"
 	proAutopilot   = "autopilot"
+	proTelegramBot = "telegram_bot"
 )
 
-var proFeatures = []string{proPathTest, proBackhaul, proDiagnostics, proPerformance, proWatchdog, proBenchmark, proSpoof, proXray, proLimits, proCustomers, proAutopilot}
+var proFeatures = []string{proPathTest, proBackhaul, proDiagnostics, proPerformance, proWatchdog, proBenchmark, proSpoof, proXray, proLimits, proCustomers, proAutopilot, proTelegramBot}
 
 func hasPro(feature string) bool {
 	if HasFeature(feature) || HasFeature("bagher") || HasFeature("frp_ssh") {

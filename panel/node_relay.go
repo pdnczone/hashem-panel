@@ -120,19 +120,34 @@ func nodeServeHTTP(raw json.RawMessage) (json.RawMessage, error) {
 	if len(q.Body) > nodeRelayBodyMax {
 		return nil, errors.New("request too big")
 	}
+	user := q.User
+	if user == "" {
+		user = "central"
+	}
+	res, err := serveInProcess(nodeRelayKey, user, q)
+	if err != nil {
+		return nil, err
+	}
+	if q.Method != http.MethodGet {
+		LogSecurityAudit("via_central", user, "central", fmt.Sprintf("%s %s -> %d", q.Method, q.Path, res.Status))
+	}
+	return json.Marshal(res)
+}
+
+// serveInProcess runs q through the panel's own handlers with key in the
+// request's context (requireAuth and requireCSRF let it through: nothing
+// outside this process can set a context value). The node relay and the
+// Telegram bot (tgbot.go) use it, after their own checks.
+func serveInProcess(key any, user string, q nodeHTTPReq) (nodeHTTPRes, error) {
 	mux := nodeRelayMux()
 	if mux == nil {
-		return nil, errors.New("the panel is starting")
+		return nodeHTTPRes{}, errors.New("the panel is starting")
 	}
 	to := nodeRelayGetTO
 	if q.Method != http.MethodGet {
 		to = nodeRelayPostTO
 	}
-	user := q.User
-	if user == "" {
-		user = "central"
-	}
-	ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), nodeRelayKey, user), to)
+	ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), key, user), to)
 	defer cancel()
 	target := "/" + cfg.BasePath + q.Path
 	if q.Query != "" {
@@ -140,16 +155,16 @@ func nodeServeHTTP(raw json.RawMessage) (json.RawMessage, error) {
 	}
 	req, err := http.NewRequestWithContext(ctx, q.Method, target, bytes.NewReader(q.Body))
 	if err != nil {
-		return nil, err
+		return nodeHTTPRes{}, err
 	}
 	if q.Type != "" {
 		req.Header.Set("Content-Type", q.Type)
 	}
-	req.RemoteAddr = "127.0.0.1:0" // the central, through the channel
+	req.RemoteAddr = "127.0.0.1:0" // in-process: the central's channel or the bot
 	rec := &nodeRelayRecorder{ResponseRecorder: httptest.NewRecorder()}
 	mux.ServeHTTP(rec, req)
 	if rec.over {
-		return nil, fmt.Errorf("the answer is bigger than %d MB: open this node's own panel for it", nodeRelayBodyMax>>20)
+		return nodeHTTPRes{}, fmt.Errorf("the answer is bigger than %d MB: open the panel for it", nodeRelayBodyMax>>20)
 	}
 	res := nodeHTTPRes{Status: rec.Code, Body: rec.Body.Bytes(), Header: map[string]string{}}
 	for _, h := range nodeRelayHeaders {
@@ -157,10 +172,7 @@ func nodeServeHTTP(raw json.RawMessage) (json.RawMessage, error) {
 			res.Header[h] = v
 		}
 	}
-	if q.Method != http.MethodGet {
-		LogSecurityAudit("via_central", user, "central", fmt.Sprintf("%s %s -> %d", q.Method, q.Path, rec.Code))
-	}
-	return json.Marshal(res)
+	return res, nil
 }
 
 // nodeRelayRecorder caps the answer.

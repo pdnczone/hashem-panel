@@ -658,6 +658,8 @@ func main() {
 	mux.HandleFunc("POST "+base+"/api/session-settings", requireAuth(requireCSRF(handleSessionSettingsPost)))
 	mux.HandleFunc("GET "+base+"/api/alerts", requireAuth(handleAlertsGet))
 	mux.HandleFunc("POST "+base+"/api/alerts", requireAuth(requireCSRF(handleAlertsPost)))
+	mux.HandleFunc("GET "+base+"/api/telegram-bot", requireAuth(handleTGBotGet))
+	mux.HandleFunc("POST "+base+"/api/telegram-bot", requireAuth(requireCSRF(handleTGBotPost)))
 	mux.HandleFunc("GET "+base+"/api/history", requireAuth(handleHistoryGet))
 	mux.HandleFunc("GET "+base+"/api/traffic/usage", requireAuth(handleUsageGet))
 	mux.HandleFunc("GET "+base+"/metrics", handleMetrics)
@@ -856,6 +858,7 @@ func main() {
 	// after the busy-port switch: the sold relays' plugin calls go to cfg.Port
 	go startCustomersLoop()
 	go startRouteBridges() // Telegram / Cloudflare routes that go out through a chosen tunnel
+	go startTelegramBot()  // tgbot.go: the panel from a Telegram chat (Pro)
 	srv := &http.Server{
 		Handler:           panelChain(mux),
 		ReadHeaderTimeout: 10 * time.Second,

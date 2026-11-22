@@ -359,6 +359,7 @@ const PRO_TXT = {
   xray: ['pro_t_xray', 'Xray Tunnel — Hashem Pro', 'pro_b_xray', 'The Xray Tunnel is a Hashem Pro feature, on both servers: Reality, XHTTP, gRPC or mKCP, direct or reverse, next to any Xray panel.'],
   limits: ['pro_t_limits', 'Speed and volume limits — Hashem Pro', 'pro_b_limits', 'Limiting the speed and volume of each foreign server is a Hashem Pro feature. Limits already set keep working without it, and can always be removed.'],
   autopilot: ['pro_t_autopilot', 'Autopilot — Hashem Pro', 'pro_b_autopilot', 'Autopilot is a Hashem Pro feature: a tunnel that stays down is tested and moved to a carrier that gets through, by itself. Turn it on on the Iran server.'],
+  telegram_bot: ['pro_t_tgbot', 'Telegram bot — Hashem Pro', 'pro_b_tgbot', 'The Telegram bot is a Hashem Pro feature: run this panel from a Telegram chat.'],
   customers: ['pro_t_customers', 'Customers — Hashem Pro', 'pro_b_customers', 'Selling tunnels to customers is a Hashem Pro feature. Customers already set up keep running without it, and can always be paused or removed.'],
 };
 function isSentinelLicensed() {
@@ -383,6 +384,7 @@ function proSync() {
   tag('custPro', 'customers');
   tag('apPro', 'autopilot');
   tag('navAutopilotPro', 'autopilot');
+  tag('tgbPro', 'telegram_bot');
   if ($('navClusterPro')) $('navClusterPro').classList.toggle('hidden', clLicensed());
   if ($('navSentinelPro')) $('navSentinelPro').classList.toggle('hidden', isSentinelLicensed());
   ['navPerfPro', 'navWatchdogPro', 'navBenchmarkPro', 'navSpoofPro', 'navXrayPro', 'navCustomersPro', 'navAutopilotPro', 'navClusterPro', 'navDoctorPro', 'navSentinelPro'].forEach(id => {
@@ -3878,7 +3880,7 @@ function doLogin() {
     try {
       await api('/api/login', {username: $('u').value, password: $('p').value, code: $('totpCode').value.trim()});
       $('p').value = ''; $('totpCode').value = ''; $('codeField').classList.add('hidden'); $('loginErr').textContent = '';
-      showApp(); refresh(); loadSetupDefaults(); loadVersion(); accessRefresh(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); metricsRefresh(); histRefresh(); advisorRefresh();
+      showApp(); refresh(); loadSetupDefaults(); loadVersion(); accessRefresh(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); tgbRefresh(); metricsRefresh(); histRefresh(); advisorRefresh();
       nodePickLoad(); // a node chosen before the login reopens
       migrateBannerLoad();
     } catch(e) {
@@ -4839,6 +4841,59 @@ $('alSave').onclick = async () => {
 $('alTest').onclick = async () => {
   try { await api('/api/alerts', {action: 'test'}); toastOk('test alert sent'); }
   catch(e) { toastErr('test alert failed', e.message); }
+};
+
+// ---- Telegram bot (tgbot.go) ----
+function tgbRender(r) {
+  if (!r) return;
+  const st = { off: tr('', 'Off'), locked: tr('', 'Needs Hashem Pro'), starting: tr('', 'Starting'), running: tr('', 'Running'), error: tr('', 'Error') }[r.state] || r.state;
+  $('tgbState').textContent = st + (r.username ? ' · @' + r.username : '');
+  $('tgbState').className = 'badge ' + (r.state === 'running' ? 'ok' : r.state === 'error' ? 'err' : 'dim');
+  $('tgbEnabled').checked = !!r.enabled;
+  $('tgbLang').value = r.lang || 'fa';
+  $('tgbToken').placeholder = r.own_token ? r.token_masked : (r.watchdog_token ? tr('', 'Using the Watchdog tab\'s bot') + ' (' + r.token_masked + ')' : '123456:ABC-…');
+  $('tgbMsg').textContent = r.error ? tr('', 'Last error') + ': ' + r.error : (!r.own_token && !r.watchdog_token ? tr('', 'Set a bot token here or in the Watchdog tab.') : '');
+  const users = r.users || [];
+  $('tgbUsers').innerHTML = users.length ? '<div class="set-sub">' + users.map(u =>
+    '<div class="qs-actions"><span>' + esc(u.name) + ' · ' + esc(String(u.id)) + ' · ' + esc(u.role === 'admin' ? tr('', 'Admin') : tr('', 'Viewer')) + '</span>' +
+    '<button class="hashem-btn hashem-btn-secondary" data-tgb-role="' + esc(String(u.id)) + '" data-role="' + (u.role === 'admin' ? 'viewer' : 'admin') + '">' + esc(u.role === 'admin' ? tr('', 'Make Viewer') : tr('', 'Make Admin')) + '</button>' +
+    '<button class="hashem-btn hashem-btn-secondary" data-tgb-remove="' + esc(String(u.id)) + '">' + esc(tr('', 'Remove')) + '</button></div>').join('') + '</div>'
+    : '<div class="ent-help">' + esc(tr('', 'No Telegram account is paired yet.')) + '</div>';
+}
+async function tgbRefresh() {
+  try { tgbRender(await api('/api/telegram-bot')); } catch (e) {}
+}
+$('tgbSave').onclick = async () => {
+  if ($('tgbEnabled').checked && !isProLicensed('telegram_bot')) { openBagherLicModal('telegram_bot'); return; }
+  const body = { enabled: $('tgbEnabled').checked, lang: $('tgbLang').value };
+  const tok = $('tgbToken').value.trim();
+  if (tok) body.token = tok;
+  try { tgbRender(await api('/api/telegram-bot', body)); $('tgbToken').value = ''; toastOk(tr('', 'Telegram bot saved')); }
+  catch (e) { toastErr(tr('', 'Telegram bot'), e.message); }
+};
+$('tgbTest').onclick = async () => {
+  try { const r = await api('/api/telegram-bot', { action: 'test' }); tgbRender(r); toastOk(tr('', 'The bot answers') + (r.test_bot ? ': @' + r.test_bot : ''), tr('', 'Test messages sent') + ': ' + (r.test_sent || 0)); }
+  catch (e) { toastErr(tr('', 'Telegram bot'), e.message); }
+};
+$('tgbPair').onclick = async () => {
+  if (!isProLicensed('telegram_bot')) { openBagherLicModal('telegram_bot'); return; }
+  try {
+    const r = await api('/api/telegram-bot', { action: 'pair', role: $('tgbRole').value });
+    tgbRender(r);
+    const how = r.link ? tr('', 'Open this link in Telegram') + ': ' + r.link : tr('', 'Send this to your bot in Telegram') + ': /start ' + r.code;
+    $('tgbCode').textContent = tr('', 'Pairing code') + ': ' + r.code + ' · ' + how + ' · ' + tr('', 'It works once, for 10 minutes.');
+  } catch (e) { toastErr(tr('', 'Telegram bot'), e.message); }
+};
+$('tgbUsers').onclick = async (ev) => {
+  const rm = ev.target.closest('[data-tgb-remove]'), ro = ev.target.closest('[data-tgb-role]');
+  try {
+    if (rm) {
+      if (!await entConfirm(tr('', 'Remove this Telegram account?'), tr('', 'It can no longer use the bot.'), tr('', 'Remove'))) return;
+      tgbRender(await api('/api/telegram-bot', { action: 'remove-user', id: Number(rm.dataset.tgbRemove) }));
+    } else if (ro) {
+      tgbRender(await api('/api/telegram-bot', { action: 'set-role', id: Number(ro.dataset.tgbRole), role: ro.dataset.role }));
+    }
+  } catch (e) { toastErr(tr('', 'Telegram bot'), e.message); }
 };
 
 // ---- panel access settings (port / username / base path) ----
@@ -8571,7 +8626,7 @@ if ($('docCopyBtn')) $('docCopyBtn').onclick = () => { if (doctorData) copyTextS
 (async () => {
   if (NV) { // a node's view: the central's own login, HTTPS, 2FA and terminal are not this page's
     try {
-      await api('/api/status'); showApp(); const ready = refresh(); loadSetupDefaults(); loadVersion(); alertsRefresh(); histRefresh(); advisorRefresh();
+      await api('/api/status'); showApp(); const ready = refresh(); loadSetupDefaults(); loadVersion(); alertsRefresh(); tgbRefresh(); histRefresh(); advisorRefresh();
       // opened from the central on a page (its customers, a tunnel's own pages) or on one tunnel's dialog
       const qs = new URLSearchParams(location.search), tb = qs.get('tab');
       if (['customers', 'tunnel', 'autopilot', 'benchmark'].includes(tb)) goTab(tb);
@@ -8584,7 +8639,7 @@ if ($('docCopyBtn')) $('docCopyBtn').onclick = () => { if (doctorData) copyTextS
     catch(e) { showApp(); toastErr(tr('', 'Failed'), e.message); }
     return;
   }
-  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); metricsRefresh(); histRefresh(); advisorRefresh(); migrateBannerLoad(); }
+  try { await api('/api/status'); showApp(); refresh(); loadSetupDefaults(); loadVersion(); termFlagRefresh(); tlsRefresh(); twofaRefresh(); idleRefresh(); termAllowRefresh(); alertsRefresh(); tgbRefresh(); metricsRefresh(); histRefresh(); advisorRefresh(); migrateBannerLoad(); }
   catch(e) { showLogin(); }
 })();
 // light pollers: skip when the tab is in the background (background tabs

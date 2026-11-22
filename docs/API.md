@@ -142,6 +142,8 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `GET` | `/api/suggest` | session | `handleSuggest` |
 | `GET` | `/api/support` | session | `handleSupport` |
 | `POST` | `/api/support` | session + CSRF | `handleSupport` |
+| `GET` | `/api/telegram-bot` | session | `handleTGBotGet` |
+| `POST` | `/api/telegram-bot` | session + CSRF | `handleTGBotPost` |
 | `GET` | `/api/term/allowlist` | session | `handleTermAllowGet` |
 | `POST` | `/api/term/allowlist` | session + CSRF | `handleTermAllowPost` |
 | `POST` | `/api/term/enable` | session + CSRF | `handleTermEnable` |
@@ -177,4 +179,4 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/xray` | session + CSRF | `handleXrayPost` |
 | `GET` | `/metrics` | none | `handleMetrics` |
 
-Total: 153 routes.
+Total: 155 routes.

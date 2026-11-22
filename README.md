@@ -64,6 +64,7 @@ The GRE link itself can travel four ways: **Direct** (protocol 47), **WSS** (TLS
 - **Carrier swap** from either server: both ends switch together, and both go back if the new carrier does not connect within 45 seconds.
 - **Autopilot** (Pro): a tunnel that stays down is path-tested and moved to the fastest carrier that gets through, on both servers, within the limits you set. [Guide](docs/AUTOPILOT.md)
 - **Watchdog** that restarts only what is really broken, and leaves working tunnels alone.
+- **Telegram bot** (Pro): status, restarts, the watchdog, Autopilot, customers, backups, updates and any panel API request from a private Telegram chat, for the accounts you pair. [Guide](docs/TELEGRAM_BOT.md)
 
 **Many servers**
 - **Nodes:** add a server with one line or over SSH, open any server's pages from the central, build a tunnel between two servers from one page, and update, back up and get alerts for all of them in one place. [Guide](docs/NODES.md)
@@ -151,14 +152,14 @@ Lost the address? `hashem show-panel-url`. New password: `hashem reset-password`
 
 ## Hashem Pro
 
-GRE + FRP, the panel and updates are free. A **Pro license** unlocks Backhaul setup, Xray, Bagher, Spoof, limits, the cluster, Autopilot, the path test, diagnostics, performance tuning, the Watchdog and the benchmark. Every Pro key opens every Pro feature, including ones added later, and tunnels and settings that already run keep running without one. Get a license at [pdnczone.ir](https://pdnczone.ir).
+GRE + FRP, the panel and updates are free. A **Pro license** unlocks Backhaul setup, Xray, Bagher, Spoof, limits, the cluster, Autopilot, the path test, diagnostics, performance tuning, the Watchdog, the benchmark and the Telegram bot. Every Pro key opens every Pro feature, including ones added later, and tunnels and settings that already run keep running without one. Get a license at [pdnczone.ir](https://pdnczone.ir).
 
 ## Documentation
 
 | | |
 | --- | --- |
 | **Start** | [Choosing a tunnel](docs/ENGINES.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Secure deployment](docs/DEPLOYMENT.md) |
-| **Guides** | [Nodes](docs/NODES.md) · [Autopilot](docs/AUTOPILOT.md) · [Cluster](docs/CLUSTER.md) · [Cluster tutorial](docs/CLUSTER_TUTORIAL.md) · [Customers](docs/CUSTOMERS.md) · [Xray tunnel](docs/XRAY_TUNNEL.md) · [IPv6](docs/IPV6.md) · [FRP transports](docs/FRP_TUNNELS_GUIDE.md) |
+| **Guides** | [Nodes](docs/NODES.md) · [Autopilot](docs/AUTOPILOT.md) · [Telegram bot](docs/TELEGRAM_BOT.md) · [Cluster](docs/CLUSTER.md) · [Cluster tutorial](docs/CLUSTER_TUTORIAL.md) · [Customers](docs/CUSTOMERS.md) · [Xray tunnel](docs/XRAY_TUNNEL.md) · [IPv6](docs/IPV6.md) · [FRP transports](docs/FRP_TUNNELS_GUIDE.md) |
 | **Reference** | [Operations: health model, updates, CLI, uninstall](docs/OPERATIONS.md) · [HTTP API](docs/API.md) · [Error codes](docs/ERROR_CODES.md) · [Changelog](CHANGELOG.md) |
 | **Project** | [Contributing](CONTRIBUTING.md) · [Development](docs/dev/DEVELOPMENT.md) · [Security policy](SECURITY.md) · [Code of conduct](CODE_OF_CONDUCT.md) |
 

@@ -314,7 +314,7 @@ func authed(r *http.Request) bool {
 
 func requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if nodeRelayed(r) { // from this node's central, over its channel (node_relay.go)
+		if nodeRelayed(r) || botRelayed(r) { // the central's channel (node_relay.go) or the Telegram bot (tgbot.go)
 			next(w, r)
 			return
 		}
