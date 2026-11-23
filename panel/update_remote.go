@@ -201,7 +201,10 @@ var remoteUpdCall = func(tunnelID int, req remoteUpdReq, timeout time.Duration) 
 	}
 	data, err := tunnelPeerCall(t, http.MethodPost, "/api/peer/update", req, timeout)
 	if err != nil {
-		if strings.Contains(err.Error(), "HTTP 404") || errors.Is(err, errNoPeerLink) {
+		if errors.Is(err, errNoPeerLink) {
+			return remoteUpdAns{}, errors.New("this tunnel has no Peer Link to its foreign server: the foreign server is updated on it (hashem update)")
+		}
+		if strings.Contains(err.Error(), "HTTP 404") {
 			return remoteUpdAns{}, errRemoteOld
 		}
 		return remoteUpdAns{}, err
@@ -219,7 +222,7 @@ var remoteHubCall = func(h HubPeer, req remoteUpdReq, timeout time.Duration) (re
 	req.ID = c.NodeID
 	var ans remoteUpdAns
 	if err := meshCall(h, c.Secret, "/update", req, &ans, timeout); err != nil {
-		if strings.Contains(err.Error(), "did not accept") {
+		if errors.Is(err, errMeshRefused) {
 			return ans, errRemoteOld
 		}
 		return ans, err

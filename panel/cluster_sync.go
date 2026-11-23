@@ -430,9 +430,10 @@ func handleMeshDeliver(w http.ResponseWriter, r *http.Request) {
 	data, err := syncPeerCall(id, map[string]string{"bundle": bundle, "name": name})
 	if err != nil {
 		msg := err.Error()
-		// not taken at all (unreachable, or not accepted from this hub): join-hub
-		// did not run there, so another hub may try
-		ans.Retry = !strings.Contains(msg, "answered HTTP ") || strings.Contains(msg, "HTTP 404")
+		// Not taken at all (no Peer Link, never connected, or refused from this
+		// hub): join-hub did not run there, so another hub may try. A timeout is
+		// not retried: the foreign server may still be joining.
+		ans.Retry = errors.Is(err, errNoPeerLink) || strings.Contains(msg, "HTTP 404") || dialFailed(err)
 		if strings.Contains(msg, "HTTP 404") {
 			msg = "the foreign server " + req.Remote + " did not take the request from this hub (it takes it from the Iran hubs it serves, once it runs this version): " + syncUpdateAdvice() + ", then try again"
 		}
@@ -504,13 +505,13 @@ func meshCall(h HubPeer, secret, path string, in, out any, timeout time.Duration
 	meshSetSig(req.Header, secret, body)
 	resp, err := (&http.Client{Timeout: timeout}).Do(req)
 	if err != nil {
-		return fmt.Errorf("unreachable: %s", shortNetErr(err))
+		return meshUnreachable{err}
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
-		return errors.New("the other hub did not accept the request: " + syncUpdateAdvice() + ", or the hubs are not linked both ways")
+		return errMeshRefused
 	case resp.StatusCode != http.StatusOK:
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
@@ -518,6 +519,32 @@ func meshCall(h HubPeer, secret, path string, in, out any, timeout time.Duration
 		return fmt.Errorf("answer not trusted: %v", err)
 	}
 	return json.Unmarshal(data, out)
+}
+
+// meshUnreachable: the request to a hub failed before an answer came. It
+// keeps the network error, so a caller can tell "never connected" from "sent,
+// no answer in time".
+type meshUnreachable struct{ err error }
+
+func (e meshUnreachable) Error() string { return "unreachable: " + shortNetErr(e.err) }
+func (e meshUnreachable) Unwrap() error { return e.err }
+
+// errMeshRefused: the hub answered 404, it did not take the request.
+var errMeshRefused = errors.New("the other hub did not accept the request: " + syncUpdateAdvice() + ", or the hubs are not linked both ways")
+
+// dialFailed: the connection was never made, so the request never got there.
+// A timeout or a reset after connecting is not: the other side may be
+// running it.
+func dialFailed(err error) bool {
+	if err == nil {
+		return false
+	}
+	var oe *net.OpError
+	if errors.As(err, &oe) && oe.Op == "dial" {
+		return true
+	}
+	s := err.Error()
+	return strings.Contains(s, "connection refused") || strings.Contains(s, "no route to host") || strings.Contains(s, "network is unreachable")
 }
 
 // syncStep is what happened to one foreign server.
@@ -986,20 +1013,35 @@ func syncDeliver(c ClusterConfig, hub HubPeer, remote, bundle string) (syncDeliv
 		return syncDeliverAns{}, err
 	}
 	req := syncDeliverReq{ID: c.NodeID, Remote: remote, Bundle: sealed, Name: hubShortName(c)}
-	order := []HubPeer{hub}
+	var up, down []HubPeer
+	meshMu.Lock()
 	for _, h := range loadClusterConfig().Hubs { // fresh: hubs met while this copy runs count too
-		if h.ID != hub.ID && h.ID != c.NodeID {
-			order = append(order, h)
+		if h.ID == hub.ID || h.ID == c.NodeID {
+			continue
+		}
+		if st := meshState[h.ID]; st != nil && !st.Up {
+			down = append(down, h) // last: a hub that does not answer costs a timeout
+		} else {
+			up = append(up, h)
 		}
 	}
+	meshMu.Unlock()
+	order := append(append([]HubPeer{hub}, up...), down...)
 	var first error
 	for i, h := range order {
 		var ans syncDeliverAns
-		err := meshCall(h, c.Secret, "/deliver", req, &ans, syncDeliverTO+10*time.Second)
+		err := meshCall(h, c.Secret, "/deliver", req, &ans, syncDeliverCallTO)
 		if err == nil && ans.OK {
 			return ans, nil
 		}
-		retry := err != nil || ans.Retry || syncDeliverRetryText(ans.Error)
+		// Another hub is asked only when this one surely did not hand the
+		// bundle over: two join-hub runs on one foreign server would race.
+		var retry bool
+		if err != nil {
+			retry = errors.Is(err, errMeshRefused) || dialFailed(err)
+		} else {
+			retry = ans.Retry || syncDeliverRetryText(ans.Error)
+		}
 		if err == nil {
 			err = errors.New(ans.Error)
 		}
@@ -1015,6 +1057,9 @@ func syncDeliver(c ClusterConfig, hub HubPeer, remote, bundle string) (syncDeliv
 	}
 	return syncDeliverAns{}, first
 }
+
+// syncDeliverCallTO is how long a hub has to hand a bundle over (a var for tests).
+var syncDeliverCallTO = syncDeliverTO + 10*time.Second
 
 // syncDeliverRetryText: an answer of a hub from before Retry that still means
 // "not handed over".

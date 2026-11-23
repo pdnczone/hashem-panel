@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -51,6 +52,8 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	restartSoon()
 }
 
+var panelUpdateMu sync.Mutex
+
 // panelUpdateResult is what panelUpdate did.
 type panelUpdateResult struct {
 	Already  bool // nothing to install: Detail says why
@@ -67,6 +70,12 @@ type panelUpdateResult struct {
 // checksum check, rollback guard and audit lines. The string is the API
 // error code when it fails.
 func panelUpdate(tag, who, ip string) (panelUpdateResult, string, error) {
+	// one at a time: a second run (a remote hub asking again after a timeout,
+	// the page and the bot at once) would replace the .bak of the first
+	if !panelUpdateMu.TryLock() {
+		return panelUpdateResult{}, "E-UPDATE-04", errors.New("an update is running already on this server")
+	}
+	defer panelUpdateMu.Unlock()
 	_, asset, err := panelAsset()
 	if err != nil {
 		return panelUpdateResult{}, "E-UPDATE-05", err

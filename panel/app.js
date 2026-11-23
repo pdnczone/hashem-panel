@@ -4361,6 +4361,7 @@ async function loadOtherServers(fresh) {
   let d;
   try { d = await api('/api/update/remote' + (fresh ? '?refresh=1' : '')); } catch (e) { $('updOthersMsg').textContent = e.message; return; }
   const srv = d.servers || [], job = d.job || {}, steps = job.steps || [];
+  if (!_nodes && typeof loadNodes === 'function') { try { await loadNodes(); } catch (_) { /* not a central */ } }
   const central = !!(_nodes && _nodes.role === 'central');
   card.hidden = !srv.length && !central;
   $('updOthersNodes').classList.toggle('hidden', !central);

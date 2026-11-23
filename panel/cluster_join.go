@@ -174,6 +174,8 @@ func runHashemCluster(timeout time.Duration, args ...string) (string, error) {
 	return strings.TrimSpace(stripANSI(string(out))), err
 }
 
+var joinHubMu sync.Mutex
+
 func handleClusterJoinHub(w http.ResponseWriter, r *http.Request) {
 	if proRequired(w, r, "cluster", "Cluster") {
 		return
@@ -199,7 +201,14 @@ func handleClusterJoinHub(w http.ResponseWriter, r *http.Request) {
 		}
 		args = append(args, "--name", n)
 	}
+	// one join at a time: two would race on the next hub number (two frpc-hN
+	// units for one hub), e.g. when a hub asks again after a timeout
+	if !joinHubMu.TryLock() {
+		writeAPIError(w, r, "E-CLUSTER-11", "a join of another Iran hub is running already on this server: wait for it, then look at Cluster")
+		return
+	}
 	out, err := runHashemCluster(4*time.Minute, args...)
+	joinHubMu.Unlock()
 	joinedMu.Lock()
 	joinedAt = time.Time{}
 	joinedMu.Unlock()

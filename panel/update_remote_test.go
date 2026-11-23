@@ -259,3 +259,13 @@ func TestRemoteUpdateNotBack(t *testing.T) {
 		t.Fatalf("%+v", s.Steps)
 	}
 }
+
+// One update at a time on a server.
+func TestPanelUpdateOneAtATime(t *testing.T) {
+	panelUpdateMu.Lock()
+	defer panelUpdateMu.Unlock()
+	_, _, err := panelUpdate("v9.9.9", "test", "127.0.0.1")
+	if err == nil || !strings.Contains(err.Error(), "running already") {
+		t.Fatalf("second update: %v", err)
+	}
+}

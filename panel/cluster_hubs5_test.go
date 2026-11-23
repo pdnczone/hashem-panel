@@ -5,11 +5,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -371,5 +373,98 @@ func TestFiveHubsOneForeignServer(t *testing.T) {
 	}
 	if made.LocalGre != "10.14.0.2" || made.PeerGre != "10.14.0.1" {
 		t.Fatalf("GRE pair %s/%s, want 10.14.0.2/10.14.0.1 (none of the four hubs' pairs)", made.LocalGre, made.PeerGre)
+	}
+}
+
+// A hub that got the request but did not answer in time may be joining the
+// foreign server right now: no other hub is asked (two join-hub runs would
+// race). A hub that could not even be connected to is skipped.
+func TestSyncDeliverNoRetryAfterATimeout(t *testing.T) {
+	newClusterFixture(t, true)
+	old := syncDeliverCallTO
+	syncDeliverCallTO = 300 * time.Millisecond
+	defer func() { syncDeliverCallTO = old }()
+	release := make(chan struct{})
+	defer close(release)
+	var mu sync.Mutex
+	var order []string
+	slow := fakeHub(t, syncTestSecret, func(string, []byte) any {
+		mu.Lock()
+		order = append(order, "slow")
+		mu.Unlock()
+		<-release
+		return syncDeliverAns{OK: true}
+	})
+	good := fakeHub(t, syncTestSecret, func(string, []byte) any {
+		mu.Lock()
+		order = append(order, "good")
+		mu.Unlock()
+		return syncDeliverAns{OK: true, Status: "ok"}
+	})
+	closed := HubPeer{ID: "hub-x", Name: "x", URL: "http://127.0.0.1:1"}
+	hubs := []HubPeer{closed, {ID: "hub-s", Name: "s", URL: slow.URL}, {ID: "hub-g", Name: "g", URL: good.URL}}
+	if _, err := updateClusterConfig(func(c *ClusterConfig) error {
+		c.NodeID, c.Secret, c.Hubs = "hub-c", syncTestSecret, hubs
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := syncDeliver(loadClusterConfig(), closed, "198.51.100.1", "hsh1_x")
+	if err == nil {
+		t.Fatal("a timeout was taken for a success")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(order, ",") != "slow" {
+		t.Fatalf("asked %v: after the refused hub only the slow one, and nobody after it", order)
+	}
+}
+
+// The hub answering /deliver: a timeout is not "not taken".
+func TestMeshDeliverTimeoutIsNotRetry(t *testing.T) {
+	newClusterFixture(t, true)
+	syncHub(t, "203.0.113.9")
+	oldTun := syncLocalTunnels
+	syncLocalTunnels = func() []syncTunnel {
+		return []syncTunnel{{Name: "de", Remote: "198.51.100.1", Engine: "frp", Ports: []int{443}}}
+	}
+	defer func() { syncLocalTunnels = oldTun }()
+	if err := writePeers([]peerRecord{{ID: 2, RemotePub: "198.51.100.1", Ports: []int{443}}}); err != nil {
+		t.Fatal(err)
+	}
+	old := syncPeerCall
+	defer func() { syncPeerCall = old }()
+	syncPeerCall = func(int, map[string]string) ([]byte, error) {
+		return nil, &url.Error{Op: "Post", URL: "http://198.51.100.1:7777/_hp/api/peer/join-hub", Err: context.DeadlineExceeded}
+	}
+	sealed, _ := syncSeal(syncTestSecret, MakeBundle("203.0.113.9", 7001, "10.11.0.2", "10.11.0.1", "tok", []int{443}))
+	rec := httptest.NewRecorder()
+	syncMux().ServeHTTP(rec, syncSigned(t, "/deliver", syncDeliverReq{ID: "hub-a", Remote: "198.51.100.1", Bundle: sealed}))
+	var a syncDeliverAns
+	_ = json.Unmarshal(rec.Body.Bytes(), &a)
+	if a.OK || a.Retry {
+		t.Fatalf("timeout: %+v", a)
+	}
+	syncPeerCall = func(int, map[string]string) ([]byte, error) { return nil, errNoPeerLink }
+	rec = httptest.NewRecorder()
+	syncMux().ServeHTTP(rec, syncSigned(t, "/deliver", syncDeliverReq{ID: "hub-a", Remote: "198.51.100.1", Bundle: sealed}))
+	a = syncDeliverAns{}
+	_ = json.Unmarshal(rec.Body.Bytes(), &a)
+	if a.OK || !a.Retry {
+		t.Fatalf("no peer link: %+v", a)
+	}
+}
+
+// One join of another hub at a time on a foreign server.
+func TestJoinHubOneAtATime(t *testing.T) {
+	newClusterFixture(t, true)
+	joinHubMu.Lock()
+	defer joinHubMu.Unlock()
+	b := MakeBundle("203.0.113.9", 7001, "10.11.0.2", "10.11.0.1", "tok", []int{443})
+	body, _ := json.Marshal(map[string]string{"bundle": b})
+	rec := httptest.NewRecorder()
+	handleClusterJoinHub(rec, httptest.NewRequest(http.MethodPost, "/api/cluster/join-hub", bytes.NewReader(body)))
+	if rec.Code == 200 || !strings.Contains(rec.Body.String(), "running already") {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
 }

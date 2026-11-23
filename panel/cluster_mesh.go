@@ -481,7 +481,7 @@ func meshAdopt(c ClusterConfig, mc meshCode) error {
 	var ans meshAdoptAns
 	err = meshCall(HubPeer{ID: mc.ID, URL: mc.URL}, mc.Secret, "/adopt", meshAdoptReq{ID: c.NodeID, Name: c.Name, Secret: sealed}, &ans, 10*time.Second)
 	if err != nil {
-		if strings.Contains(err.Error(), "did not accept") {
+		if errors.Is(err, errMeshRefused) {
 			return fmt.Errorf("the hub at %s runs an older panel: update it to this hub's version, or press Show Join Code on this hub and paste that code on it", mc.URL)
 		}
 		return fmt.Errorf("cannot reach %s: %v", mc.URL, err)
