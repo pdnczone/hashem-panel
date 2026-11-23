@@ -3,9 +3,9 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
-## Unreleased
+## v3.2.8 — 2026-11-23
 
-**Other servers are updated from this one, and a cluster takes a third, fourth and fifth Iran hub. A Telegram bot runs the panel from a chat. Tunnels that went down after an update are shown and can be removed again, a second Iran hub copies many foreign servers correctly, the watchdog watches every tunnel, and Autopilot acts on a blocked tunnel.** Run `hashem update` on every server.
+**Settings → Danger Zone removes every tunnel at once, other servers are updated from this one, and a cluster takes a third, fourth and fifth Iran hub. Reverse Xray Reality links no longer reset their users. A Telegram bot runs the panel from a chat. Tunnels that went down after an update are shown and can be removed again, a second Iran hub copies many foreign servers correctly, the watchdog watches every tunnel, and Autopilot acts on a blocked tunnel.** Run `hashem update` on every server.
 
 - **Settings → Danger Zone: Remove Every Tunnel.** Removes every tunnel of this server at once: the FRP, Backhaul and GRE tunnels, the extra Iran hubs a foreign server serves, the Xray tunnel, Bagher and the Spoof tunnel. The panel, its settings, the license, backups, customers' records and the cluster's hub links stay. It warns what goes and what stays, asks for the panel password and the typed phrase `DELETE ALL TUNNELS`, asks once more, and makes a Watchdog backup first (if that fails, nothing is removed). Each part is listed with how it went. It cannot be run from a central, a node's channel or the Telegram bot. [Operations](docs/OPERATIONS.md)
 - **`hashem remove-tunnel --force` on a foreign server that serves several Iran hubs** also removes the extra hubs' clients (`frpc-hN`) and GRE interfaces (`gre-hN`). They stayed enabled with their configs deleted and failed at every boot.
