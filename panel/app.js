@@ -4350,6 +4350,38 @@ async function loadVersion(force) {
   if (!$('tab-update').hidden) { loadRollback(); loadPeerVersion(); loadOtherServers(false); }
 }
 
+// ---- Settings → Danger Zone: remove every tunnel (danger.go) ----
+
+(() => {
+  const btn = $('dangerResetBtn'), phrase = $('dangerPhrase'), pass = $('dangerPass'), msg = $('dangerMsg');
+  if (!btn) return;
+  const PHRASE = 'DELETE ALL TUNNELS';
+  const sync = () => { btn.disabled = phrase.value.trim() !== PHRASE || !pass.value; };
+  phrase.addEventListener('input', sync);
+  pass.addEventListener('input', sync);
+  btn.addEventListener('click', async () => {
+    if (!await entConfirm(tr('', 'Remove Every Tunnel'),
+      tr('', 'Last check: every tunnel on this server is removed now and every user is cut off. This cannot be undone. Go on?'),
+      tr('', 'Remove Every Tunnel'))) return;
+    btn.disabled = true;
+    msg.textContent = tr('', 'Removing every tunnel… this can take a few minutes. Do not close this page.');
+    try {
+      const r = await api('/api/danger/reset-tunnels', { password: pass.value, confirm: phrase.value.trim(), backup: $('dangerBackup').checked });
+      const rows = (r.steps || []).map(s => (s.ok ? '\u2713 ' : '\u2717 ') + tr('', s.part) + (s.detail ? ': ' + s.detail : ''));
+      msg.innerHTML = rows.map(x => '<div>' + esc(x) + '</div>').join('') + (r.error ? '<div class="xr-err">' + esc(r.error) + '</div>' : '');
+      if (r.error) toastErr(tr('', 'Nothing was removed'), r.error);
+      else if (r.failed) toastWarn(tr('', 'Some tunnels were not removed'), tr('', 'See the list under the button.'));
+      else toastOk(tr('', 'Every tunnel was removed'), tr('', 'The panel keeps running.'));
+      if (!r.error) { phrase.value = ''; pass.value = ''; }
+      if (typeof refresh === 'function') refresh();
+    } catch (e) {
+      msg.textContent = e.message || String(e);
+      toastErr(tr('', 'Cannot remove the tunnels'), e.message || String(e));
+    }
+    sync();
+  });
+})();
+
 // ---- the other servers: linked Iran hubs and this server's foreign servers (update_remote.go) ----
 
 let _updOthersTimer = null, _updOthersRan = false;

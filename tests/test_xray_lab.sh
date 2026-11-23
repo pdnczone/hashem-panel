@@ -267,8 +267,14 @@ block_iran_out() { ip netns exec $IR iptables -A OUTPUT -d $FO_IP -m conntrack -
 unblock_iran_out() { ip netns exec $IR iptables -D OUTPUT -d $FO_IP -m conntrack --ctstate NEW -j DROP 2>/dev/null; }
 
 probes=""
+# XRAY_LAB_ONLY=REGEX: only the links whose name matches (and nothing after
+# them); XRAY_LAB_ROUNDS=N: the 16 parallel connections N times (to catch a
+# rare failure).
+ONLY=${XRAY_LAB_ONLY:-}
+ROUNDS=${XRAY_LAB_ROUNDS:-1}
 while read -r name; do
     [[ -n $name ]] || continue
+    [[ -n $ONLY && ! $name =~ ^($ONLY)$ ]] && continue
     mode=${name##*-}
     unblock_iran_out
     [[ $mode == reverse ]] && block_iran_out
@@ -293,7 +299,13 @@ while read -r name; do
     fi
     sent=ok
     py $USR tcp $IR_U $PORT $((8 << 20)) || { bad "$name: 8 MiB each way through the tunnel (sha256)"; sent=; }
-    py $USR par $IR_U $PORT 16 $((256 << 10)) || { bad "$name: 16 parallel connections"; sent=; }
+    for ((round = 1; round <= ROUNDS; round++)); do
+        ((round > 1)) && sleep "${XRAY_LAB_GAP:-0}" # XRAY_LAB_GAP=S: the link idle S seconds between rounds
+        if ! py $USR par $IR_U $PORT 16 $((256 << 10)); then
+            bad "$name: 16 parallel connections$( ((ROUNDS > 1)) && echo " (round $round of $ROUNDS)")"; sent=
+            echo "--- Iran Xray:"; tail -n 20 "$TMP/iran-$name.log"; echo "--- foreign Xray:"; tail -n 20 "$TMP/fo-$name.log"
+        fi
+    done
     n=$(py $USR udp $IR_U $PORT 30 1200) || { bad "$name: UDP, $n of 30 datagrams came back"; sent=; }
     [[ -n $sent ]] && ok "$name: probe, 8 MiB each way (sha256), 16 parallel connections, UDP $n/30$([[ $mode == reverse ]] && echo ', with Iran -> foreign blocked')"
     if [[ $name == reality-direct ]]; then
@@ -314,6 +326,12 @@ while read -r name; do
     stop_link
 done <"$TMP/cfg/combos"
 unblock_iran_out
+if [[ -n $ONLY ]]; then
+    note "only $ONLY, $ROUNDS round(s)"
+    cat "$TMP/result.txt"
+    [[ $fail -eq 0 ]] && echo "PASS test_xray_lab ($ONLY)" && exit 0
+    exit 1
+fi
 note "a request through each link and back, first/once open${NETEM:+, over a $NETEM round trip}: ${probes%, }"
 
 # ---- Ping under load and a dead connection. The reverse link carries every

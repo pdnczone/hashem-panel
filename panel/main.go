@@ -684,6 +684,7 @@ func main() {
 	mux.HandleFunc("POST "+base+"/api/update/channel", requireAuth(requireCSRF(handleUpdateChannelPost)))
 	mux.HandleFunc("GET "+base+"/api/releases", requireAuth(handleReleases))
 	mux.HandleFunc("GET "+base+"/api/update/peer", requireAuth(handleUpdatePeer))
+	mux.HandleFunc("POST "+base+"/api/danger/reset-tunnels", requireAuth(requireCSRF(handleDangerResetTunnels))) // never relayed (danger.go)
 	mux.HandleFunc("GET "+base+"/api/update/remote", requireAuth(handleRemoteUpdateGet))
 	mux.HandleFunc("POST "+base+"/api/update/remote", requireAuth(requireCSRF(handleRemoteUpdatePost)))
 	mux.HandleFunc("POST "+base+"/api/setup", requireAuth(requireCSRF(handleSetupPost)))

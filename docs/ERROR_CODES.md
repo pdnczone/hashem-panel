@@ -239,6 +239,14 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 | --- | --- | --- | --- |
 | `E-SPOOF-01` | 400 | the spoof bundle could not be made | Fill in what the message names in the Spoof form, then make the bundle again. |
 
+## E-DANGER-xx — DANGER
+
+| Code | HTTP | Meaning | What to do |
+| --- | --- | --- | --- |
+| `E-DANGER-01` | 400 | not confirmed | Type DELETE ALL TUNNELS in the box, exactly, to remove every tunnel. |
+| `E-DANGER-02` | 403 | wrong password | Enter this panel's login password to remove every tunnel. |
+| `E-DANGER-03` | 409 | already removing the tunnels | A reset is running: wait for it to finish. |
+
 ## E-LIC-xx — LIC
 
 | Code | HTTP | Meaning | What to do |
@@ -331,4 +339,4 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 | `E-TG-03` | 500 | telegram bot update failed | An internal error while answering a Telegram message: see the detail. |
 | `E-TG-04` | 400 | bad telegram bot request | Check the request parameters. |
 
-Total: 175 codes.
+Total: 178 codes.

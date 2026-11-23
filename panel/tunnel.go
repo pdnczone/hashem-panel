@@ -341,11 +341,15 @@ func tuneViaInstaller(action string) (string, error) {
 // result. GRE_SKIP_PANEL is irrelevant here (removal never touches the
 // panel), but kept for symmetry with runInstaller.
 func removeViaInstaller(mode string) (string, error) {
+	return removeViaInstallerTO(mode, removePeerTimeout)
+}
+
+func removeViaInstallerTO(mode string, timeout time.Duration) (string, error) {
 	script, err := greScriptPath()
 	if err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), removePeerTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "bash", script, "remove-tunnel", mode)
 	cmd.Env = append(os.Environ(), "GRE_SKIP_PANEL=1", "TERM=dumb", "GRE_PANEL_DIR="+configDir)

@@ -166,3 +166,6 @@ jobs:
           unzip -oq xray.zip xray
           cd "$GITHUB_WORKSPACE" && (cd panel && go test -c -o /tmp/xraylab.test .)
           sudo env "PATH=$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" XRAY_BIN=/tmp/xray-dl/xray XRAY_LAB_TEST_BIN=/tmp/xraylab.test bash tests/test_xray_lab.sh
+      - name: Xray lab, reverse Reality 20 times (16 parallel connections each, Xray's logs on a failure)
+        run: |
+          sudo env "PATH=$PATH" XRAY_BIN=/tmp/xray-dl/xray XRAY_LAB_TEST_BIN=/tmp/xraylab.test XRAY_LAB_ONLY=reality-reverse XRAY_LAB_ROUNDS=20 bash tests/test_xray_lab.sh

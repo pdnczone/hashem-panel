@@ -96,6 +96,9 @@ var errCatalog = map[string]errInfo{
 	"E-UPDATE-09": {500, "new version did not start (rolled back)", "The panel went back to the previous version. Check the Logs tab, then try again or pick another version."},
 	"E-UPDATE-10": {500, "FRP was not upgraded (old FRP kept)", "The download failed, a config did not pass the new FRP's check, or a service did not come back. Run hashem cores-upgrade on the server to see which."},
 	"E-UPDATE-11": {400, "cannot update the other servers", "Pick linked Iran hubs or foreign servers of this server's tunnels that answer; only one such update runs at a time."},
+	"E-DANGER-01": {400, "not confirmed", "Type DELETE ALL TUNNELS in the box, exactly, to remove every tunnel."},
+	"E-DANGER-02": {403, "wrong password", "Enter this panel's login password to remove every tunnel."},
+	"E-DANGER-03": {409, "already removing the tunnels", "A reset is running: wait for it to finish."},
 	// license & premium
 	"E-LIC-01": {403, "premium license required for this feature", "Activate a valid Premium license key in Settings to unlock this feature."},
 	"E-LIC-02": {400, "invalid license key format", "Check that the complete license string was pasted without extra spaces or line breaks."},

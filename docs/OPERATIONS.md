@@ -124,6 +124,16 @@ hashem uninstall      # full wipe (see "Uninstall and your data")
 
 `hashem help` prints the full list, including the non-interactive `setup-*` and `*-peer` commands.
 
+## Remove every tunnel, keep the panel (Danger Zone)
+
+**Settings → Danger Zone → Remove Every Tunnel** removes every tunnel of this server at once and cannot be undone:
+
+- **Removed:** the FRP, Backhaul and GRE tunnels (the first one and every foreign server added after it), the extra Iran hubs a foreign server serves (`join-hub`), the Xray tunnel's links, Bagher and the Spoof tunnel, with their services, interfaces, firewall rules and configs. Every user who connects through this server is cut off.
+- **Kept:** the panel, its login and settings, the license, the Watchdog's backups, the customers' records and the cluster's links to other hubs. Customers' tunnels stop working, since the tunnels under them are gone.
+- **Not changed:** the other servers. Remove the tunnel on each foreign server too, or it keeps trying to connect.
+- It asks for the panel password and the phrase `DELETE ALL TUNNELS`, and makes a Watchdog backup first (if the backup fails, nothing is removed; untick the box to go on without one). A central, a node's channel and the Telegram bot cannot run it.
+- The page lists each part and whether it went. On the server, `hashem remove-tunnel --force` removes the FRP, Backhaul and GRE tunnels the same way.
+
 ## Uninstall and your data
 
 ```bash

@@ -6757,6 +6757,19 @@ remove_tunnel_force() {
         pkill -9 -f "${INSTALL_DIR}/backhaul" >/dev/null 2>&1 || true
         pkill -9 -f "backhaul-core/backhaul_premium" >/dev/null 2>&1 || true
 
+        # the clients of the extra Iran hubs this server serves (join-hub):
+        # left enabled, they started at boot with their configs gone
+        local _u
+        for _u in /etc/systemd/system/frpc-h[0-9]*.service /etc/systemd/system/gre-h[0-9]*.service; do
+            [[ -f "$_u" ]] || continue
+            systemctl disable --now "$(basename "$_u")" >/dev/null 2>&1 || true
+            rm -f "$_u"
+        done
+        ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | cut -d@ -f1 | grep -E '^gre-h[0-9]+$' | while read -r _u; do
+            ip link del "$_u" >/dev/null 2>&1 || true
+        done
+        rm -f "${PANEL_CONFIG_DIR}/hubs.json"
+
         # Remove systemd files
         rm -f /etc/systemd/system/frps*.service /etc/systemd/system/frpc.service \
               /etc/systemd/system/backhaul*.service /etc/systemd/system/${TUNNEL_NAME}.service \

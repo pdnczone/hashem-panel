@@ -776,6 +776,12 @@
   .set-nav button:hover { background:var(--s2); border-color:var(--ln); color:var(--tx); }
   .set-nav button:focus-visible { outline:2px solid var(--ac); outline-offset:2px; }
   .set-nav svg { width:16px; height:16px; flex:none; fill:none; stroke:var(--ac); stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  .danger-t { color:var(--er); }
+  .danger-card { border-color:var(--er-b25); }
+  .danger-ic svg { stroke:var(--er); }
+  .danger-box { background:color-mix(in srgb, var(--er) 8%, transparent); border-color:var(--er-b25); }
+  .danger-list { margin:8px 0 0; padding-inline-start:18px; display:flex; flex-direction:column; gap:4px; }
+  .set-nav .set-nav-danger svg { stroke:var(--er); }
   .set-group { display:flex; flex-direction:column; gap:14px; scroll-margin-top:120px; } /* clears the sticky topbar, 99px on phones */
   .set-gh { display:flex; flex-direction:column; gap:4px; padding-inline:2px; }
   .set-gt { display:flex; align-items:center; gap:12px; margin:0; font-size:12px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--tx2); }
@@ -3898,6 +3904,7 @@
           <button type="button" data-set="setWeb" class="nv-off"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>HTTPS &amp; terminal</button>
           <button type="button" data-set="setMon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>Monitoring</button>
           <button type="button" data-set="setLook" class="nv-off"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 0 0 0 18c.9 0 1.5-.7 1.5-1.5 0-.4-.15-.75-.4-1-.25-.3-.4-.65-.4-1 0-.85.7-1.5 1.5-1.5H16a5 5 0 0 0 5-5c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11.5" r="1"/><circle cx="10" cy="7.5" r="1"/><circle cx="14.5" cy="7.5" r="1"/></svg>Appearance</button>
+          <button type="button" data-set="setDanger" class="nv-off set-nav-danger"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/></svg>Danger Zone</button>
         </nav>
 
         <div class="set-group" id="setLic">
@@ -4166,6 +4173,30 @@
                 <button type="button" data-dens="comfortable" aria-pressed="true" data-i18n="dens_comfy">Comfortable</button>
                 <button type="button" data-dens="compact" aria-pressed="false" data-i18n="dens_compact">Compact</button>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="set-group nv-off" id="setDanger">
+          <div class="set-gh"><h2 class="set-gt danger-t">Danger Zone</h2><p class="set-gd">Actions that cannot be undone. Read every line before you use them.</p></div>
+          <div class="set-grid">
+            <div class="tunnel-card set-wide danger-card" id="dangerResetCard">
+              <div class="tc-header"><div class="set-h"><span class="set-ic danger-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/><path d="M10 11v6M14 11v6"/></svg></span><p class="tc-title">Remove Every Tunnel</p></div></div>
+              <div class="warnbox danger-box">
+                <b>This removes every tunnel on this server at once, and it cannot be undone.</b>
+                <ul class="danger-list">
+                  <li>Every user who connects through this server is cut off right away.</li>
+                  <li>Removed: the FRP, Backhaul and GRE tunnels (the first one and every foreign server added after it), the extra Iran hubs this server serves, the Xray tunnel, Bagher and the Spoof tunnel, with their services, interfaces, firewall rules and configs.</li>
+                  <li>Kept: the panel, its login and settings, the license, the Watchdog's backups, the customers' records and the cluster's links to other hubs. Customers' tunnels stop working, because the tunnels they run over are gone.</li>
+                  <li>The other servers are not changed: remove the tunnel on each foreign server too, or it keeps trying to connect.</li>
+                  <li>Getting the tunnels back means setting them up again, or restoring a backup in the Watchdog tab.</li>
+                </ul>
+              </div>
+              <label class="u-check-row"><input type="checkbox" id="dangerBackup" checked> Make a backup first (Watchdog). If it fails, nothing is removed.</label>
+              <div class="fg"><label for="dangerPass">Panel password</label><input type="password" class="hashem-input" id="dangerPass" autocomplete="current-password"></div>
+              <div class="fg"><label for="dangerPhrase">To confirm, type this phrase exactly:</label><code class="u-mono" dir="ltr" data-no-i18n>DELETE ALL TUNNELS</code><input type="text" class="hashem-input" id="dangerPhrase" autocomplete="off" spellcheck="false" dir="ltr" placeholder="DELETE ALL TUNNELS"></div>
+              <div class="set-acts"><button type="button" class="hashem-btn hashem-btn-danger" id="dangerResetBtn" disabled>Remove Every Tunnel</button></div>
+              <div class="ent-help" id="dangerMsg" aria-live="polite"></div>
             </div>
           </div>
         </div>
