@@ -4347,8 +4347,70 @@ async function loadVersion(force) {
     chk.disabled = updState.busy;
     chk.textContent = tr('', 'Check Now');
   }
-  if (!$('tab-update').hidden) { loadRollback(); loadPeerVersion(); }
+  if (!$('tab-update').hidden) { loadRollback(); loadPeerVersion(); loadOtherServers(false); }
 }
+
+// ---- the other servers: linked Iran hubs and this server's foreign servers (update_remote.go) ----
+
+let _updOthersTimer = null, _updOthersRan = false;
+const UPD_KIND = { hub: 'Iran hub', foreign: 'Foreign server' };
+const UPD_STEP = { waiting: ['info', 'Waiting'], updating: ['warn', 'Updating'], done: ['ok', 'Done'], failed: ['err', 'Failed'] };
+async function loadOtherServers(fresh) {
+  const card = $('updOthersCard');
+  if (!card) return;
+  let d;
+  try { d = await api('/api/update/remote' + (fresh ? '?refresh=1' : '')); } catch (e) { $('updOthersMsg').textContent = e.message; return; }
+  const srv = d.servers || [], job = d.job || {}, steps = job.steps || [];
+  const central = !!(_nodes && _nodes.role === 'central');
+  card.hidden = !srv.length && !central;
+  $('updOthersNodes').classList.toggle('hidden', !central);
+  const stepOf = k => steps.find(x => x.key === k);
+  $('updOthers').innerHTML = srv.map(s => {
+    const st = stepOf(s.key), sv = st && UPD_STEP[st.state];
+    const ver = !s.reachable ? `<span class="badge err">${esc(tr('', 'Not reachable'))}</span>`
+      : `<bdi class="lm-num" dir="ltr">${esc(s.version || '—')}</bdi> ` + (s.differs ? `<span class="badge warn">${esc(tr('', 'Different'))}</span>` : `<span class="badge ok">${esc(tr('', 'Same'))}</span>`);
+    const btn = s.reachable && s.differs && !job.running
+      ? `<button type="button" class="hashem-btn hashem-btn-secondary u-btn-30" onclick="updOthersRun([${jsArg(s.key)}])">${esc(tr('', 'Update'))}</button>` : '';
+    return `<div class="lm-row"><div class="lm-head"><div class="lm-name"><b>${esc(s.name)}</b>
+      <small class="lm-num">${esc([tr('', UPD_KIND[s.kind] || s.kind), s.addr || ''].filter(Boolean).join(' · '))}</small></div>
+      <span>${ver}</span></div>
+      ${s.error ? `<div class="qs-hint">${esc(s.error)}</div>` : ''}
+      ${sv ? `<div class="qs-hint"><span class="badge ${sv[0]}">${esc(tr('', sv[1]))}</span> ${esc(st.detail || '')}</div>` : ''}
+      ${btn ? `<div class="lm-acts">${btn}</div>` : ''}</div>`;
+  }).join('') || `<div class="qs-hint">${esc(tr('', 'This server has no linked Iran hub and no foreign server to update. Nodes are updated with Update Nodes.'))}</div>`;
+  const differ = srv.filter(s => s.reachable && s.differs);
+  $('updOthersAll').hidden = !differ.length || !!job.running;
+  $('updOthersAll').textContent = tr('', 'Update All') + (differ.length ? ' (' + differ.length + ')' : '');
+  $('updOthersMsg').textContent = job.running ? tr('', 'Updating the other servers one at a time…') : '';
+  clearTimeout(_updOthersTimer);
+  if (job.running) { _updOthersRan = true; _updOthersTimer = setTimeout(() => { if (!$('tab-update').hidden || _updOthersRan) loadOtherServers(false); }, 4000); }
+  else if (_updOthersRan) {
+    _updOthersRan = false;
+    const bad = steps.filter(x => x.state === 'failed').length, ok = steps.filter(x => x.state === 'done').length;
+    if (bad) toastWarn(tr('', 'Some servers were not updated'), ok + ' ' + tr('', 'done') + ', ' + bad + ' ' + tr('', 'failed'));
+    else toastOk(tr('', 'The other servers are updated'), ok + ' ' + tr('', 'done'));
+    if (typeof loadClusterStatus === 'function' && !$('tab-cluster').hidden) loadClusterStatus();
+  }
+}
+async function updOthersRun(keys) {
+  const n = keys ? keys.length : (($('updOthersAll').textContent.match(/\d+/) || [])[0] || '');
+  if (!await entConfirm(tr('', 'Update the other servers'),
+    docTpl('Update {0} server(s) to {1}? They are updated one at a time; only their panels restart, tunnels keep running.', [n, updState.current || tr('', 'this server\'s version')]),
+    tr('', 'Update'))) return;
+  try {
+    await api('/api/update/remote', keys ? { keys } : { all: true });
+    _updOthersRan = true;
+    toastOk(tr('', 'Updating the other servers'), tr('', 'Progress shows on the Update tab.'));
+  } catch (e) { toastErr(tr('', 'Cannot update the other servers'), e.message || String(e)); }
+  loadOtherServers(false);
+}
+function clRemoteUpdate(key) { updOthersRun([key]); }
+(() => { // app.js runs at the end of the body: the card is there
+  const r = $('updOthersRefresh'), a = $('updOthersAll'), n = $('updOthersNodes');
+  if (r) r.addEventListener('click', () => loadOtherServers(true));
+  if (a) a.addEventListener('click', () => updOthersRun(null));
+  if (n) n.addEventListener('click', () => { if (typeof nodeFleetUpdateOpen === 'function') nodeFleetUpdateOpen(); });
+})();
 
 async function loadPeerVersion() {
   let p;
@@ -10821,7 +10883,8 @@ const clMs = v => (v == null || v < 0) ? '—' : Math.round(v) + ' ms';
 const clSt = (kind, text) => `<span class="ent-st ${kind}"><i></i>${esc(tr('', text))}</span>`;
 // A linked hub on another panel version: the cluster needs the same one everywhere.
 const clHubVerBadge = h => !h.version_differs ? ''
-  : `<span class="badge warn">${esc(tr('', h.version ? 'Different: update both servers' : 'Older version: update it too'))}</span>`;
+  : `<span class="badge warn">${esc(tr('', h.version ? 'Different: update both servers' : 'Older version: update it too'))}</span>`
+    + (h.up ? ` <button type="button" class="hashem-btn hashem-btn-ghost u-btn-xs" onclick="clRemoteUpdate(${jsArg('hub:' + h.id)})">${esc(tr('', 'Update It'))}</button>` : '');
 
 function renderClusterUI(d) {
   const links = d.links || [], pools = d.pools || [], hubs = d.hubs || [], joined = d.joined_hubs || [];
@@ -12273,7 +12336,8 @@ function clInsForm(key, d) {
         ${others.length ? `<select class="hashem-input" aria-label="${esc(tr('', 'Add to a pool'))}" onchange="clInsAddToPool(${l.id},this.value)">
           <option value="">${esc(tr('', 'Add to a pool…'))}</option>${others.map(p => `<option value="${esc(clPoolKey(p))}">${p.port} ${esc(CL_PROTO[p.proto] || p.proto)}${p.name ? ' · ' + esc(p.name) : ''}</option>`).join('')}</select>` : ''}
         <div class="ent-help u-m-0">${esc(tr('', 'The tunnel itself (ports, transport, token) is edited in the Tunnel tab.'))}</div>
-        <div><button type="button" class="hashem-btn hashem-btn-secondary" onclick="goTab('tunnel')">${esc(tr('', 'Open Tunnel Tab'))}</button></div>
+        <div class="u-flex u-gap-8 u-wrap"><button type="button" class="hashem-btn hashem-btn-secondary" onclick="goTab('tunnel')">${esc(tr('', 'Open Tunnel Tab'))}</button>
+          <button type="button" class="hashem-btn hashem-btn-ghost" onclick="clRemoteUpdate(${jsArg('tunnel:' + l.id)})">${esc(tr('', 'Update This Foreign Server'))}</button></div>
       </div>`;
   }
   if (k === 'hub') {

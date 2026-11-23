@@ -251,6 +251,7 @@ func mountPeerRoutes(mux *http.ServeMux, base string) {
 		{"POST", "/api/peer/apply-engine", handlePeerApplyEngine},
 		{"POST", "/api/peer/ping", handlePeerPing},
 		{"POST", "/api/peer/join-hub", handlePeerJoinHub}, // a hub this server serves asks it to serve another hub too (cluster_sync.go)
+		{"POST", "/api/peer/update", handlePeerUpdate},    // a hub this server serves asks it to update (update_remote.go)
 		{"POST", "/api/peer/egress", handlePeerEgress},    // a hub's Telegram/Cloudflare calls through this server (tunnel_egress.go)
 		{"POST", "/api/peer/revpath-probe", handlePeerRevPathProbe},
 		{"POST", "/api/peer/sshfwd-install-key", handlePeerSSHFwdInstallKey},
@@ -275,6 +276,10 @@ func mountPeerRoutes(mux *http.ServeMux, base string) {
 			// Peer Link secret: it may still say where its panel answers,
 			// and ask for a swap of its own tunnel.
 			guard = requireTunnelSecretHidden
+		case "/api/peer/join-hub", "/api/peer/update":
+			// Any Iran hub this server serves may ask: its first hub (the
+			// Peer Link secret) or one it joined later (that hub's token).
+			guard = requireServedHubSecretHidden
 		}
 		mux.HandleFunc(rt.method+" "+peerRoutePrefix+rt.path, guard(rt.h))
 	}

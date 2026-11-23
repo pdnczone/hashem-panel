@@ -44,7 +44,7 @@ fails.
 | 🛠 Tools | optimize / restore the network tuning, tuning status, tunnel health test, carrier advice, limits, Sentinel |
 | 📜 Logs | the services' last 400 log lines, as a file |
 | ❗️ Errors | the last 20 panel errors |
-| ⬆️ Update | running and latest version, update now (the bot says when the panel is back) |
+| ⬆️ Update | running and latest version, update now (the bot says when the panel is back); **Other servers**: the linked Iran hubs and foreign servers with their versions, update every one on another version |
 | 🌐 Cluster | the cluster's status |
 | 🔑 License | the license's state and Pro features (read only) |
 

@@ -109,6 +109,7 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `GET` | `/api/peer/swap-request` | peer secret (or session) | `handlePeerSwapRequestGet` |
 | `POST` | `/api/peer/swap-request` | peer secret (or session) | `handlePeerSwapRequest` |
 | `GET` | `/api/peer/swap-status` | peer secret (or session) | `handlePeerSwapStatus` |
+| `POST` | `/api/peer/update` | peer secret (or session) | `handlePeerUpdate` |
 | `GET` | `/api/peer/wrap-request` | peer secret (or session) | `handlePeerWrapStatus` |
 | `POST` | `/api/peer/wrap-request` | peer secret (or session) | `handlePeerWrapRequest` |
 | `GET` | `/api/peers` | session | `handlePeersGet` |
@@ -170,6 +171,8 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/update/channel` | session + CSRF | `handleUpdateChannelPost` |
 | `POST` | `/api/update/kind` | session + CSRF | `handleUpdateKind` |
 | `GET` | `/api/update/peer` | session | `handleUpdatePeer` |
+| `GET` | `/api/update/remote` | session | `handleRemoteUpdateGet` |
+| `POST` | `/api/update/remote` | session + CSRF | `handleRemoteUpdatePost` |
 | `GET` | `/api/version` | session | `handleVersion` |
 | `GET` | `/api/watchdog` | session | `handleWatchdogGet` |
 | `POST` | `/api/watchdog` | session + CSRF | `handleWatchdogPost` |
@@ -179,4 +182,4 @@ Request and response bodies are defined by the handlers named below in `panel/`.
 | `POST` | `/api/xray` | session + CSRF | `handleXrayPost` |
 | `GET` | `/metrics` | none | `handleMetrics` |
 
-Total: 155 routes.
+Total: 158 routes.

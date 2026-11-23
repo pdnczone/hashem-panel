@@ -315,6 +315,10 @@ type syncDeliverAns struct {
 	OK     bool   `json:"ok"`
 	Status string `json:"status,omitempty"` // ok | already
 	Error  string `json:"error,omitempty"`
+	// Retry: this hub could not hand the bundle over (no tunnel to that
+	// server, or the server did not take it from this hub); another hub that
+	// serves the same foreign server may.
+	Retry bool `json:"retry,omitempty"`
 }
 
 // syncPeerCall sends the bundle to a foreign server over the tunnel's Peer
@@ -411,6 +415,7 @@ func handleMeshDeliver(w http.ResponseWriter, r *http.Request) {
 	}
 	id, have, found := syncTunnelFor(req.Remote)
 	if !found {
+		ans.Retry = true
 		fail("this hub has no tunnel to " + req.Remote)
 		return
 	}
@@ -425,8 +430,11 @@ func handleMeshDeliver(w http.ResponseWriter, r *http.Request) {
 	data, err := syncPeerCall(id, map[string]string{"bundle": bundle, "name": name})
 	if err != nil {
 		msg := err.Error()
+		// not taken at all (unreachable, or not accepted from this hub): join-hub
+		// did not run there, so another hub may try
+		ans.Retry = !strings.Contains(msg, "answered HTTP ") || strings.Contains(msg, "HTTP 404")
 		if strings.Contains(msg, "HTTP 404") {
-			msg = "the foreign server " + req.Remote + " does not know this request: " + syncUpdateAdvice() + ", then try again"
+			msg = "the foreign server " + req.Remote + " did not take the request from this hub (it takes it from the Iran hubs it serves, once it runs this version): " + syncUpdateAdvice() + ", then try again"
 		}
 		fail(msg)
 		return
@@ -725,6 +733,7 @@ func runHubSync(c ClusterConfig, hub HubPeer, both bool) error {
 		return fmt.Errorf("%s has no tunnel to copy", hubLabel(hub))
 	}
 	known := syncKnownRemotes()
+	greTaken := syncOtherHubsGre(c, hub, list.Tunnels)
 	step := func(t syncTunnel, state, detail string) {
 		syncUpdate(func(s *syncState) {
 			s.Steps = append(s.Steps, syncStep{Name: syncName(t), Remote: t.Remote, State: state, Detail: detail})
@@ -739,7 +748,7 @@ func runHubSync(c ClusterConfig, hub HubPeer, both bool) error {
 			step(t, "failed", hubLabel(hub)+" does not know the ports of this tunnel right now: is the foreign server connected to it? Press the button again when it is")
 			continue
 		}
-		if detail, err := syncOne(c, hub, t); err != nil {
+		if detail, err := syncOne(c, hub, t, greTaken[t.Remote]...); err != nil {
 			step(t, "failed", err.Error())
 		} else {
 			known[t.Remote] = true
@@ -900,7 +909,7 @@ func handleMeshSyncState(w http.ResponseWriter, r *http.Request) {
 
 // syncOne makes this hub's tunnel to one foreign server and has the foreign
 // server join this hub. It leaves nothing behind when it fails.
-func syncOne(c ClusterConfig, hub HubPeer, t syncTunnel) (string, error) {
+func syncOne(c ClusterConfig, hub HubPeer, t syncTunnel, greAvoid ...string) (string, error) {
 	if t.Remote == "" || len(t.Ports) == 0 {
 		return "", errors.New("the other hub's tunnel has no address or ports")
 	}
@@ -927,7 +936,7 @@ func syncOne(c ClusterConfig, hub HubPeer, t syncTunnel) (string, error) {
 	// the ports the first one held: with many foreign servers on the same
 	// ports only the first one carried users.
 	if t.Engine != "backhaul" {
-		body.LocalGre, body.PeerGre = syncGrePair(plan.GreUsed, t.LocalGre, t.PeerGre)
+		body.LocalGre, body.PeerGre = syncGrePair(plan.GreUsed, append([]string{t.LocalGre, t.PeerGre}, greAvoid...)...)
 		if body.LocalGre == "" {
 			return "", errors.New("no free GRE address pair")
 		}
@@ -951,14 +960,7 @@ func syncOne(c ClusterConfig, hub HubPeer, t syncTunnel) (string, error) {
 		}
 		return "", fmt.Errorf("could not make the tunnel here: %v", err)
 	}
-	var ans syncDeliverAns
-	sealed, derr := syncSeal(c.Secret, bundle)
-	if derr == nil {
-		derr = meshCall(hub, c.Secret, "/deliver", syncDeliverReq{ID: c.NodeID, Remote: t.Remote, Bundle: sealed, Name: hubShortName(c)}, &ans, syncDeliverTO+10*time.Second)
-	}
-	if derr == nil && !ans.OK {
-		derr = errors.New(ans.Error)
-	}
+	ans, derr := syncDeliver(c, hub, t.Remote, bundle)
 	if derr == nil && ans.Status == "already" {
 		// The foreign server already serves an Iran hub with this address, from an
 		// older join: it would keep dialing that one, never the tunnel just made
@@ -972,6 +974,90 @@ func syncOne(c ClusterConfig, hub HubPeer, t syncTunnel) (string, error) {
 		return "", fmt.Errorf("the foreign server did not join (%v); the tunnel made here was removed again", derr)
 	}
 	return "tunnel made, foreign server joined", nil
+}
+
+// syncDeliver hands the bundle to the foreign server remote. A foreign
+// server takes "serve this hub too" only from an Iran hub it already serves
+// (an older one only from its first hub), so when the asked hub cannot hand
+// it over, every other linked hub is tried in turn.
+func syncDeliver(c ClusterConfig, hub HubPeer, remote, bundle string) (syncDeliverAns, error) {
+	sealed, err := syncSeal(c.Secret, bundle)
+	if err != nil {
+		return syncDeliverAns{}, err
+	}
+	req := syncDeliverReq{ID: c.NodeID, Remote: remote, Bundle: sealed, Name: hubShortName(c)}
+	order := []HubPeer{hub}
+	for _, h := range loadClusterConfig().Hubs { // fresh: hubs met while this copy runs count too
+		if h.ID != hub.ID && h.ID != c.NodeID {
+			order = append(order, h)
+		}
+	}
+	var first error
+	for i, h := range order {
+		var ans syncDeliverAns
+		err := meshCall(h, c.Secret, "/deliver", req, &ans, syncDeliverTO+10*time.Second)
+		if err == nil && ans.OK {
+			return ans, nil
+		}
+		retry := err != nil || ans.Retry || syncDeliverRetryText(ans.Error)
+		if err == nil {
+			err = errors.New(ans.Error)
+		}
+		if i > 0 {
+			err = fmt.Errorf("%s: %v", hubLabel(h), err)
+		}
+		if first == nil {
+			first = err
+		}
+		if !retry {
+			return ans, err // the foreign server ran join-hub and it failed: no other hub would do better
+		}
+	}
+	return syncDeliverAns{}, first
+}
+
+// syncDeliverRetryText: an answer of a hub from before Retry that still means
+// "not handed over".
+func syncDeliverRetryText(msg string) bool {
+	return strings.Contains(msg, "has no tunnel to") || strings.Contains(msg, "does not know this request")
+}
+
+// syncOtherHubsGre is, per foreign server, the GRE addresses the other linked
+// hubs (all but hub, whose list is want) use with it, so a copy never takes a
+// pair the foreign server already has for another hub. Best effort: a hub
+// that does not answer is left out (the foreign server then dials this hub on
+// its public address).
+func syncOtherHubsGre(c ClusterConfig, hub HubPeer, want []syncTunnel) map[string][]string {
+	out := map[string][]string{}
+	add := func(ts []syncTunnel) {
+		for _, t := range ts {
+			for _, a := range []string{t.LocalGre, t.PeerGre} {
+				if a != "" {
+					out[t.Remote] = append(out[t.Remote], a)
+				}
+			}
+		}
+	}
+	add(want)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, h := range c.Hubs {
+		if h.ID == hub.ID || h.ID == c.NodeID {
+			continue
+		}
+		wg.Add(1)
+		go func(h HubPeer) {
+			defer wg.Done()
+			var l syncList
+			if meshCall(h, c.Secret, "/tunnels", map[string]string{"id": c.NodeID}, &l, syncListTO) == nil {
+				mu.Lock()
+				add(l.Tunnels)
+				mu.Unlock()
+			}
+		}(h)
+	}
+	wg.Wait()
+	return out
 }
 
 func hubShortName(c ClusterConfig) string {

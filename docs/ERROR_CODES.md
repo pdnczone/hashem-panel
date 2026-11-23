@@ -80,6 +80,7 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 | `E-UPDATE-08` | 400 | invalid update channel | Channel must be stable or dev. |
 | `E-UPDATE-09` | 500 | new version did not start (rolled back) | The panel went back to the previous version. Check the Logs tab, then try again or pick another version. |
 | `E-UPDATE-10` | 500 | FRP was not upgraded (old FRP kept) | The download failed, a config did not pass the new FRP's check, or a service did not come back. Run hashem cores-upgrade on the server to see which. |
+| `E-UPDATE-11` | 400 | cannot update the other servers | Pick linked Iran hubs or foreign servers of this server's tunnels that answer; only one such update runs at a time. |
 
 ## E-GRE-xx — GRE interface and ping diagnostics
 
@@ -330,4 +331,4 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 | `E-TG-03` | 500 | telegram bot update failed | An internal error while answering a Telegram message: see the detail. |
 | `E-TG-04` | 400 | bad telegram bot request | Check the request parameters. |
 
-Total: 174 codes.
+Total: 175 codes.

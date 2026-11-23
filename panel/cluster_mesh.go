@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -410,11 +411,20 @@ func meshAddHub(code string) (HubPeer, error) {
 	if mc.ID == c.NodeID {
 		return HubPeer{}, fmt.Errorf("this is this hub's own code: paste it on another Iran server")
 	}
+	secret := mc.Secret
 	if c.Secret != "" && c.Secret != mc.Secret && len(c.Hubs) > 0 {
-		return HubPeer{}, fmt.Errorf("this hub is already linked with other hubs under another secret; remove them first")
+		// This hub already has a cluster and the new hub made its code with
+		// a secret of its own (its first Show Join Code): the new hub takes
+		// this cluster's secret, so a third, fourth or fifth hub can be
+		// linked from any hub of the cluster.
+		if err := meshAdopt(c, mc); err != nil {
+			return HubPeer{}, err
+		}
+		secret = c.Secret
 	}
 	self := meshSelfBeat(c)
-	ans, _, err := meshPost(mc.URL, "/hello", mc.Secret, self)
+	self.Hubs = c.Hubs // the new hub links with them too (meshMeet)
+	ans, _, err := meshPost(mc.URL, "/hello", secret, self)
 	if err != nil {
 		return HubPeer{}, fmt.Errorf("cannot reach %s: %v", mc.URL, err)
 	}
@@ -423,7 +433,7 @@ func meshAddHub(code string) (HubPeer, error) {
 	}
 	h := HubPeer{ID: ans.ID, Name: ans.Name, URL: mc.URL, PublicIP: ans.IP}
 	_, err = updateClusterConfig(func(x *ClusterConfig) error {
-		x.Secret = mc.Secret
+		x.Secret = secret
 		meshUpsert(x, h)
 		for _, o := range ans.Hubs {
 			if o.ID != x.NodeID && o.ID != h.ID {
@@ -439,12 +449,116 @@ func meshAddHub(code string) (HubPeer, error) {
 	// Introduce ourselves to the hubs we learned about.
 	for _, o := range ans.Hubs {
 		if o.ID != c.NodeID && o.ID != h.ID {
-			if _, _, err := meshPost(o.URL, "/hello", mc.Secret, self); err != nil {
+			if _, _, err := meshPost(o.URL, "/hello", secret, self); err != nil {
 				clusterEventf("warn", "Hub %s could not be told about this hub yet: %v", o.Name, err)
 			}
 		}
 	}
 	return h, nil
+}
+
+// meshAdoptReq asks a hub that has no other hub yet to take this cluster's
+// secret (sealed with the secret of its own join code).
+type meshAdoptReq struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Secret string `json:"secret"`
+}
+
+type meshAdoptAns struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// meshAdopt gives the hub of code mc this cluster's secret. The request is
+// signed with the secret of that hub's code, so only who has its join code
+// can ask, as for linking itself.
+func meshAdopt(c ClusterConfig, mc meshCode) error {
+	sealed, err := syncSeal(mc.Secret, c.Secret)
+	if err != nil {
+		return err
+	}
+	var ans meshAdoptAns
+	err = meshCall(HubPeer{ID: mc.ID, URL: mc.URL}, mc.Secret, "/adopt", meshAdoptReq{ID: c.NodeID, Name: c.Name, Secret: sealed}, &ans, 10*time.Second)
+	if err != nil {
+		if strings.Contains(err.Error(), "did not accept") {
+			return fmt.Errorf("the hub at %s runs an older panel: update it to this hub's version, or press Show Join Code on this hub and paste that code on it", mc.URL)
+		}
+		return fmt.Errorf("cannot reach %s: %v", mc.URL, err)
+	}
+	if !ans.OK {
+		return errors.New(ans.Error)
+	}
+	return nil
+}
+
+// POST /_hc/adopt: another hub adds this one to its cluster. Signed with this
+// hub's own secret (the one in its join code); accepted only while this hub
+// has no other hub, so it never leaves a cluster it is in.
+func handleMeshAdopt(w http.ResponseWriter, r *http.Request) {
+	c := loadClusterConfig()
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<12))
+	if err != nil || c.Secret == "" || meshVerify(c.Secret, r.Header, body, time.Now()) != nil {
+		http.NotFound(w, r)
+		return
+	}
+	var req meshAdoptReq
+	if json.Unmarshal(body, &req) != nil || req.ID == "" || req.ID == c.NodeID {
+		http.NotFound(w, r)
+		return
+	}
+	ans := meshAdoptAns{}
+	newSecret, err := syncOpen(c.Secret, req.Secret)
+	if err != nil || len(newSecret) < 32 {
+		ans.Error = "the request cannot be read"
+		meshAnswer(w, c.Secret, ans)
+		return
+	}
+	_, err = updateClusterConfig(func(x *ClusterConfig) error {
+		if x.Secret != c.Secret {
+			return errors.New("this hub's cluster secret changed meanwhile: try again")
+		}
+		if len(x.Hubs) > 0 && x.Secret != newSecret {
+			return errors.New("this hub is already linked with other hubs: show its join code and paste it on the other hub instead, or unlink its hubs first")
+		}
+		x.Secret = newSecret
+		return nil
+	})
+	if err != nil {
+		ans.Error = err.Error()
+	} else {
+		ans.OK = true
+		clusterEventf("info", "Iran hub %s adds this hub to its cluster.", req.Name)
+	}
+	meshAnswer(w, c.Secret, ans) // the asking hub checks it with the code's secret
+}
+
+// meshMeet links this hub with the hubs that a new hub's hello names (the
+// hub that added this one by its code knows the rest of the cluster). Each
+// is kept only when it answers a signed hello as itself.
+func meshMeet(hubs []HubPeer) {
+	c := loadClusterConfig()
+	self := meshSelfBeat(c)
+	for _, o := range hubs {
+		if o.ID == "" || o.ID == c.NodeID || o.URL == "" {
+			continue
+		}
+		known := false
+		for _, h := range c.Hubs {
+			known = known || h.ID == o.ID
+		}
+		if known {
+			continue
+		}
+		ans, _, err := meshPost(o.URL, "/hello", c.Secret, self)
+		if err != nil || ans.ID != o.ID {
+			clusterEventf("warn", "Hub %s could not be linked yet: %v", o.Name, err)
+			continue
+		}
+		h := HubPeer{ID: ans.ID, Name: ans.Name, URL: o.URL, PublicIP: ans.IP}
+		_, _ = updateClusterConfig(func(x *ClusterConfig) error { meshUpsert(x, h); return nil })
+		clusterEventf("info", "Linked with Iran hub %s (%s).", h.Name, h.PublicIP)
+	}
 }
 
 func meshUpsert(c *ClusterConfig, h HubPeer) {
@@ -493,6 +607,8 @@ func meshRemoveHub(id string) bool {
 func mountMeshRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+meshRoutePrefix+"/hello", meshHandler(true))
 	mux.HandleFunc("POST "+meshRoutePrefix+"/beat", meshHandler(false))
+	mux.HandleFunc("POST "+meshRoutePrefix+"/adopt", handleMeshAdopt)
+	mux.HandleFunc("POST "+meshRoutePrefix+"/update", handleMeshUpdate)       // update_remote.go
 	mux.HandleFunc("POST "+meshRoutePrefix+"/tunnels", handleMeshTunnels)     // cluster_sync.go
 	mux.HandleFunc("POST "+meshRoutePrefix+"/deliver", handleMeshDeliver)     // cluster_sync.go
 	mux.HandleFunc("POST "+meshRoutePrefix+"/pull", handleMeshPull)           // cluster_sync.go
@@ -547,6 +663,9 @@ func meshHandler(hello bool) http.HandlerFunc {
 			c, _ = updateClusterConfig(func(x *ClusterConfig) error { meshUpsert(x, h); return nil })
 			if !known {
 				clusterEventf("info", "Iran hub %s (%s) linked with this hub.", h.Name, h.PublicIP)
+			}
+			if hello && len(in.Hubs) > 0 {
+				go meshMeet(in.Hubs)
 			}
 		}
 		meshRecord(in, 0, nil)

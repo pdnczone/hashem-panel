@@ -1085,6 +1085,9 @@ func tgUpdateMenu(c tgBotConfig, usr *tgBotUser, chat int64, arg string) tgScree
 				return "✅ " + res.Detail
 			})
 	}
+	if arg == "os" || arg == "osr" || arg == "osgo" {
+		return tgOtherServers(c, usr, arg)
+	}
 	if err := tgAPIJSON(usr, http.MethodGet, q, nil, &v); err != nil {
 		return tgErrScreen(c, "m", err)
 	}
@@ -1104,8 +1107,87 @@ func tgUpdateMenu(c tgBotConfig, usr *tgBotUser, chat int64, arg string) tgScree
 	} else {
 		text += tgT(c, "✅ به‌روز است.", "✅ Up to date.")
 	}
+	keys = append(keys, []tgBtn{{Text: tgT(c, "🖥 سرورهای دیگر", "🖥 Other servers"), Data: "up:os"}})
 	keys = append(keys, tgBack(c, "m"))
 	return tgScreen{Text: text, Keys: keys}
+}
+
+// tgOtherServers: the linked Iran hubs and the foreign servers of this
+// server's tunnels, with their versions; admins update every one on another
+// version (update_remote.go).
+func tgOtherServers(c tgBotConfig, usr *tgBotUser, arg string) tgScreen {
+	if arg == "osgo" {
+		if !usr.admin() {
+			return tgScreen{Text: tgT(c, "⛔ فقط ادمین می‌تواند این کار را بکند.", "⛔ Only an admin can do this."), Keys: [][]tgBtn{tgBack(c, "up:os")}}
+		}
+		return tgConfirm(c, usr, tgT(c, "همه‌ی سرورهایی که نسخه‌ی دیگری دارند به نسخه‌ی این سرور آپدیت شوند؟ یکی‌یکی آپدیت می‌شوند؛ فقط پنلشان ری‌استارت می‌شود و تونل‌ها کار می‌کنند.",
+			"Update every server on another version to this server's version? One at a time; only their panels restart, tunnels keep running."),
+			tgT(c, "آپدیت سرورهای دیگر…", "Updating the other servers…"), func(u *tgBotUser) string {
+				if err := tgAPIJSON(u, http.MethodPost, "/api/update/remote", map[string]any{"all": true}, nil); err != nil {
+					return "❌ " + err.Error()
+				}
+				return tgT(c, "✅ شروع شد. پیشرفت: ⬆️ آپدیت ← 🖥 سرورهای دیگر", "✅ Started. Progress: ⬆️ Update → 🖥 Other servers")
+			})
+	}
+	q := "/api/update/remote"
+	if arg == "osr" {
+		q += "?refresh=1"
+	}
+	var v struct {
+		Servers []struct {
+			Key, Kind, Name, Addr, Version, Error string
+			Reachable, Differs                    bool
+		} `json:"servers"`
+		Job struct {
+			Running bool `json:"running"`
+			Steps   []struct {
+				Key, Name, State, Detail string
+			} `json:"steps"`
+		} `json:"job"`
+		Version string `json:"version"`
+	}
+	if err := tgAPIJSON(usr, http.MethodGet, q, nil, &v); err != nil {
+		return tgErrScreen(c, "up", err)
+	}
+	var b strings.Builder
+	b.WriteString(tgT(c, "🖥 سرورهای دیگر (این سرور: ", "🖥 Other servers (this one: ") + v.Version + ")\n\n")
+	differ := 0
+	for _, s := range v.Servers {
+		kind := tgT(c, "سرور خارج", "foreign")
+		if s.Kind == "hub" {
+			kind = tgT(c, "هاب ایران", "Iran hub")
+		}
+		mark := "✅"
+		switch {
+		case !s.Reachable:
+			mark = "⚪️"
+		case s.Differs:
+			mark, differ = "🟡", differ+1
+		}
+		ver := s.Version
+		if !s.Reachable {
+			ver = tgT(c, "در دسترس نیست", "not reachable")
+		}
+		fmt.Fprintf(&b, "%s %s (%s, %s): %s\n", mark, s.Name, kind, s.Addr, ver)
+		if s.Error != "" {
+			b.WriteString("   " + s.Error + "\n")
+		}
+	}
+	if len(v.Servers) == 0 {
+		b.WriteString(tgT(c, "هاب متصل یا سرور خارجی نیست.", "No linked hub and no foreign server.") + "\n")
+	}
+	if len(v.Job.Steps) > 0 {
+		b.WriteString("\n" + tgT(c, "آخرین آپدیت:", "Last update:") + "\n")
+		for _, s := range v.Job.Steps {
+			fmt.Fprintf(&b, "• %s: %s %s\n", s.Name, s.State, s.Detail)
+		}
+	}
+	keys := [][]tgBtn{{{Text: tgT(c, "🔄 دوباره بررسی کن", "🔄 Check again"), Data: "up:osr"}}}
+	if differ > 0 && !v.Job.Running && usr.admin() {
+		keys = append(keys, []tgBtn{{Text: fmt.Sprintf(tgT(c, "⬆️ آپدیت همه (%d)", "⬆️ Update all (%d)"), differ), Data: "up:osgo"}})
+	}
+	keys = append(keys, tgBack(c, "up"))
+	return tgScreen{Text: tgCut(b.String(), 3800), Keys: keys}
 }
 
 func tgLicense(c tgBotConfig, usr *tgBotUser) tgScreen {

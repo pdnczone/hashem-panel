@@ -30,12 +30,6 @@ var updateClient = &http.Client{Timeout: 25 * time.Second}
 const panelScriptName = "hashem.sh"
 
 func handleUpdate(w http.ResponseWriter, r *http.Request) {
-	arch, asset, err := panelAsset()
-	if err != nil {
-		writeAPIError(w, r, "E-UPDATE-05", err.Error())
-		return
-	}
-	_ = arch
 	// Optional {"tag":"vX.Y.Z"}: install that exact release, older included
 	// (downgrade). No body = newest of the channel, as before.
 	var req struct {
@@ -44,48 +38,81 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req)
 	}
-	explicit := req.Tag != ""
-	if explicit && !validTag(req.Tag) {
-		writeAPIError(w, r, "E-UPDATE-01", "unexpected release tag")
+	res, code, err := panelUpdate(req.Tag, cfg.Username, ClientIP(r))
+	if err != nil {
+		writeAPIError(w, r, code, err.Error())
 		return
 	}
-	latest := req.Tag
+	if res.Already {
+		writeJSON(w, map[string]string{"status": "ok", "detail": res.Detail})
+		return
+	}
+	writeJSON(w, map[string]any{"status": "ok", "detail": res.Detail, "from": res.From, "to": res.To, "guarded": res.Guarded})
+	restartSoon()
+}
+
+// panelUpdateResult is what panelUpdate did.
+type panelUpdateResult struct {
+	Already  bool // nothing to install: Detail says why
+	Detail   string
+	From, To string
+	Guarded  bool
+}
+
+// panelUpdate installs release tag ("" = the newest of this server's
+// channel; a tag is installed as asked, older included). It does not
+// restart: the caller answers first, then calls restartSoon. The page, the
+// Telegram bot, a linked Iran hub and an Iran hub of this server's tunnels
+// (update_remote.go) all update through here, with the same download,
+// checksum check, rollback guard and audit lines. The string is the API
+// error code when it fails.
+func panelUpdate(tag, who, ip string) (panelUpdateResult, string, error) {
+	_, asset, err := panelAsset()
+	if err != nil {
+		return panelUpdateResult{}, "E-UPDATE-05", err
+	}
+	explicit := tag != ""
+	if explicit && !validTag(tag) {
+		return panelUpdateResult{}, "E-UPDATE-01", errors.New("unexpected release tag")
+	}
+	latest := tag
 	if !explicit {
 		latest, _ = latestReleaseTag()
 		if latest == "" {
 			latest = "latest"
 		}
 		if latest != "latest" && !validTag(latest) {
-			writeAPIError(w, r, "E-UPDATE-01", "unexpected release tag")
-			return
+			return panelUpdateResult{}, "E-UPDATE-01", errors.New("unexpected release tag")
 		}
 	}
+	already := panelUpdateResult{Already: true, Detail: "already latest (" + displayVersion(panelVersion) + ")"}
 	if latest != "latest" && latest == panelVersion {
-		writeJSON(w, map[string]string{"status": "ok", "detail": "already latest (" + displayVersion(panelVersion) + ")"})
-		return
+		return already, "", nil
 	}
 	// never install something that is not newer than what is running
 	// (e.g. a stable host must not be "updated" to an older tag) —
 	// unless the operator picked the tag, which is how a downgrade works
 	if !explicit && latest != "latest" && !updateAvailable(panelVersion, latest, updateChannel()) {
-		writeJSON(w, map[string]string{"status": "ok", "detail": "already latest (" + displayVersion(panelVersion) + ")"})
-		return
+		return already, "", nil
 	}
 
-	LogSecurityAudit("update_initiated", cfg.Username, ClientIP(r), "from="+panelVersion+" to="+latest+" asset="+asset)
+	LogSecurityAudit("update_initiated", who, ip, "from="+panelVersion+" to="+latest+" asset="+asset)
 
-	exe, code, err := installAsset(latest, asset, cfg.Username, ClientIP(r))
+	exe, code, err := installAsset(latest, asset, who, ip)
 	if err != nil {
-		writeAPIError(w, r, code, err.Error())
-		return
+		return panelUpdateResult{}, code, err
 	}
 	// Keep hashem.sh in sync with the binary
 	syncPanelScriptFrom(latest)
 
-	LogSecurityAudit("update_success", cfg.Username, ClientIP(r), "installed version "+latest)
+	LogSecurityAudit("update_success", who, ip, "installed version "+latest)
 	guarded := guardUpdate(exe, panelVersion, latest)
-	writeJSON(w, map[string]any{"status": "ok", "detail": "updated to " + displayVersion(latest) + " — restarting panel",
-		"from": displayVersion(panelVersion), "to": displayVersion(latest), "guarded": guarded})
+	return panelUpdateResult{Detail: "updated to " + displayVersion(latest) + " — restarting panel",
+		From: displayVersion(panelVersion), To: displayVersion(latest), Guarded: guarded}, "", nil
+}
+
+// restartSoon restarts the panel a second after the answer went out.
+var restartSoon = func() {
 	go func() {
 		time.Sleep(1000 * time.Millisecond)
 		restartSelf()

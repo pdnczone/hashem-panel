@@ -214,6 +214,8 @@ The manual way above and this one end the same: the foreign server runs a second
 
 A foreign server can serve up to 9 Iran hubs.
 
+**Three, four or five Iran hubs.** Link each new hub with any hub of the cluster, in either direction: paste a hub's join code on the new one, or the new one's code on a hub that is already linked (the new hub then takes the cluster's secret and is introduced to every other hub). Then sync the new hub's tunnels with any linked hub. A foreign server takes "serve this hub too" from any Iran hub it already serves, so the copy reaches it through whichever hub it can; one on an older panel takes it only from its first hub, which is tried in turn. The GRE address pair of the new hub's tunnel is one that no linked hub uses with that foreign server, so its GRE comes up. Every hub and the foreign servers need this version.
+
 ### 4.11 Two Iran hubs backing each other up (linked hubs)
 
 Goal: if every foreign server of pool 443 is down on Tehran, Tehran forwards port 443 to Mashhad, where the pool works.
@@ -352,6 +354,8 @@ A tunnel whose ports include a pool's port **joins the pool by itself**. A membe
 - A hub is **healthy** when one of its pools is Healthy or Degraded, or, with no pools, when one of its tunnels is up.
 - **Forwarding** picks a linked hub that is up and reports the same pool (same port and protocol) as Healthy or Degraded, the lowest latency first. A hub that is forwarding a pool itself is never a target, so traffic cannot loop.
 - **Unlink:** **Cluster → Hubs → Remove**, or `hashem cluster remove-hub <id>`. The other hub is told.
+- **Linking a hub to a cluster from inside it:** when the hub you are on already has linked hubs and the code comes from a new hub (with its own secret), the new hub is asked (`/_hc/adopt`, signed with the secret of its code) to take this cluster's secret. It does so only while it has no linked hub of its own; a hub that is in another cluster says so and nothing changes. The hub that adds it names the other hubs in its hello, and the new hub links with each one that answers as itself.
+- **Updating a linked hub:** a hub that runs another version shows **Update It**. The hub is asked over the hub channel (`/_hc/update`) and installs this hub's release when that is newer than its own, with the same checks as its own Update button. The Update tab's **Other Servers** card lists every linked hub and foreign server.
 
 ---
 

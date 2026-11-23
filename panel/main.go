@@ -684,6 +684,8 @@ func main() {
 	mux.HandleFunc("POST "+base+"/api/update/channel", requireAuth(requireCSRF(handleUpdateChannelPost)))
 	mux.HandleFunc("GET "+base+"/api/releases", requireAuth(handleReleases))
 	mux.HandleFunc("GET "+base+"/api/update/peer", requireAuth(handleUpdatePeer))
+	mux.HandleFunc("GET "+base+"/api/update/remote", requireAuth(handleRemoteUpdateGet))
+	mux.HandleFunc("POST "+base+"/api/update/remote", requireAuth(requireCSRF(handleRemoteUpdatePost)))
 	mux.HandleFunc("POST "+base+"/api/setup", requireAuth(requireCSRF(handleSetupPost)))
 	mux.HandleFunc("GET "+base+"/api/peers", requireAuth(handlePeersGet))
 	mux.HandleFunc("POST "+base+"/api/peers", requireAuth(requireCSRF(handlePeersPost)))

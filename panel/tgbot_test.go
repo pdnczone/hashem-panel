@@ -465,7 +465,7 @@ func TestTGBotEveryMenuRenders(t *testing.T) {
 	for _, id := range []int64{42, 43} {
 		usr := c.user(id)
 		for _, d := range []string{"m", "st", "tl", "t:0", "t:3", "t:99", "tr:3", "tn:3", "tx:3", "wd", "wd:rst", "bk", "bks:0", "ap", "al",
-			"cu", "c:1", "cw:1", "dr", "dr:fix", "to", "to:opt", "to:adv", "lg", "er", "up", "up:go", "cl", "li", "h", "zz"} {
+			"cu", "c:1", "cw:1", "dr", "dr:fix", "to", "to:opt", "to:adv", "lg", "er", "up", "up:go", "up:os", "up:osgo", "cl", "li", "h", "zz"} {
 			s := tgOnButton(c, usr, id, d)
 			if strings.TrimSpace(s.Text) == "" {
 				t.Errorf("%s (%d): empty screen", d, id)

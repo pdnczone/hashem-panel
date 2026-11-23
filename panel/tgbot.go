@@ -801,7 +801,7 @@ func tgSlow(data string) bool {
 	case "to":
 		return arg == "health" || arg == "tune"
 	case "up":
-		return arg == "chk"
+		return arg == "chk" || arg == "os" || arg == "osr" // os: each foreign server is asked
 	case "wd":
 		return arg == "test" || arg == "bkn"
 	}
