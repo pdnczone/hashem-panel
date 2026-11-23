@@ -184,8 +184,10 @@ func TestNodeTunDraft(t *testing.T) {
 	if d.ServerRole != "add-peer" || d.ClientMode != "join-hub" || len(d.Problems) != 1 || !strings.Contains(d.Problems[0], "443") {
 		t.Fatalf("draft with tunnels: %+v", d)
 	}
-	// a client already dialling this server; Cluster or Backhaul without a license
+	// a client already dialling this server, which holds the tunnel back to
+	// it; Cluster or Backhaul without a license
 	f.plans[1].Clashes = nil
+	f.plans[1].Peers = append(f.plans[1].Peers, setupPlanPeer{ID: 2, RemotePub: "192.0.2.7"})
 	f.plans[2].Uplinks = append(f.plans[2].Uplinks, setupPlanUplink{Hub: 2, IranPub: "198.51.100.1"})
 	f.plans[2].Pro["cluster"], f.plans[1].Pro["backhaul"] = false, false
 	d, _ = nodeTunDraftFor(context.Background(), nodeTunReq{Server: 1, Client: 2, Engine: "backhaul", Ports: "443"})
@@ -662,5 +664,55 @@ func TestNodeTunLinksSecondAddress(t *testing.T) {
 	f.plans[2].Uplinks[0].IranPub = "198.51.100.1" // the main address still matches
 	if links, _ := nodeTunLinks(context.Background()); len(links) != 1 || links[0].ServerIP != "198.51.100.1" {
 		t.Fatalf("the main address: %+v", links)
+	}
+}
+
+// A tunnel removed on the Iran server's own Tunnel page leaves the foreign
+// end behind, still dialing it. That end used to block a new tunnel between
+// the two ("already dials"); now the job removes it first.
+func TestNodeTunStaleClientEnd(t *testing.T) {
+	f := nodeTunTest(t)
+	q := nodeTunReq{Server: 1, Client: 2, Engine: "frp", Ports: "443"}
+	// the foreign server's first tunnel dials server 1, which has none back
+	f.plans[2].Exists, f.plans[2].Side = true, "foreign"
+	f.plans[2].Uplinks = []setupPlanUplink{{Hub: 1, IranPub: "198.51.100.1"}}
+	d, err := nodeTunDraftFor(context.Background(), q)
+	if err != nil || len(d.Problems) > 0 || len(d.Stale) != 1 || d.ClientMode != "foreign" {
+		t.Fatalf("a stale first tunnel: %v %+v", err, d)
+	}
+	j := nodeTunCreateRun(t, q)
+	if j.State != "done" {
+		t.Fatalf("job: %+v", j)
+	}
+	calls := f.seen()
+	rm, setup := strings.Index(calls, "2 POST /api/action"), strings.Index(calls, "1 POST /api/setup\n")
+	if rm < 0 || setup < 0 || rm > setup {
+		t.Fatalf("the old end must go before the new server end:\n%s", calls)
+	}
+	if b := f.body["2 /api/action"]; b["action"] != "remove-tunnel" || b["peer_id"] != float64(0) {
+		t.Fatalf("removal: %v", b)
+	}
+
+	// a stale joined hub next to a live first tunnel to another server:
+	// leave that hub, join again
+	f2 := nodeTunTest(t)
+	f2.plans[2].Exists, f2.plans[2].Side = true, "foreign"
+	f2.plans[2].Uplinks = []setupPlanUplink{{Hub: 1, IranPub: "203.0.113.50"}, {Hub: 2, IranPub: "198.51.100.1"}}
+	d, _ = nodeTunDraftFor(context.Background(), q)
+	if len(d.Problems) > 0 || len(d.Stale) != 1 || d.Stale[0].Hub != 2 || d.ClientMode != "join-hub" {
+		t.Fatalf("a stale joined hub: %+v", d)
+	}
+	if j := nodeTunCreateRun(t, q); j.State != "done" || !strings.Contains(f2.seen(), "2 POST /api/cluster/leave-hub") {
+		t.Fatalf("leave the stale hub: %+v\n%s", j, f2.seen())
+	}
+
+	// a stale first tunnel while the same set-up serves another hub: not
+	// removed from here (that would cut the other one)
+	f3 := nodeTunTest(t)
+	f3.plans[2].Exists, f3.plans[2].Side = true, "foreign"
+	f3.plans[2].Uplinks = []setupPlanUplink{{Hub: 1, IranPub: "198.51.100.1"}, {Hub: 2, IranPub: "203.0.113.50"}}
+	d, _ = nodeTunDraftFor(context.Background(), q)
+	if len(d.Problems) != 1 || !strings.Contains(d.Problems[0], "own Tunnel page") {
+		t.Fatalf("a stale first tunnel with another hub: %v", d.Problems)
 	}
 }

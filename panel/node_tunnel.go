@@ -399,6 +399,12 @@ type nodeTunDraft struct {
 	PeerGre    string    `json:"peer_gre"`    // on the client
 	FrpPort    int       `json:"frp_port"`
 	Problems   []string  `json:"problems,omitempty"` // a create would fail: say why first
+
+	// Stale: the client's ends that still dial the server while the server
+	// holds no tunnel back to it (removed on the server's own Tunnel page,
+	// which leaves the other end alone). They dial nothing; the job removes
+	// them before it makes the new tunnel.
+	Stale []setupPlanUplink `json:"stale,omitempty"`
 }
 
 func nodeTunDraftFor(ctx context.Context, q nodeTunReq) (nodeTunDraft, error) {
@@ -416,8 +422,24 @@ func nodeTunDraftFor(ctx context.Context, q nodeTunReq) (nodeTunDraft, error) {
 	if !s.Exists && len(s.Peers) == 0 {
 		d.ServerRole = "iran"
 	}
+	// the server holds a tunnel back to the client (its first or a peer)
+	serverHasIt := c.Public != "" && slices.ContainsFunc(s.Peers, func(p setupPlanPeer) bool { return p.RemotePub == c.Public })
+	live, staleFirst := 0, false
+	for _, u := range c.Uplinks {
+		if s.Public != "" && u.IranPub == s.Public && !serverHasIt {
+			d.Stale = append(d.Stale, u)
+			staleFirst = staleFirst || u.Hub == 1
+			continue
+		}
+		live++
+	}
+	if staleFirst && live > 0 {
+		problem("%s still has its end of the old tunnel to %s, as its first tunnel, and dials other Iran servers through that set-up: remove it on %s's own Tunnel page, then try again", nodeTunName(q.Client), nodeTunName(q.Server), nodeTunName(q.Client))
+	}
+	// after the stale ends go: a client left with no tunnel takes this one
+	// as its first
 	d.ClientMode = "foreign"
-	if c.Exists || len(c.Uplinks) > 0 {
+	if (c.Exists && !staleFirst) || live > 0 {
 		d.ClientMode = "join-hub"
 	}
 	for _, x := range []struct {
@@ -448,7 +470,7 @@ func nodeTunDraftFor(ctx context.Context, q nodeTunReq) (nodeTunDraft, error) {
 		}
 	}
 	for _, u := range c.Uplinks {
-		if u.IranPub == s.Public && s.Public != "" {
+		if u.IranPub == s.Public && s.Public != "" && serverHasIt {
 			problem("%s already dials %s", nodeTunName(q.Client), nodeTunName(q.Server))
 		}
 	}
@@ -580,6 +602,20 @@ func nodeTunCreate(ctx context.Context, j *nodeTunJob, q nodeTunReq) error {
 	}
 	if len(d.Problems) > 0 {
 		return errors.New(strings.Join(d.Problems, "; "))
+	}
+	// 0. the client's old ends to this server, whose server end is gone
+	for _, u := range d.Stale {
+		j.logf("removing %s's old end of a tunnel to %s (its end there was removed)", nodeTunName(q.Client), nodeTunName(q.Server))
+		rctx, cancel := context.WithTimeout(ctx, nodeTunActionTO)
+		if u.Hub >= 2 {
+			err = nodeAPIJSON(rctx, q.Client, http.MethodPost, "/api/cluster/leave-hub", map[string]any{"id": u.Hub}, nil)
+		} else {
+			err = nodeAPIJSON(rctx, q.Client, http.MethodPost, "/api/action", map[string]any{"action": "remove-tunnel", "peer_id": 0}, nil)
+		}
+		cancel()
+		if err != nil {
+			return fmt.Errorf("removing the old end on %s: %v; nothing new was made", nodeTunName(q.Client), err)
+		}
 	}
 	// 1. the server end
 	before := map[int]bool{}

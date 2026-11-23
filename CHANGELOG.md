@@ -3,6 +3,11 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## Unreleased
+
+- **Nodes: a new tunnel no longer stops on the old one's left-over end.** Removing a tunnel on the Iran server's own Tunnel page removes only that server's end; the foreign server keeps dialing it. Making a new tunnel between the two on the Nodes map then stopped with "already dials this server" (and offered to join as one more hub, a Pro feature). The plan now sees such an end (the foreign server dials the Iran server, which holds no tunnel back), shows "Removed first" in the dialog, and the job removes it before making the new tunnel: leave-hub for a joined hub, remove-tunnel for a first tunnel. A first tunnel whose set-up also serves another hub is not removed from there; the dialog says to remove it on the foreign server.
+- **Tunnel page: removing a tunnel says the other end stays.** The confirm and the toast say that only this server's end goes, and that the Nodes map removes both ends.
+
 ## v3.2.8 — 2026-11-23
 
 **Settings → Danger Zone removes every tunnel at once, other servers are updated from this one, and a cluster takes a third, fourth and fifth Iran hub. Reverse Xray Reality links no longer reset their users. A Telegram bot runs the panel from a chat. Tunnels that went down after an update are shown and can be removed again, a second Iran hub copies many foreign servers correctly, the watchdog watches every tunnel, and Autopilot acts on a blocked tunnel.** Run `hashem update` on every server.
