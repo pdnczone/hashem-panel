@@ -21,7 +21,7 @@ In reverse mode the Iran server listens on the tunnel port, and its key may only
 
 | Preset | On the wire | For |
 |---|---|---|
-| **Reality** | RAW + Reality + Vision | The fastest. It looks like a visit to a normal HTTPS site (the SNI). |
+| **Reality** | RAW + Reality + Vision | The fastest. It looks like a visit to a normal HTTPS site (the SNI). Reverse links run without Vision (it breaks Xray's mux). |
 | **XHTTP** | XHTTP + Reality | Ordinary HTTP requests: for when plain Reality gets cut. The default in reverse mode. |
 | **gRPC** | gRPC + Reality | Many streams over one connection. |
 | **mKCP** | mKCP over UDP, encrypted | For when TCP is throttled. |

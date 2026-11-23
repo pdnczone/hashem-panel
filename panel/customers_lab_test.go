@@ -592,8 +592,14 @@ func TestCustomersLabEngines(t *testing.T) {
 	for _, ob := range rogue["outbounds"].([]any) {
 		if o := ob.(map[string]any); o["tag"] == "tunnel" {
 			tunnel = o
-			// a plain VLESS client: the same user, Vision and all, minus reverse
-			delete(o["settings"].(map[string]any), "reverse")
+			// a plain VLESS client: the same user, minus reverse, with the Vision
+			// its account has (the kit itself asks for none on a reverse link;
+			// without it the server would refuse the client for that alone)
+			set := o["settings"].(map[string]any)
+			delete(set, "reverse")
+			if ss, ok := o["streamSettings"].(map[string]any); ok && ss["security"] == "reality" {
+				set["flow"] = xrayFlowVision
+			}
 		}
 	}
 	rogue["outbounds"] = []any{tunnel}

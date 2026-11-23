@@ -695,11 +695,18 @@ func (l XrayLink) network() string {
 	return "tcp"
 }
 
+// flow is the VLESS flow of this end. The foreign end of a reverse link asks
+// for none: its connection to Iran carries Xray's mux, where Vision never
+// splices (Xray marks reverse links "no splice") but still sniffs for TLS and
+// pads, and under many parallel users it lost its place in the mux stream
+// ("common/mux: unknown status"), resetting every user on the link at once.
+// Iran keeps Vision on the account, which still accepts a reverse link with no
+// flow, so either end can be updated first.
 func (l XrayLink) flow() string {
-	if l.Profile.Vision {
-		return xrayFlowVision
+	if !l.Profile.Vision || (l.Mode == xrayModeReverse && !l.serverEnd()) {
+		return ""
 	}
-	return ""
+	return xrayFlowVision
 }
 
 // Pre-connect: in direct mode every user connection is a new TCP connection

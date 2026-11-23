@@ -21,7 +21,7 @@ users ──> Iran :2053 ══ Xray (Reality, XHTTP, gRPC, mKCP or CDN) ══>
 
 | پیش‌تنظیم | روی شبکه | برای |
 |---|---|---|
-| **Reality** | RAW + Reality + Vision | سریع‌ترین. شبیه بازدید از یک سایت HTTPS معمولی (همان SNI). |
+| **Reality** | RAW + Reality + Vision | سریع‌ترین. شبیه بازدید از یک سایت HTTPS معمولی (همان SNI). لینک معکوس بدون Vision کار می‌کند (با mux خود Xray سازگار نیست). |
 | **XHTTP** | XHTTP + Reality | درخواست‌های معمولی HTTP: وقتی Reality ساده قطع می‌شود. پیش‌فرض حالت معکوس. |
 | **gRPC** | gRPC + Reality | چند جریان روی یک اتصال. |
 | **mKCP** | mKCP روی UDP، رمزشده | وقتی TCP محدود شده. |

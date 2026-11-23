@@ -366,12 +366,13 @@ xray_stream() {
 # xray_config: the foreign end of a reverse link. It dials the seller's
 # server and hands the connections that come back only to this server's own
 # 127.0.0.1 on the sold ports; everything else goes to the blackhole.
+# No Vision ("flow") on a reverse link: it carries Xray's mux, which Vision
+# can break (see flow() in panel/xray_config.go).
 xray_config() {
-    local stream flow="" vnext tag i net=tcp
+    local stream vnext tag i net=tcp
     stream=$(xray_stream)
-    [[ "$K_TRANSPORT" == reality ]] && flow=', "flow": "xtls-rprx-vision"'
     [[ "$K_UDP" == 1 ]] && net="tcp,udp"
-    vnext=$(printf '{"address": "%s", "port": %s, "id": "%s", "encryption": "none"%s, "reverse": {"tag": "from-iran"}}' "$K_SERVER" "$K_PORT" "$K_UUID" "$flow")
+    vnext=$(printf '{"address": "%s", "port": %s, "id": "%s", "encryption": "none", "reverse": {"tag": "from-iran"}}' "$K_SERVER" "$K_PORT" "$K_UUID")
     printf '{\n  "log": {"access": "none", "loglevel": "warning"},\n  "inbounds": null,\n  "outbounds": [\n'
     printf '    {"protocol": "blackhole", "tag": "block"},\n'
     for i in 1 2 3 4; do

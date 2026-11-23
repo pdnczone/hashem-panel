@@ -168,7 +168,7 @@ func TestXrayConfigReverse(t *testing.T) {
 	for _, want := range []string{
 		`"protocol":"dokodemo-door"`, `"port":8443,"protocol":"vless"`,
 		`"reverse":{"tag":"reverse"}`, `"privateKey":`, `"serverNames":["www.digikala.com"]`,
-		`{"inboundTag":["users"],"outboundTag":"reverse"}`,
+		`{"inboundTag":["users"],"outboundTag":"reverse"}`, `"flow":"xtls-rprx-vision"`,
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("Iran (portal) config lacks %s\n%s", want, s)
@@ -184,7 +184,7 @@ func TestXrayConfigReverse(t *testing.T) {
 	}
 	s = xrayJSON(t, foreign)
 	for _, want := range []string{
-		`"address":"203.0.113.9"`, `"reverse":{"tag":"from-iran"}`, `"flow":"xtls-rprx-vision"`,
+		`"address":"203.0.113.9"`, `"reverse":{"tag":"from-iran"}`,
 		`{"inboundTag":["from-iran"],"ip":["127.0.0.1"],"network":"tcp,udp","outboundTag":"direct","port":"443,2053"}`,
 		`{"inboundTag":["from-iran"],"outboundTag":"block"}`,
 	} {
@@ -194,6 +194,11 @@ func TestXrayConfigReverse(t *testing.T) {
 	}
 	if strings.Contains(s, `"inbounds":[{`) {
 		t.Errorf("the foreign server listens in reverse mode:\n%s", s)
+	}
+	// No Vision on the reverse link's mux; Iran's account keeps it (it still
+	// takes a link without a flow, and one from a foreign end not yet updated).
+	if strings.Contains(s, `"flow"`) {
+		t.Errorf("the foreign end of a reverse link asks for Vision:\n%s", s)
 	}
 }
 
