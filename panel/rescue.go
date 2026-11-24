@@ -666,6 +666,11 @@ func suggestRescuePorts() []int {
 	}
 
 	sort.Ints(sp)
+	// what rescue takes at most: a longer list (a wide port range) was refused
+	// whole, so rescue never came on by itself
+	if len(sp) > rescueMaxPorts {
+		sp = sp[:rescueMaxPorts]
+	}
 	return sp
 }
 

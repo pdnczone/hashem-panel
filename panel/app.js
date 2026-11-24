@@ -1815,8 +1815,6 @@ function renderTunnel(st) {
 }
 // shared cache: refresh() fills it from /api/status before renderTunChips runs
 let tunPeerCache = null;
-// "1020, 1030, 10000-10050" -> "3 ports": the full list overflowed the card;
-// the port chips above the details show them.
 // Port lists. A tunnel's ports come as numbers (FRP forwards each port on
 // its own) or as the entries of a Backhaul config ("1051-1060",
 // "2083=8443", "1.2.3.4:443"). compactPorts shows them short: numbers that
@@ -1857,6 +1855,8 @@ function tunnelPortEntries(o) {
   const bh = /backhaul/.test(String(o.engine || '')) || /backhaul/.test(String(o.frp_svc || o.svc || ''));
   return bh && (o.proxies || []).length ? o.proxies : (o.proxy_ports || []);
 }
+// "1020, 1030, 10000-10050" -> "53 ports": the full list overflowed the card;
+// the port chips above the details show them.
 function portCount(list) {
   const n = portTotal(list);
   return n ? `<span class="det-count">${n} ${esc(tr('', n === 1 ? 'port' : 'ports'))}</span>` : '—';
@@ -14182,7 +14182,7 @@ const ntDefTransport = e => e === 'frp' ? 'tcp' : 'tcpmux';
 const NT_PORTS = [443, 2083, 8443, 2053, 80];
 let _ntf = { engine: 'frp', transport: 'tcp', checked: false };
 function ntDirty() {
-  _ntf.checked = false;
+  _ntf.checked = false; _ntf.stale = [];
   const y = $('custModalYes'); if (y) y.textContent = tr('', 'Check');
   const p = $('ntPlan'); if (p) p.innerHTML = '';
 }
@@ -14257,10 +14257,14 @@ function openNodeTunnel(pick) {
     if (!_ntf.checked) {
       const d = await api('/api/nodes', Object.assign({ action: 'tunnel-plan' }, q));
       $('ntPlan').innerHTML = ntPlanHTML(q, d);
-      if (!(d.problems || []).length) { _ntf.checked = true; $('custModalYes').textContent = tr('', 'Make the tunnel'); }
+      if (!(d.problems || []).length) {
+        _ntf.checked = true;
+        _ntf.stale = (d.stale || []).map(u => u.hub);
+        $('custModalYes').textContent = _ntf.stale.length ? tr('', 'Remove the old end and make the tunnel') : tr('', 'Make the tunnel');
+      }
       return false;
     }
-    await api('/api/nodes', Object.assign({ action: 'tunnel-create' }, q));
+    await api('/api/nodes', Object.assign({ action: 'tunnel-create', remove_stale: _ntf.stale || [] }, q));
     toastOk(tr('', 'Making the tunnel'), ntName(q.server) + ' → ' + ntName(q.client));
     loadNodes();
   });

@@ -1139,6 +1139,30 @@ func switchTunnelEngine(targetEngine, targetTransport string) (string, error) {
 	return switchTunnelEngineWith(targetEngine, targetTransport, engineOpts{})
 }
 
+// currentForwardPorts is what the first tunnel forwards now: every port, for
+// FRP, and the entries as written for Backhaul ("1051-1060", "2083=8443").
+// An entry is never repeated port by port: Backhaul cannot listen twice on
+// one port, and "2083" next to "2083=8443" would take the mapping's port.
+func currentForwardPorts(st tunnelStatus) (ports []int, raw []string) {
+	ports = append(ports, st.ProxyPorts...)
+	for _, p := range st.Proxies {
+		// FRP's proxies are names (tcp_443, udp_443, ...)
+		if p = normalizeBackhaulPort(strings.TrimSpace(p)); isValidPortOrRangeOrMapping(p) && !slices.Contains(raw, p) {
+			raw = append(raw, p)
+		}
+	}
+	covered := map[int]bool{}
+	for _, p := range peerUserPorts(peerRecord{RawPorts: raw}) {
+		covered[p] = true
+	}
+	for _, p := range st.ProxyPorts {
+		if !covered[p] {
+			raw = append(raw, strconv.Itoa(p))
+		}
+	}
+	return ports, raw
+}
+
 func switchTunnelEngineWith(targetEngine, targetTransport string, o engineOpts) (string, error) {
 	targetEngine = strings.ToLower(strings.TrimSpace(targetEngine))
 	if targetEngine != "frp" && targetEngine != "backhaul" && targetEngine != "gre-backhaul" {
@@ -1222,27 +1246,7 @@ func switchTunnelEngineWith(targetEngine, targetTransport string, o engineOpts) 
 		token = randomToken(32)
 	}
 
-	for _, p := range st.ProxyPorts {
-		proxyPorts = append(proxyPorts, p)
-		rawPorts = append(rawPorts, strconv.Itoa(p))
-	}
-	for _, p := range st.Proxies {
-		// st.Proxies holds FRP proxy *names* (tcp_443, udp_443, ...); only
-		// real ports, ranges or mappings belong in Backhaul's port list.
-		if !isValidPortOrRangeOrMapping(p) {
-			continue
-		}
-		found := false
-		for _, rp := range rawPorts {
-			if rp == p {
-				found = true
-				break
-			}
-		}
-		if !found {
-			rawPorts = append(rawPorts, p)
-		}
-	}
+	proxyPorts, rawPorts = currentForwardPorts(st)
 	if len(o.Ports) > 0 || len(o.Raw) > 0 {
 		proxyPorts, rawPorts = append([]int(nil), o.Ports...), append([]string(nil), o.Raw...)
 		if len(rawPorts) == 0 {

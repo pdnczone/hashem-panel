@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,7 @@ type nodeTunFake struct {
 	calls  []string
 	fail   map[string]string // "<id> <path>" -> error code to answer with
 	body   map[string]map[string]any
+	tokens map[string]string             // "<id> peer|uplink <index>" -> its token ("-": none)
 	bundle func(m map[string]any) string // the server end's bundle (default: what was asked)
 }
 
@@ -46,15 +48,21 @@ func (f *nodeTunFake) call(_ context.Context, id int, method, path string, body 
 	switch p {
 	case "/api/setup/plan":
 		cp := *pl
-		if _, q, _ := strings.Cut(path, "?"); strings.HasPrefix(q, "proof=") { // every tunnel here shares one token
-			n := strings.TrimPrefix(q, "proof=")
+		if v := urlQuery(path); v.Get("proof") != "" { // every tunnel here shares one token
+			n := v.Get("proof")
 			cp.Peers = append([]setupPlanPeer{}, pl.Peers...)
 			cp.Uplinks = append([]setupPlanUplink{}, pl.Uplinks...)
+			tok := func(kind string, i int) string { // another token, or none ("-"), for one end
+				if v := f.tokens[fmt.Sprintf("%d %s %d", id, kind, i)]; v != "" {
+					return strings.TrimPrefix(v, "-")
+				}
+				return "tok"
+			}
 			for i := range cp.Peers {
-				cp.Peers[i].Proof = setupPlanProof("tok", n)
+				cp.Peers[i].Proof = setupPlanProof(tok("peer", i), n)
 			}
 			for i := range cp.Uplinks {
-				cp.Uplinks[i].Proof = setupPlanProof("tok", n)
+				cp.Uplinks[i].Proof = setupPlanProof(tok("uplink", i), n)
 			}
 		}
 		b, _ := json.Marshal(cp)
@@ -86,6 +94,12 @@ func (f *nodeTunFake) call(_ context.Context, id int, method, path string, body 
 		return 200, []byte(`{"status":"ok"}`), nil
 	}
 	return 404, []byte(`{"error_code":"E-NODE-06","error":"not here"}`), nil
+}
+
+func urlQuery(path string) url.Values {
+	_, q, _ := strings.Cut(path, "?")
+	v, _ := url.ParseQuery(q)
+	return v
 }
 
 func (f *nodeTunFake) seen() string {
@@ -669,17 +683,23 @@ func TestNodeTunLinksSecondAddress(t *testing.T) {
 
 // A tunnel removed on the Iran server's own Tunnel page leaves the foreign
 // end behind, still dialing it. That end used to block a new tunnel between
-// the two ("already dials"); now the job removes it first.
+// the two ("already dials"); now the job removes it first, when the admin
+// agreed to it.
 func TestNodeTunStaleClientEnd(t *testing.T) {
 	f := nodeTunTest(t)
 	q := nodeTunReq{Server: 1, Client: 2, Engine: "frp", Ports: "443"}
 	// the foreign server's first tunnel dials server 1, which has none back
 	f.plans[2].Exists, f.plans[2].Side = true, "foreign"
-	f.plans[2].Uplinks = []setupPlanUplink{{Hub: 1, IranPub: "198.51.100.1"}}
+	f.plans[2].Uplinks = []setupPlanUplink{{Hub: 1, IranPub: "198.51.100.1", Session: "down"}}
 	d, err := nodeTunDraftFor(context.Background(), q)
 	if err != nil || len(d.Problems) > 0 || len(d.Stale) != 1 || d.ClientMode != "foreign" {
 		t.Fatalf("a stale first tunnel: %v %+v", err, d)
 	}
+	// not agreed to: nothing is removed or made
+	if j := nodeTunCreateRun(t, q); j.State != "failed" || strings.Contains(f.seen(), "POST") {
+		t.Fatalf("removed unasked: %+v\n%s", j, f.seen())
+	}
+	q.RemoveStale = []int{1}
 	j := nodeTunCreateRun(t, q)
 	if j.State != "done" {
 		t.Fatalf("job: %+v", j)
@@ -697,22 +717,71 @@ func TestNodeTunStaleClientEnd(t *testing.T) {
 	// leave that hub, join again
 	f2 := nodeTunTest(t)
 	f2.plans[2].Exists, f2.plans[2].Side = true, "foreign"
-	f2.plans[2].Uplinks = []setupPlanUplink{{Hub: 1, IranPub: "203.0.113.50"}, {Hub: 2, IranPub: "198.51.100.1"}}
+	f2.plans[2].Uplinks = []setupPlanUplink{{Hub: 1, IranPub: "203.0.113.50", Session: "up"}, {Hub: 2, IranPub: "198.51.100.1", Session: "down"}}
+	q.RemoveStale = nil
 	d, _ = nodeTunDraftFor(context.Background(), q)
 	if len(d.Problems) > 0 || len(d.Stale) != 1 || d.Stale[0].Hub != 2 || d.ClientMode != "join-hub" {
 		t.Fatalf("a stale joined hub: %+v", d)
 	}
+	q.RemoveStale = []int{2}
 	if j := nodeTunCreateRun(t, q); j.State != "done" || !strings.Contains(f2.seen(), "2 POST /api/cluster/leave-hub") {
 		t.Fatalf("leave the stale hub: %+v\n%s", j, f2.seen())
 	}
 
-	// a stale first tunnel while the same set-up serves another hub: not
-	// removed from here (that would cut the other one)
+	// a stale first tunnel while another hub is served: an older panel would
+	// cut that one too, so not from here; this version removes it alone
 	f3 := nodeTunTest(t)
 	f3.plans[2].Exists, f3.plans[2].Side = true, "foreign"
-	f3.plans[2].Uplinks = []setupPlanUplink{{Hub: 1, IranPub: "198.51.100.1"}, {Hub: 2, IranPub: "203.0.113.50"}}
+	f3.plans[2].Uplinks = []setupPlanUplink{{Hub: 1, IranPub: "198.51.100.1", Session: "down"}, {Hub: 2, IranPub: "203.0.113.50", Session: "up"}}
 	d, _ = nodeTunDraftFor(context.Background(), q)
 	if len(d.Problems) != 1 || !strings.Contains(d.Problems[0], "own Tunnel page") {
-		t.Fatalf("a stale first tunnel with another hub: %v", d.Problems)
+		t.Fatalf("a stale first tunnel with another hub, older panel: %v", d.Problems)
+	}
+	f3.plans[2].FirstAlone = true
+	d, _ = nodeTunDraftFor(context.Background(), q)
+	if len(d.Problems) != 0 || d.ClientMode != "join-hub" {
+		t.Fatalf("a stale first tunnel with another hub: %+v", d)
+	}
+}
+
+// A live tunnel is never taken for a left-over one: the Iran server may not
+// know the foreign server's address, or know it by another one.
+func TestNodeTunLiveEndIsNotStale(t *testing.T) {
+	q := nodeTunReq{Server: 1, Client: 2, Engine: "frp", Ports: "443", RemoveStale: []int{1}}
+	for name, set := range map[string]func(f *nodeTunFake){
+		"address unknown on the Iran server": func(f *nodeTunFake) { f.plans[1].Peers = []setupPlanPeer{{ID: 0}} },
+		"the foreign server's second address": func(f *nodeTunFake) {
+			f.plans[1].Peers = []setupPlanPeer{{ID: 2, RemotePub: "192.0.2.99"}}
+		},
+		"a tunnel the Iran server cannot prove": func(f *nodeTunFake) {
+			f.plans[1].Peers = []setupPlanPeer{{ID: 2, RemotePub: "192.0.2.99"}}
+			f.tokens = map[string]string{"1 peer 0": "-"}
+		},
+		"no proof from the foreign server": func(f *nodeTunFake) { f.tokens = map[string]string{"2 uplink 0": "-"} },
+		"connected":                        func(f *nodeTunFake) { f.plans[2].Uplinks[0].Session = "up" },
+		"an older panel (no session)":      func(f *nodeTunFake) { f.plans[2].Uplinks[0].Session = "" },
+	} {
+		f := nodeTunTest(t)
+		f.plans[1].Exists, f.plans[1].Side = true, "iran"
+		f.plans[2].Exists, f.plans[2].Side = true, "foreign"
+		f.plans[2].Uplinks = []setupPlanUplink{{Hub: 1, IranPub: "198.51.100.1", Session: "down"}}
+		set(f)
+		d, err := nodeTunDraftFor(context.Background(), q)
+		if err != nil || len(d.Stale) != 0 || len(d.Problems) != 1 || !strings.Contains(d.Problems[0], "already dials") {
+			t.Fatalf("%s: %v %+v", name, err, d)
+		}
+		if j := nodeTunCreateRun(t, q); j.State != "failed" || strings.Contains(f.seen(), "POST") {
+			t.Fatalf("%s: %+v\n%s", name, j, f.seen())
+		}
+	}
+	// another tunnel of the Iran server, with its own token: the end is left over
+	f := nodeTunTest(t)
+	f.plans[1].Exists, f.plans[1].Side = true, "iran"
+	f.plans[1].Peers = []setupPlanPeer{{ID: 2, RemotePub: "192.0.2.99"}}
+	f.tokens = map[string]string{"1 peer 0": "other"}
+	f.plans[2].Exists, f.plans[2].Side = true, "foreign"
+	f.plans[2].Uplinks = []setupPlanUplink{{Hub: 1, IranPub: "198.51.100.1", Session: "down"}}
+	if d, err := nodeTunDraftFor(context.Background(), q); err != nil || len(d.Stale) != 1 || len(d.Problems) != 0 {
+		t.Fatalf("a left-over end next to another tunnel: %v %+v", err, d)
 	}
 }

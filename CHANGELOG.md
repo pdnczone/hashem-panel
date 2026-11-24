@@ -3,6 +3,16 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## Unreleased
+
+- **Foreign server: the tunnel's speed counts FRP and Backhaul next to GRE.** On a foreign server whose FRP or Backhaul dials the Iran hub's public IP while GRE stays idle, the link to the hub showed almost no speed (bytes per second) while the Live traffic card showed MB/s: the link took GRE's counters alone whenever the interface existed. It now adds the carrier's port counters, as the hub's main tunnel already does. Traffic inside GRE is not counted twice, since those counters match the uplink interface only.
+- **Dashboard: the first tunnel's speed keeps up with Live traffic.** It was worked out from /api/status, polled every 15 s, while Live traffic and the other tunnels' speeds come from the dashboard every 5 s. So it trailed them, repeated the same number for two refreshes, and averaged over 15 s it could read far off Live traffic. /api/dashboard now sends the first tunnel's counters (`main_rx`, `main_tx`) read with the others, and the Dashboard uses them.
+- **Dashboard: Bagher links show their speed.** They showed none; /api/dashboard now sends each Bagher link's counters (`bagher_counters`).
+- **Backhaul port ranges count and show as ranges.** A Backhaul tunnel with `1051-1060` showed "Forwarded 1051 · 1 port": the panel kept only the first port of each entry. Worse, the port-in-use check, the free-port suggestion, the watchdog and Rescue did not see 1052 to 1060 (on the first tunnel, and on peers outside the port registry), and the first tunnel's Edit Ports form opened with 1051 alone, so saving it cut the range. The status now lists every port an entry listens on (ranges, mappings and `IP:` entries) and keeps the entries as written for display and editing.
+- **Ports show short everywhere.** Cards, the link diagram, the Dashboard's Tunnels list and Details, the Tunnel tab chips, Bagher and Xray links show a run of ports as a range (`1051-1060`, also for FRP, which forwards each port on its own), and count every port of a range.
+- **Nodes: a new tunnel no longer stops on the old one's left-over end.** Removing a tunnel on the Iran server's own Tunnel page removes only that server's end; the foreign server keeps dialing it. Making a new tunnel between the two on the Nodes map then stopped with "already dials this server" (and offered to join as one more hub, a Pro feature). The plan now sees such an end (the foreign server dials the Iran server, which holds no tunnel back), shows "Removed first" in the dialog, and the job removes it before making the new tunnel: leave-hub for a joined hub, remove-tunnel for a first tunnel. A first tunnel whose set-up also serves another hub is not removed from there; the dialog says to remove it on the foreign server.
+- **Tunnel page: removing a tunnel says the other end stays.** The confirm and the toast say that only this server's end goes, and that the Nodes map removes both ends.
+
 ## v3.2.9 — 2026-11-24
 
 **The Telegram bot lists every tunnel, reaches a blocked Telegram through this server's tunnels by itself, and is one bot for the menu and every alert.** Run `hashem update` on every server.

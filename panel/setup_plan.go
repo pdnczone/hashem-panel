@@ -39,6 +39,7 @@ type setupPlanUplink struct {
 	IranPub string `json:"iran_pub"`
 	Engine  string `json:"engine,omitempty"`
 	Proof   string `json:"proof,omitempty"`
+	Session string `json:"session,omitempty"` // up | down: its control connection now ("" from an older panel)
 }
 
 type setupPlan struct {
@@ -52,6 +53,17 @@ type setupPlan struct {
 	RelayTaken string            `json:"relay_taken,omitempty"` // ?relay=N: why N is not free
 	Clashes    map[string]string `json:"clashes,omitempty"`     // wanted port -> who holds it
 	Pro        map[string]bool   `json:"pro"`                   // what this server's own license allows (read only)
+	FirstAlone bool              `json:"first_alone"`           // removing the first tunnel here leaves the others (false: an older panel)
+}
+
+// setupPlanSessions: which tunnels this server dials are connected, by hub id
+// (test hook).
+var setupPlanSessions = func() map[int]bool {
+	m := map[int]bool{}
+	for _, h := range joinedHubsView() {
+		m[h.ID] = h.Session
+	}
+	return m
 }
 
 const setupPlanPortMin, setupPlanPortMax = 7001, 7999
@@ -235,7 +247,7 @@ func buildSetupPlan(wanted string, relay int) setupPlan {
 	ft := firstTunnelInfo()
 	p := setupPlan{Public: info.PublicIP, Side: info.Side, Exists: ft.Exists,
 		Peers: []setupPlanPeer{}, Uplinks: []setupPlanUplink{}, GreUsed: []string{},
-		Pro: map[string]bool{"backhaul": hasPro(proBackhaul), "cluster": hasPro("cluster")}}
+		Pro: map[string]bool{"backhaul": hasPro(proBackhaul), "cluster": hasPro("cluster")}, FirstAlone: true}
 	if p.Public == "" {
 		p.Public = detectPublicIP()
 	}
@@ -268,6 +280,15 @@ func buildSetupPlan(wanted string, relay int) setupPlan {
 			p.Uplinks = append(p.Uplinks, setupPlanUplink{Hub: h.ID, IranPub: h.IranPub, Engine: h.Engine})
 		}
 		gre[h.IranGre] = true
+	}
+	if len(p.Uplinks) > 0 {
+		up := setupPlanSessions()
+		for i := range p.Uplinks {
+			p.Uplinks[i].Session = "down"
+			if up[p.Uplinks[i].Hub] {
+				p.Uplinks[i].Session = "up"
+			}
+		}
 	}
 	if addrs, err := net.InterfaceAddrs(); err == nil {
 		for _, a := range addrs {

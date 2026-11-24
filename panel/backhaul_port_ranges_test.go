@@ -40,3 +40,32 @@ func TestPeerUserPortsCoversRanges(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+// An engine switch writes a Backhaul list as it was entered: an entry is not
+// repeated port by port (Backhaul cannot listen twice on one port).
+func TestCurrentForwardPorts(t *testing.T) {
+	st := tunnelStatus{Proxies: []string{"1051-1053", "2083=8443", "3000-3001:5201"}, ProxyPorts: []int{1051, 1052, 1053, 2083, 3000, 3001}}
+	ports, raw := currentForwardPorts(st)
+	if len(ports) != 6 || !slices.Equal(raw, []string{"1051-1053", "2083=8443", "3000-3001=5201"}) {
+		t.Fatalf("Backhaul: %v %v", ports, raw)
+	}
+	// FRP: proxies are names, so the ports themselves
+	ports, raw = currentForwardPorts(tunnelStatus{Proxies: []string{"tcp_443", "udp_443"}, ProxyPorts: []int{443, 2083}})
+	if !slices.Equal(ports, []int{443, 2083}) || !slices.Equal(raw, []string{"443", "2083"}) {
+		t.Fatalf("FRP: %v %v", ports, raw)
+	}
+}
+
+// Rescue takes at most rescueMaxPorts: a wide range must not make the
+// suggestion (and with it automatic rescue) unusable.
+func TestRescueSuggestionFitsTheLimit(t *testing.T) {
+	oldBh, oldCfg := backhaulDir, configDir
+	backhaulDir, configDir = t.TempDir(), t.TempDir()
+	t.Cleanup(func() { backhaulDir, configDir = oldBh, oldCfg })
+	if err := writePeers([]peerRecord{{ID: 2, Ports: []int{10000}, RawPorts: []string{"10000-10200=443"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := suggestRescuePorts(); len(got) != rescueMaxPorts {
+		t.Fatalf("%d ports", len(got))
+	}
+}

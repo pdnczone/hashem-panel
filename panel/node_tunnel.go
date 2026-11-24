@@ -329,6 +329,9 @@ type nodeTunReq struct {
 	Ports     string `json:"ports"`     // "443, 2083" (Backhaul also "8080=80")
 	FrpPort   int    `json:"frp_port"`  // 0: the server's free port
 	AcceptUDP bool   `json:"accept_udp"`
+	// RemoveStale: the left-over ends (hub ids on the client) the admin was
+	// shown and agreed to have removed first. Never removed unasked.
+	RemoveStale []int `json:"remove_stale,omitempty"`
 }
 
 var nodeTunPortsRe = regexp.MustCompile(`^[0-9 ,=:\-]{1,300}$`)
@@ -402,18 +405,39 @@ type nodeTunDraft struct {
 
 	// Stale: the client's ends that still dial the server while the server
 	// holds no tunnel back to it (removed on the server's own Tunnel page,
-	// which leaves the other end alone). They dial nothing; the job removes
-	// them before it makes the new tunnel.
+	// which leaves the other end alone). They carry nothing; the job removes
+	// them before it makes the new tunnel, when the admin agreed to it.
 	Stale []setupPlanUplink `json:"stale,omitempty"`
+}
+
+// nodeTunStale: the client's end u of a tunnel to the server is left over:
+// the server's tunnels (peers) are known by the token proof and none has u's
+// token, and u has no connection. Addresses alone do not say it: a server may
+// not know its foreign server's address, or know it by another one, and a
+// live tunnel would be removed. When anything is not known (an older panel,
+// a tunnel without a proof), it is not left over.
+func nodeTunStale(u setupPlanUplink, peers []setupPlanPeer) bool {
+	if u.Proof == "" || u.Session != "down" {
+		return false
+	}
+	for _, p := range peers {
+		if p.Proof == "" || p.Proof == u.Proof {
+			return false
+		}
+	}
+	return true
 }
 
 func nodeTunDraftFor(ctx context.Context, q nodeTunReq) (nodeTunDraft, error) {
 	var d nodeTunDraft
 	var err error
-	if d.Server, err = nodeTunPlan(ctx, q.Server, q.Ports, q.FrpPort); err != nil {
+	var nb [16]byte
+	_, _ = rand.Read(nb[:])
+	nonce := hex.EncodeToString(nb[:])
+	if d.Server, err = nodeTunPlanProof(ctx, q.Server, q.Ports, q.FrpPort, nonce); err != nil {
 		return d, err
 	}
-	if d.Client, err = nodeTunPlan(ctx, q.Client, "", 0); err != nil {
+	if d.Client, err = nodeTunPlanProof(ctx, q.Client, "", 0, nonce); err != nil {
 		return d, err
 	}
 	s, c := d.Server, d.Client
@@ -422,22 +446,27 @@ func nodeTunDraftFor(ctx context.Context, q nodeTunReq) (nodeTunDraft, error) {
 	if !s.Exists && len(s.Peers) == 0 {
 		d.ServerRole = "iran"
 	}
-	// the server holds a tunnel back to the client (its first or a peer)
-	serverHasIt := c.Public != "" && slices.ContainsFunc(s.Peers, func(p setupPlanPeer) bool { return p.RemotePub == c.Public })
+	// the client's ends of tunnels to this server: left over, or (maybe) live
 	live, staleFirst := 0, false
+	var dials []setupPlanUplink
 	for _, u := range c.Uplinks {
-		if s.Public != "" && u.IranPub == s.Public && !serverHasIt {
-			d.Stale = append(d.Stale, u)
-			staleFirst = staleFirst || u.Hub == 1
-			continue
+		if s.Public != "" && u.IranPub == s.Public {
+			if nodeTunStale(u, s.Peers) {
+				d.Stale = append(d.Stale, u)
+				staleFirst = staleFirst || u.Hub == 1
+				continue
+			}
+			dials = append(dials, u)
 		}
 		live++
 	}
-	if staleFirst && live > 0 {
-		problem("%s still has its end of the old tunnel to %s, as its first tunnel, and dials other Iran servers through that set-up: remove it on %s's own Tunnel page, then try again", nodeTunName(q.Client), nodeTunName(q.Server), nodeTunName(q.Client))
+	// the first tunnel last: on an older panel its removal takes the others' records
+	slices.SortFunc(d.Stale, func(a, b setupPlanUplink) int { return b.Hub - a.Hub })
+	if staleFirst && live > 0 && !c.FirstAlone {
+		problem("%s still has its end of the old tunnel to %s, as its first tunnel, and dials other Iran servers through that set-up: update it, or remove that end on its own Tunnel page, then try again", nodeTunName(q.Client), nodeTunName(q.Server))
 	}
-	// after the stale ends go: a client left with no tunnel takes this one
-	// as its first
+	// after the left-over ends go: a client left with no tunnel takes this
+	// one as its first
 	d.ClientMode = "foreign"
 	if (c.Exists && !staleFirst) || live > 0 {
 		d.ClientMode = "join-hub"
@@ -469,10 +498,12 @@ func nodeTunDraftFor(ctx context.Context, q nodeTunReq) (nodeTunDraft, error) {
 			problem("these two servers already have a tunnel")
 		}
 	}
-	for _, u := range c.Uplinks {
-		if u.IranPub == s.Public && s.Public != "" && serverHasIt {
-			problem("%s already dials %s", nodeTunName(q.Client), nodeTunName(q.Server))
+	if len(dials) > 0 {
+		msg := fmt.Sprintf("%s already dials %s", nodeTunName(q.Client), nodeTunName(q.Server))
+		if !slices.ContainsFunc(s.Peers, func(p setupPlanPeer) bool { return c.Public != "" && p.RemotePub == c.Public }) {
+			msg += fmt.Sprintf(": if that tunnel was removed on %s, remove its end on %s's own Tunnel page too, then try again", nodeTunName(q.Server), nodeTunName(q.Client))
 		}
+		problem("%s", msg)
 	}
 	for port, who := range s.Clashes {
 		problem("port %s is already used on %s by %s", port, nodeTunName(q.Server), who)
@@ -603,7 +634,18 @@ func nodeTunCreate(ctx context.Context, j *nodeTunJob, q nodeTunReq) error {
 	if len(d.Problems) > 0 {
 		return errors.New(strings.Join(d.Problems, "; "))
 	}
-	// 0. the client's old ends to this server, whose server end is gone
+	// 0. the client's old ends to this server, whose server end is gone: only
+	// what the admin was shown (the plan is read again here)
+	var stale []int
+	for _, u := range d.Stale {
+		stale = append(stale, u.Hub)
+	}
+	agreed := slices.Clone(q.RemoveStale)
+	slices.Sort(stale)
+	slices.Sort(agreed)
+	if !slices.Equal(stale, slices.Compact(agreed)) {
+		return fmt.Errorf("what has to be removed on %s first is not what was agreed to: check the plan again; nothing was made", nodeTunName(q.Client))
+	}
 	for _, u := range d.Stale {
 		j.logf("removing %s's old end of a tunnel to %s (its end there was removed)", nodeTunName(q.Client), nodeTunName(q.Server))
 		rctx, cancel := context.WithTimeout(ctx, nodeTunActionTO)
@@ -909,15 +951,15 @@ func nodeTunRemove(ctx context.Context, j *nodeTunJob, q nodeTunRemoveReq) error
 		return err
 	}
 	if q.Hub == 1 {
-		// the client's first tunnel: removing it removes the whole client
-		// set-up, so not while it also serves other Iran servers
+		// an older panel removes the whole client set-up with the first
+		// tunnel, so not while it also serves other Iran servers
 		cctx, cancel := context.WithTimeout(ctx, nodeTunPlanTO)
 		c, err := nodeTunPlan(cctx, q.Client, "", 0)
 		cancel()
 		if err != nil {
 			return err
 		}
-		if len(c.Uplinks) > 1 {
+		if len(c.Uplinks) > 1 && !c.FirstAlone {
 			return fmt.Errorf("%s also dials other Iran servers through this first tunnel's set-up: remove those first, or remove this one on its own panel", nodeTunName(q.Client))
 		}
 	}
