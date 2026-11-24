@@ -1310,7 +1310,7 @@ function armRemovePeer(peerId, name) {
   box.classList.remove('hidden');
   // 'main' is the first tunnel; peers are numbered
   const label = peerId === 'main' ? esc(name) : `${esc(name)} (#${peerId})`;
-  box.innerHTML = `<div class="peer-confirm-in">${esc(tr('', 'Remove'))} <b>${label}</b>? ${esc(tr('', 'Its GRE interface and tunnel service go away; other tunnels keep running.'))} <button class="hashem-btn hashem-btn-ghost u-btn-28" onclick="disarmRemovePeer(${jsArg(peerId)})">${esc(tr('', 'Undo'))}</button></div>`;
+  box.innerHTML = `<div class="peer-confirm-in">${esc(tr('', 'Remove'))} <b>${label}</b>? ${esc(tr('', 'Its GRE interface and tunnel service go away; other tunnels keep running.'))} ${esc(tr('', 'The other server keeps its end.'))} <button class="hashem-btn hashem-btn-ghost u-btn-28" onclick="disarmRemovePeer(${jsArg(peerId)})">${esc(tr('', 'Undo'))}</button></div>`;
   clearTimeout(peerRemoveTimers[peerId]); clearInterval(peerRemoveTimers[peerId + '_n']);
   let n = 5;
   peerRemoveTimers[peerId + '_n'] = setInterval(() => {
@@ -1332,7 +1332,9 @@ async function removePeer(peerId, name) {
   try {
     // without peer_id the panel removes the first tunnel alone when others exist
     await api('/api/action', peerId === 'main' ? {action: 'remove-tunnel'} : {action: 'remove-tunnel', peer_id: peerId});
-    toastOk(`tunnel '${name}' removed`);
+    // only this server's end goes: the other server keeps its own (the
+    // Nodes map removes both ends)
+    toastOk(`tunnel '${name}' removed`, tr('', 'Only this server\'s end. Remove it on the other server too, or remove tunnels from the Nodes map, which removes both ends.'));
     refresh();
   } catch(e) { toastErr('remove failed', e.message); refresh(); }
 }
@@ -14222,6 +14224,7 @@ function ntPlanHTML(q, d) {
     ${probs.length ? `<ul class="nt-probs">${probs.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
     ${row(tr('', 'Iran server'), ntName(q.server) + ' · ' + (d.server_role === 'iran' ? tr('', 'its first tunnel') : tr('', 'one more tunnel')))}
     ${row(tr('', 'Foreign server'), ntName(q.client) + ' · ' + (d.client_mode === 'join-hub' ? tr('', 'joins as one more Iran hub (Cluster, Pro)') : tr('', 'its first tunnel')))}
+    ${(d.stale || []).length ? row(tr('', 'Removed first'), ntName(q.client) + ' · ' + tr('', 'its old end of a tunnel to this Iran server, whose end there was removed')) : ''}
     ${row(tr('', 'Control port'), String(d.frp_port || '—'))}${d.local_gre ? row('GRE', d.local_gre + ' ↔ ' + d.peer_gre) : ''}</div>`;
 }
 function openNodeTunnel(pick) {
