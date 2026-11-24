@@ -97,6 +97,9 @@ func TestClusterGre(t *testing.T) {
 	if clusterGre() != nil {
 		t.Fatal("no hubs")
 	}
+	oldGo := greHubsGo
+	greHubsGo = func(f func()) { f() }
+	defer func() { greHubsGo = oldGo }()
 	b := fakeHub(t, syncTestSecret, func(path string, _ []byte) any {
 		return syncList{Tunnels: []syncTunnel{{Remote: "9.9.9.9", LocalGre: "10.10.10.2", PeerGre: "10.10.10.1"}}}
 	})

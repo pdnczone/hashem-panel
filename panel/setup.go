@@ -330,7 +330,10 @@ func greSetupPair(st tunnelStatus, used []string) (iran, foreign string) {
 // greClash says why a new tunnel cannot have these inner addresses: not the two
 // ends of one /30, or another tunnel of this server is in it.
 func greClash(body setupRequest) string {
-	if !grePairOK(body.LocalGre, body.PeerGre) {
+	ft := firstTunnelInfo()
+	// the pair a first tunnel has now stays allowed, whatever its shape
+	own := body.Role != "add-peer" && ft.Exists && ft.LocalGre == body.LocalGre
+	if !own && !grePairOK(body.LocalGre, body.PeerGre) {
 		return fmt.Sprintf("the GRE addresses %s and %s are not the two ends of one /30 (as 10.11.0.2 and 10.11.0.1)", body.LocalGre, body.PeerGre)
 	}
 	if body.Role == "foreign" {
@@ -347,7 +350,7 @@ func greClash(body setupRequest) string {
 		if p := basePeer(peers); p != nil {
 			base = p.ID
 		}
-	} else if ft := firstTunnelInfo(); ft.Exists && basePeer(peers) == nil {
+	} else if ft.Exists && basePeer(peers) == nil {
 		if greOverlap(body.LocalGre, []string{ft.LocalGre, ft.PeerGre}) != "" {
 			return fmt.Sprintf("GRE address %s is the first tunnel's — pick another pair", body.LocalGre)
 		}

@@ -125,50 +125,75 @@ func greConnected() []string {
 	return out
 }
 
-// greHubs are the pairs of the linked Iran hubs' tunnels, asked at most once a
-// minute (a hub that does not answer keeps what it said last).
+// greHubs are the pairs of the linked Iran hubs' tunnels, asked in the
+// background at most once a minute (a hub that does not answer keeps what it
+// said last).
 var greHubs struct {
 	sync.Mutex
-	at time.Time
-	m  map[string][]string
+	at   time.Time
+	busy bool
+	m    map[string][]string
 }
 
-// clusterGre lists them (a var for tests).
-var clusterGre = func() []string {
+// greHubsGo runs the refresh (tests run it in place).
+var greHubsGo = func(f func()) { go f() }
+
+// clusterGre lists them as known now. The heartbeat loop keeps them fresh.
+func clusterGre() []string {
 	c := loadClusterConfig()
 	if c.Secret == "" || len(c.Hubs) == 0 {
 		return nil
 	}
+	clusterGreRefresh(c)
 	greHubs.Lock()
 	defer greHubs.Unlock()
-	if time.Since(greHubs.at) > time.Minute {
-		greHubs.at = time.Now()
-		old := greHubs.m
-		greHubs.m = map[string][]string{}
-		var mu sync.Mutex
-		var wg sync.WaitGroup
-		for _, h := range c.Hubs {
-			wg.Add(1)
-			go func(h HubPeer) {
-				defer wg.Done()
-				var l syncList
-				got := old[h.ID]
-				if meshCall(h, c.Secret, "/tunnels", map[string]string{"id": c.NodeID}, &l, 4*time.Second) == nil {
-					got = nil
-					for _, t := range l.Tunnels {
-						got = append(got, t.LocalGre, t.PeerGre)
-					}
-				}
-				mu.Lock()
-				greHubs.m[h.ID] = got
-				mu.Unlock()
-			}(h)
-		}
-		wg.Wait()
-	}
 	var out []string
-	for _, as := range greHubs.m {
-		out = append(out, as...)
+	for _, h := range c.Hubs {
+		out = append(out, greHubs.m[h.ID]...)
 	}
 	return out
+}
+
+func clusterGreRefresh(c ClusterConfig) {
+	greHubs.Lock()
+	due := !greHubs.busy && time.Since(greHubs.at) > time.Minute
+	if due {
+		greHubs.busy = true
+	}
+	greHubs.Unlock()
+	if !due {
+		return
+	}
+	greHubsGo(func() {
+		got := make([][]string, len(c.Hubs))
+		var wg sync.WaitGroup
+		for i, h := range c.Hubs {
+			wg.Add(1)
+			go func(i int, h HubPeer) {
+				defer wg.Done()
+				var l syncList
+				if meshCall(h, c.Secret, "/tunnels", map[string]string{"id": c.NodeID}, &l, 4*time.Second) != nil {
+					return
+				}
+				got[i] = []string{}
+				for _, t := range l.Tunnels {
+					if t.LocalGre != "" {
+						got[i] = append(got[i], t.LocalGre, t.PeerGre)
+					}
+				}
+			}(i, h)
+		}
+		wg.Wait()
+		greHubs.Lock()
+		defer greHubs.Unlock()
+		if greHubs.m == nil {
+			greHubs.m = map[string][]string{}
+		}
+		for i, h := range c.Hubs {
+			if got[i] != nil {
+				greHubs.m[h.ID] = got[i]
+			}
+		}
+		greHubs.at, greHubs.busy = time.Now(), false
+	})
 }

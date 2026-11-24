@@ -763,6 +763,7 @@ func startMeshLoop() {
 		if c.Secret == "" || len(c.Hubs) == 0 {
 			continue
 		}
+		clusterGreRefresh(c)
 		self := meshSelfBeat(c)
 		var wg sync.WaitGroup
 		for _, h := range c.Hubs {

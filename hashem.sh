@@ -1931,8 +1931,11 @@ net = lambda a: ipaddress.ip_network(a if "/" in a else a + "/30", strict=False)
 op, args = sys.argv[1], sys.argv[2:]
 skip = args[2] if op == "clash" and len(args) > 2 else ""
 used = []  # (network, who, is a tunnel)
+own = set()
 for line in os.environ.get("ADDRS", "").splitlines():
     f = line.split()
+    if len(f) == 2 and skip and f[0].split("@")[0] == skip:
+        own.add(f[1].split("/")[0])
     if len(f) != 2 or f[0].split("@")[0] in ("lo", skip):
         continue
     try:
@@ -1970,7 +1973,8 @@ if op == "free":
 else:
     a, b = args[0].split("/")[0], args[1].split("/")[0]
     try:
-        if net(a) != net(b) or a == b or not all(0 < int(ipaddress.ip_address(x)) % 4 < 3 for x in (a, b)):
+        # the pair a tunnel has now stays allowed, whatever its shape
+        if a not in own and (net(a) != net(b) or a == b or not all(0 < int(ipaddress.ip_address(x)) % 4 < 3 for x in (a, b))):
             print("%s and %s are not the two ends of one /30 (as 10.11.0.2 and 10.11.0.1)" % (a, b))
             sys.exit()
     except ValueError:
@@ -6251,22 +6255,14 @@ doctor_diagnostics() {
     local TARGET_IP=""
     local LOCAL_IP=""
 
-    if ip addr show dev "$TUNNEL_NAME" 2>/dev/null | grep -q "$IRAN_GRE_IP"; then
-        ROLE="Iran (Server)"
-        LOCAL_IP="$IRAN_GRE_IP"
-        TARGET_IP="$FOREIGN_GRE_IP"
-    elif ip addr show dev "$TUNNEL_NAME" 2>/dev/null | grep -q "$FOREIGN_GRE_IP"; then
-        ROLE="Foreign (Client)"
-        LOCAL_IP="$FOREIGN_GRE_IP"
-        TARGET_IP="$IRAN_GRE_IP"
-    else
-        local IFACE
-        IFACE=$(ip -o link show type gre 2>/dev/null | awk -F': ' '{print $2}' | cut -d'@' -f1 | grep -v -e '^hpt' -e '^hcg' -e '^hcc' | head -n1)
-        if [[ -n "$IFACE" ]]; then
-            LOCAL_IP=$(ip -o -4 addr show dev "$IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)
-            TARGET_IP=$(gre_other_end "$LOCAL_IP")
-            if [[ -f "${CONFIG_DIR}/frps.toml" || -n "$(compgen -G "${CONFIG_DIR}/frps-*.toml")" ]]; then ROLE="Iran"; else ROLE="Foreign"; fi
-        fi
+    local IFACE
+    for IFACE in "$TUNNEL_NAME" $(hashem_gre_names); do
+        LOCAL_IP=$(ip -o -4 addr show dev "$IFACE" 2>/dev/null | awk '{sub(/\/.*/, "", $4); print $4; exit}')
+        [[ -n "$LOCAL_IP" ]] && break
+    done
+    if [[ -n "$LOCAL_IP" ]]; then
+        TARGET_IP=$(gre_other_end "$LOCAL_IP")
+        if [[ -f "${CONFIG_DIR}/frps.toml" || -n "$(compgen -G "${CONFIG_DIR}/frps-*.toml")" || -n "$(compgen -G "${BACKHAUL_CONFIG_DIR}/server*.toml")" ]]; then ROLE="Iran (Server)"; else ROLE="Foreign (Client)"; fi
     fi
 
     echo -e "  ${YELLOW}Role:${NC}        ${ROLE}"
@@ -8563,18 +8559,7 @@ watchdog_get_peer_gre() {
         local INNER
         INNER=$(ip -4 addr show dev "$TUNNEL_NAME" 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -n1)
         if [[ -n "$INNER" ]]; then
-            if [[ "$INNER" == "$IRAN_GRE_IP" ]]; then
-                PEER="$FOREIGN_GRE_IP"
-            elif [[ "$INNER" == "$FOREIGN_GRE_IP" ]]; then
-                PEER="$IRAN_GRE_IP"
-            else
-                IFS=. read -r a b c d <<< "$INNER"
-                if (( d % 2 == 0 )); then
-                    PEER="$a.$b.$c.$((d - 1))"
-                else
-                    PEER="$a.$b.$c.$((d + 1))"
-                fi
-            fi
+            PEER=$(gre_other_end "$INNER")
         fi
     fi
     if [[ -z "$PEER" && -f "$PEERS_FILE" ]] && command -v python3 >/dev/null 2>&1; then
@@ -10481,7 +10466,8 @@ setup_backhaul_iran_interactive() {
     prompt_backhaul_udp "$TRANSPORT"
     prompt_backhaul_ports PORTS
     if [[ "$use_gre" == "yes" ]]; then
-        setup_gre_backhaul_iran_server_noninteractive "$LOCAL_PUB" "$REMOTE_PUB" "$PORT" "$TOKEN" "$IRAN_GRE_IP" "$FOREIGN_GRE_IP" "$TRANSPORT" "$PORTS"
+        local GP; GP=$(gre_default_pair)
+        setup_gre_backhaul_iran_server_noninteractive "$LOCAL_PUB" "$REMOTE_PUB" "$PORT" "$TOKEN" "${GP% *}" "${GP#* }" "$TRANSPORT" "$PORTS"
     else
         setup_backhaul_iran_server_noninteractive "$LOCAL_PUB" "$REMOTE_PUB" "$PORT" "$TOKEN" "$TRANSPORT" "$PORTS"
     fi
@@ -10800,7 +10786,8 @@ show_iran_bundle() {
     TOKEN=$(awk -F'=' '/auth\.token/{gsub(/[ "]/,"",$2); print $2}' "${CONFIG_DIR}/frps.toml" 2>/dev/null)
     if [[ -n "$IP_IRAN" && -n "$BIND_PORT" && -n "$TOKEN" ]]; then
         echo -e "\n${GREEN}Bundle for a foreign server:${NC}"
-        echo -e "${CYAN}$(bundle_make "$IP_IRAN" "$BIND_PORT" "$IRAN_GRE_IP" "$FOREIGN_GRE_IP" "$TOKEN")${NC}"
+        local GP; GP=$(gre_default_pair) # the tunnel's own pair
+        echo -e "${CYAN}$(bundle_make "$IP_IRAN" "$BIND_PORT" "${GP% *}" "${GP#* }" "$TOKEN")${NC}"
     elif [[ -f /etc/backhaul/config.toml || -f /etc/backhaul/server.toml ]]; then
         backhaul_show_bundle
     else
