@@ -10,7 +10,7 @@ for c in systemctl ip; do
     printf '#!/bin/sh\necho "%s $*" >> %s/calls.log\n' "$c" "$T" > "$T/bin/$c"; chmod +x "$T/bin/$c"
 done
 export PATH="$T/bin:$PATH" HASHEM_SYSTEMD_DIR="$T/sd"
-for f in cli_remove_peer peer_init peer_require_py peer_get remove_base_tunnel peers_other_than hubs_joined \
+for f in cli_remove_peer peer_init peer_require_py peer_get remove_base_tunnel peers_other_than hubs_joined tunnel_link_forget \
          frps_wss_front_remove backhaul_udp_remove backhaul_udp_unit gre6_sit_name; do
     awk -v f="$f" '$0 ~ "^"f"\\(\\) \\{" {p=1} p {print} p && /^}/ {exit}' "$ROOT/hashem.sh"
 done > "$T/fn.sh"

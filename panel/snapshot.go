@@ -689,9 +689,13 @@ func snapshotTick() bool {
 // snapshotRebuild replaces the published snapshot now, after a change the next
 // page load must show (a removed tunnel stayed on it until the next tick).
 func snapshotRebuild() {
-	if snapPtr.Load() != nil {
-		snapPtr.Store(buildSnapshot())
+	if snapPtr.Load() == nil {
+		return
 	}
+	for until := time.Now().Add(3 * time.Second); snapBuilding.Load() && time.Now().Before(until); {
+		time.Sleep(20 * time.Millisecond) // a build that began before the change
+	}
+	snapshotTick()
 }
 
 // currentSnapshot returns the latest snapshot. Before the first one exists the
