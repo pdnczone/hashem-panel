@@ -217,7 +217,7 @@ func listBackups() []backupItem {
 func collectTunnelPorts() []int {
 	ports := currentLocal().ProxyPorts
 	for _, p := range loadPeers() {
-		ports = append(ports, p.Ports...)
+		ports = append(ports, peerUserPorts(p)...) // a Backhaul range: every port of it
 	}
 	return uniqInts(ports)
 }

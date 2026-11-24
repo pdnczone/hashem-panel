@@ -1435,7 +1435,7 @@ function renderPeers(peers) {
   
   let bagherCardHtml = '';
   if (bagherHasCfg) {
-    const fwdPorts = Array.isArray(b.ports) ? b.ports.join(', ') : (b.ports || '—');
+    const fwdPorts = compactPorts(b.ports).join(', ') || '—';
     const roleLabel = b.role === 'foreign' ? 'Foreign Client' : 'Iran Hub';
     // foreign servers after the first, each with its own SSH carrier
     const links = b.role === 'foreign' ? [] : (Array.isArray(b.links) ? b.links : []);
@@ -1445,7 +1445,7 @@ function renderPeers(peers) {
         <span class="det-k">${l.name ? `<bdi data-no-i18n>${esc(l.name)}</bdi> · ` : ''}<bdi class="mono" data-no-i18n>${esc(l.remote_host || '—')}</bdi></span>
         <span class="det-v bagher-link-v">
           <span class="badge ${st[0]}"><span class="dot"></span>${esc(tr('', st[1]))}</span>
-          <span class="mono" data-no-i18n>${esc((l.ports || []).join(', '))}${l.udp ? ' +UDP' : ''}</span>
+          <span class="mono" data-no-i18n>${esc(compactPorts(l.ports).join(', '))}${l.udp ? ' +UDP' : ''}</span>
           ${l.latency_ms > 0 ? `<span class="mono" data-no-i18n>${l.latency_ms.toFixed(1)} ms</span>` : ''}
           <button class="hashem-btn hashem-btn-ghost u-btn-30" onclick="renameLink('bagher-${+l.id}', ${jsArg(l.name || '')})">${esc(tr('', 'Rename'))}</button>
           <button class="hashem-btn hashem-btn-secondary u-btn-30" onclick="bagherLinkCopyBundle(${+l.id})">${esc(tr('', 'Copy Bundle'))}</button>
@@ -1536,7 +1536,7 @@ function renderPeers(peers) {
     const isGreBh = p.engine === 'gre-backhaul' || (p.frps_svc && p.frps_svc.includes('backhaul') && !p.no_gre);
     const engBadge = engineBadge(isBh ? 'backhaul' : isGreBh ? 'gre-backhaul' : 'frp');
     const transBadge = p.transport ? `<span class="badge dim">${esc(p.transport)}</span>` : '';
-    const fwdPorts = [].concat(p.raw_ports || p.ports || []).join(', ') || '—';
+    const fwdPorts = compactPorts(p.raw_ports || p.ports).join(', ') || '—';
     const greIfLabel = isBh ? 'N/A (Standalone)' : (p.gre_if || 'gre-t' + p.id);
     const svcTitle = (isBh || isGreBh) ? 'Backhaul & Traffic' : 'FRP & Traffic';
     return `<div class="tunnel-card peer-card u-peer-card-wide" id="peer-card-${p.id}">
@@ -1561,7 +1561,7 @@ function renderPeers(peers) {
         there: nm, thereSub: p.remote_pub || '',
         tags: [[isBh || isGreBh ? 'Backhaul' : 'FRP', 'eng'], [p.transport || '', ''], [isBh ? '' : 'GRE', 'gre']],
         gre: !isBh, lat: linkPing(p).ok ? linkPing(p).txt : null, rate: linkRate('p' + p.id, p.rx, p.tx, _statusCountersAt),
-        ports: p.raw_ports ? String(p.raw_ports).split(/[ ,]+/).filter(Boolean) : (p.ports || []),
+        ports: compactPorts(p.raw_ports || p.ports),
       })}
       <div class="det-grid">
         <div class="det-card">
@@ -1711,7 +1711,7 @@ function renderTunnel(st) {
   const svcBadge = st.frp_up
     ? `<span class="badge ok"><span class="dot"></span><bdi data-no-i18n>${esc(st.frp_svc || 'frp')}</bdi></span>`
     : `<span class="badge err"><span class="dot"></span><bdi data-no-i18n>${esc(st.frp_svc || 'service')}</bdi> · ${esc(tr('', 'stopped'))}</span>`;
-  const ports = ((st.proxy_ports && st.proxy_ports.length) ? st.proxy_ports : (st.proxies || [])).join(', ') || '—';
+  const ports = compactPorts(tunnelPortEntries(st)).join(', ') || '—';
   // the user's name for the other server when there is one
   const title = st.name ? st.name + (st.remote_pub ? ' · ' + st.remote_pub : '') : tr('', 'Tunnel') + (st.remote_pub ? ' · ' + st.remote_pub : '');
   let mainRate = linkRate('main', st.rx, st.tx, _statusCountersAt);
@@ -1724,7 +1724,7 @@ function renderTunnel(st) {
     there: st.name || tr('', isIran ? 'Foreign server' : 'Iran server'), thereSub: st.remote_pub || gre.peer_ip || st.gre_peer || '',
     tags: [[bhSvc ? 'Backhaul' : 'FRP', 'eng'], [eng !== 'frp' ? st.transport : '', ''], [usesGre ? 'GRE' : '', 'gre']],
     gre: usesGre, lat: mainPing.ok ? mainPing.txt : null, rate: mainRate,
-    ports: (st.proxy_ports && st.proxy_ports.length) ? st.proxy_ports : (st.proxies || []),
+    ports: compactPorts(tunnelPortEntries(st)),
   });
   // Rows shared with the peer cards: both public IPs (copyable), both GRE
   // inner ends, the control port (copyable) and the traffic totals.
@@ -1815,8 +1815,48 @@ function renderTunnel(st) {
 let tunPeerCache = null;
 // "1020, 1030, 10000-10050" -> "3 ports": the full list overflowed the card;
 // the port chips above the details show them.
+// Port lists. A tunnel's ports come as numbers (FRP forwards each port on
+// its own) or as the entries of a Backhaul config ("1051-1060",
+// "2083=8443", "1.2.3.4:443"). compactPorts shows them short: numbers that
+// follow each other become a range, entries stay as written. portTotal
+// counts the ports, every port of a range (so "1051-1060" is 10, not 1).
+function portEntries(list) {
+  return [].concat(list || []).flatMap(x => String(x).split(/[\s,]+/)).filter(x => x && x !== '—');
+}
+function compactPorts(list) {
+  const nums = [], other = [];
+  portEntries(list).forEach(x => { if (/^\d+$/.test(x)) nums.push(Number(x)); else if (!other.includes(x)) other.push(x); });
+  const u = [...new Set(nums)].sort((a, b) => a - b), out = [];
+  for (let i = 0; i < u.length;) {
+    let j = i;
+    while (j + 1 < u.length && u[j + 1] === u[j] + 1) j++;
+    out.push(j > i ? u[i] + '-' + u[j] : String(u[i]));
+    i = j + 1;
+  }
+  return out.concat(other);
+}
+function portTotal(list) {
+  const seen = new Set();
+  portEntries(list).forEach(x => {
+    let left = x.split('=')[0];
+    const c = left.lastIndexOf(':');
+    if (c >= 0) left = left.slice(c + 1);
+    const m = /^(\d+)(?:-(\d+))?$/.exec(left.trim());
+    if (!m) return;
+    const lo = +m[1], hi = m[2] ? +m[2] : lo;
+    for (let n = lo; n <= hi && n <= 65535; n++) seen.add(n);
+  });
+  return seen.size;
+}
+// tunnelPortEntries: the first tunnel's ports as written. Backhaul keeps
+// them in its own words (a range stays a range); FRP's proxies are names, so
+// its numbers are used.
+function tunnelPortEntries(o) {
+  const bh = /backhaul/.test(String(o.engine || '')) || /backhaul/.test(String(o.frp_svc || o.svc || ''));
+  return bh && (o.proxies || []).length ? o.proxies : (o.proxy_ports || []);
+}
 function portCount(list) {
-  const n = String(list || '').split(/[ ,]+/).filter(x => x && x !== '—').length;
+  const n = portTotal(list);
   return n ? `<span class="det-count">${n} ${esc(tr('', n === 1 ? 'port' : 'ports'))}</span>` : '—';
 }
 // One-line health chips per tunnel (compact status at a glance):
@@ -1854,7 +1894,7 @@ function renderTunChips(st) {
       name: p.name || ('peer-' + (p.id ?? (i + 1))),
       up: cs.v !== 'down',
       ping: cs.txt,
-      sub: traffic || ((p.ports || []).join(', ') || '—'),
+      sub: traffic || (compactPorts(p.raw_ports || p.ports).join(', ') || '—'),
     });
   });
   // One tunnel: its card already says all of this.
@@ -2633,7 +2673,7 @@ async function refreshDash() {
       chips.push(chip('Xray ' + xrUp + '/' + xrLinks.length, xrUp === xrLinks.length ? 'ok' : xrUp ? 'warn' : 'err'));
     }
     setHTML('kpiLinks', chips.join(''));
-    const nPorts = (f.proxy_ports || []).length || (bObj.ports || []).length;
+    const nPorts = portTotal(tunnelPortEntries({ engine: d.active_engine, svc: f.svc, proxies: f.proxies, proxy_ports: f.proxy_ports })) || portTotal(bObj.ports);
     const carrier = d.active_carrier && d.active_carrier !== 'direct' ? String(d.active_carrier).toUpperCase() : '';
     set('kpiLinksSub', unset ? tr('', 'Not configured')
       : [carrier ? tr('', 'via') + ' ' + carrier : '', nPorts ? nPorts + ' ' + tr('', nPorts === 1 ? 'port' : 'ports') : ''].filter(Boolean).join(' · '));
@@ -2737,7 +2777,7 @@ async function refreshDash() {
         const tx = tp.tx_bytes_sec || b.tx_bytes_sec || 0;
         set('dashBagherRate', '↓ ' + fmtRate(rx) + ' · ↑ ' + fmtRate(tx));
         set('dashBagherForeign', b.remote_host || '—');
-        const portsStr = Array.isArray(b.ports) ? b.ports.join(', ') : (b.ports || '—');
+        const portsStr = compactPorts(b.ports).join(', ') || '—';
         set('dashBagherPorts', portsStr);
         const bBadge = $('dashBagherStatusBadge');
         if (bBadge) {
@@ -2914,7 +2954,7 @@ async function refreshDash() {
     const otherLabel = iran ? tr('', 'Foreign server') : tr('', 'Iran server');
     const otherIP = d.remote_pub || g.peer || '';
     const bindPort = (f.port && f.port !== NA) ? String(f.port) : '';
-    const fwd = ((f.proxy_ports && f.proxy_ports.length) ? f.proxy_ports : (f.proxies || [])).filter(p => p !== '' && p != null);
+    const fwd = compactPorts(tunnelPortEntries({ engine: d.active_engine, svc: f.svc, proxies: f.proxies, proxy_ports: f.proxy_ports }));
     const innerPeer = c => { const m = /^(\d+\.\d+\.\d+)\.(\d+)(?:\/\d+)?$/.exec(c || ''); if (!m) return ''; const n = +m[2]; return m[1] + '.' + (n % 2 === 0 ? n - 1 : n + 1); };
     // This server's other public IPv4 addresses: any of them can be a
     // tunnel's Iran IP (Edit Tunnel). Its global IPv6 addresses are listed
@@ -3121,7 +3161,7 @@ function dashMainRow(d) {
   return {
     id: 'main', name: d.main_name || tr('', 'Main tunnel'), remote_pub: d.remote_pub || g.peer || '',
     engine: /backhaul/.test(eng) || /^backhaul/.test(f.svc || '') ? (g.exists ? 'gre-backhaul' : 'backhaul') : 'frp',
-    ports: f.proxy_ports || [], gre_up: !!g.exists, frp_up: !!f.up, rx: st.rx, tx: st.tx,
+    ports: compactPorts(tunnelPortEntries({ engine: d.active_engine, svc: f.svc, proxies: f.proxies, proxy_ports: f.proxy_ports })), gre_up: !!g.exists, frp_up: !!f.up, rx: st.rx, tx: st.tx,
     ping_ok: h.ping_ok, ping_ms: h.ping_ms, health_state: h.health_state, latency_ms: h.latency_ms,
     icmp_filtered: h.icmp_filtered, reasons: h.reasons,
   };
@@ -3146,7 +3186,7 @@ function renderDashPeers(peers, main) {
       + '<span class="pt-name" role="cell"><i class="pt-dot' + (up ? ' on' : '') + '"></i><b data-no-i18n>' + esc(p.name || ('peer-' + p.id)) + '</b></span>'
       + '<span role="cell">' + k('Foreign server') + '<span class="pt-mono">' + esc(p.remote_pub || '—') + '</span></span>'
       + '<span role="cell">' + k('Engine') + esc(engLabel(p.engine) || 'FRP') + '</span>'
-      + '<span role="cell">' + k('Ports') + '<span class="pt-mono">' + esc((p.ports || []).join(', ') || '—') + '</span></span>'
+      + '<span role="cell">' + k('Ports') + '<span class="pt-mono">' + esc(compactPorts(p.raw_ports || p.ports).join(', ') || '—') + '</span></span>'
       + '<span role="cell">' + k('Ping') + '<span class="badge ' + (pg.ok ? 'ok' : 'err') + '"><span class="dot"></span>' + esc(pg.ok ? pg.txt : tr('', 'No answer')) + '</span>' + pg.chip + '</span>'
       + '<span role="cell">' + k('Traffic') + '<span class="pt-mono">' + esc(traffic) + '</span></span>'
       + '</div>';
@@ -3802,7 +3842,7 @@ $('joinBtn').onclick = async () => {
         $('jPorts').value = bundle.rawPorts || bundle.ports.join(', ');
       }
     }
-    const ports = $('jPorts').value.trim() || ((st.proxy_ports || []).join(', ') || (st.proxies || []).join(', '));
+    const ports = $('jPorts').value.trim() || compactPorts(tunnelPortEntries(st)).join(', ');
     if (!token) {
       const w = $('joinWarn');
       w.textContent = tr('', 'Paste the bundle from the Iran server first: its Setup tab after Apply Setup, or Copy Bundle on its Tunnel tab.');
@@ -6570,7 +6610,7 @@ function xrLinkCard(l, compact) {
     iranSub: iranAddr + (rev ? tp : ''), forSub: forAddr + (rev ? '' : tp),
   });
   const badge = { ok: ['ok', 'Connected'], warn: ['warn', link === 'listening' ? 'Ready' : 'Checking…'], down: ['err', 'No connection'], off: ['dim', 'Stopped'] }[state];
-  const ports = (l.ports || []).map(p => `<span class="tv-port" data-no-i18n>${p}</span>`).join('');
+  const ports = compactPorts(l.ports).map(p => `<span class="tv-port" data-no-i18n>${esc(p)}</span>`).join('');
   const err = (state === 'down' && h.error) ? `<div class="xr-err" data-no-i18n>${esc(tr('', h.error))}</div>` : '';
   const head = `<b data-no-i18n>${esc(l.name || (tr('', 'Link') + ' ' + l.id))}</b>
       <span class="badge ${badge[0]}"><span class="dot"></span>${esc(tr('', badge[1]))}</span>
@@ -9443,7 +9483,9 @@ function openEditPeer(peerId) {
     carrier = (st.carrier && (st.carrier.active || st.carrier.mode)) || 'direct';
     engine = st.engine || (st.frp_svc && st.frp_svc.includes('backhaul') ? (st.no_gre ? 'backhaul' : 'gre-backhaul') : 'frp');
     transport = st.transport || 'tcpmux';
-    ports = st.proxy_ports || [];
+    // as written: a Backhaul range stays one entry (its first port alone
+    // used to come back here, and saving cut the range to it)
+    ports = compactPorts(tunnelPortEntries(st));
     if (!ports.length && st.proxies) {
       ports = st.proxies.map(x => {
         const m = String(x).match(/\d+/);
@@ -9460,7 +9502,7 @@ function openEditPeer(peerId) {
       // a list from the panel, a string from older hashem.sh
       ports = String(p.raw_ports).split(/[\s,]+/).filter(Boolean);
     } else {
-      ports = p.ports ? [...p.ports] : [];
+      ports = compactPorts(p.ports);
     }
   }
 

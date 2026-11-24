@@ -942,13 +942,16 @@ func localStatusFrom(v *hostView) tunnelStatus {
 					}
 				}
 			}
+			// Proxies keep the entries as written ("1051-1060", "2083=8443"),
+			// for display and editing; ProxyPorts is every port they listen
+			// on, a range expanded: the port registry, the free-port
+			// suggestion and the port count need them all, not only 1051.
+			var norm []string
 			for _, pStr := range bc.Ports {
 				st.Proxies = append(st.Proxies, pStr)
-				basePart := strings.Split(strings.Split(pStr, "-")[0], "=")[0]
-				if v, err := strconv.Atoi(basePart); err == nil {
-					st.ProxyPorts = append(st.ProxyPorts, v)
-				}
+				norm = append(norm, normalizeBackhaulPort(strings.TrimSpace(pStr)))
 			}
+			st.ProxyPorts = append(st.ProxyPorts, expandNumericPorts(norm)...)
 		}
 	} else {
 		if st.FrpSvc != "" {

@@ -79,7 +79,7 @@ func usedPortSet() map[int]bool {
 	}
 	for _, p := range loadPeers() {
 		used[p.FrpPort] = true
-		for _, x := range p.Ports {
+		for _, x := range peerUserPorts(p) { // a Backhaul range: every port of it
 			used[x] = true
 		}
 	}

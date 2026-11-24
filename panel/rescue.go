@@ -639,7 +639,7 @@ func suggestRescuePorts() []int {
 		add(p)
 	}
 	for _, pr := range loadPeers() {
-		for _, p := range pr.Ports {
+		for _, p := range peerUserPorts(pr) { // a Backhaul range: every port of it
 			add(p)
 		}
 	}
