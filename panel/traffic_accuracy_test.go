@@ -226,6 +226,21 @@ func TestLinkCountersFromSnapshot(t *testing.T) {
 	if rx, _ := v.carrierTraffic("backhaul-server-9"); rx != nil {
 		t.Fatal("unknown unit: no counters")
 	}
+	// A foreign server: GRE is there but nearly idle, and its Backhaul (or
+	// FRP) dials the hub's public IP, so the bytes are on the port counters.
+	// The link's speed is both together, as for the hub's main tunnel.
+	if rx, tx := localTraffic(tunnelStatus{FrpSvc: "backhaul-server-3", Gre: greState{Exists: true}}, v); rx == nil || *rx != 730 || *tx != 840 {
+		t.Fatalf("GRE and Backhaul: the sum, got %v %v", rx, tx)
+	}
+	fv := &hostView{dev: map[string]devCounters{"gre-tunnel": {rx: 2, tx: 3}}, carrierTags: map[string][2]uint64{"frpc": {5000, 9000}}}
+	if rx, tx := localTraffic(tunnelStatus{FrpSvc: "frpc", Gre: greState{Exists: true}}, fv); rx == nil || *rx != 5002 || *tx != 9003 {
+		t.Fatalf("GRE and FRP over the public IP: the sum, got %v %v", rx, tx)
+	}
+	// GRE alone (FRP inside it: no port counters) stays the interface's.
+	gv := &hostView{dev: map[string]devCounters{"gre-tunnel": {rx: 2, tx: 3}}}
+	if rx, tx := localTraffic(tunnelStatus{FrpSvc: "frpc", Gre: greState{Exists: true}}, gv); rx == nil || *rx != 2 || *tx != 3 {
+		t.Fatalf("GRE only, got %v %v", rx, tx)
+	}
 }
 
 func TestSpoofInterfaceIsATunnel(t *testing.T) {
