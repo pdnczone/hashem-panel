@@ -91,21 +91,6 @@ func tgLinkName(l peerLive) string {
 	return n
 }
 
-func tgLinks() (*HubSnapshot, []peerLive) {
-	s := currentSnapshot()
-	return s, apLinks(s)
-}
-
-func tgFindLink(id int) (*HubSnapshot, *peerLive) {
-	s, links := tgLinks()
-	for i := range links {
-		if links[i].ID == id {
-			return s, &links[i]
-		}
-	}
-	return s, nil
-}
-
 // ---- entry points ----
 
 // tgOnText answers a message from a paired account.
@@ -160,33 +145,23 @@ func tgOnText(c tgBotConfig, usr *tgBotUser, chat int64, text string) tgScreen {
 }
 
 func tgMenu(c tgBotConfig, usr *tgBotUser) tgScreen {
-	s, links := tgLinks()
-	up, bad, down := 0, 0, 0
-	for _, l := range links {
-		switch l.HealthState {
-		case stateHealthy:
-			up++
-		case stateDown:
-			down++
-		default:
-			bad++
-		}
-	}
+	s, list := tgAllTunnels(c)
+	up, weak, down := tgCounts(list)
 	role := s.Local.Role
 	if role == "" {
 		role = "—"
 	}
 	text := fmt.Sprintf("🖥 Hashem · %s\n%s · %s\n", tgHost(), role, displayVersion(panelVersion))
-	if len(links) == 0 {
-		text += tgT(c, "هنوز تونلی نیست.", "No tunnels yet.")
+	if len(list) == 0 {
+		text += tgNoTunnels(c, s)
 	} else {
-		text += fmt.Sprintf(tgT(c, "تونل‌ها: %d  ·  🟢 %d  🟡 %d  🔴 %d", "Tunnels: %d  ·  🟢 %d  🟡 %d  🔴 %d"), len(links), up, bad, down)
+		text += fmt.Sprintf(tgT(c, "تونل‌ها: %d  ·  🟢 %d  🟡 %d  🔴 %d", "Tunnels: %d  ·  🟢 %d  🟡 %d  🔴 %d"), len(list), up, weak, down)
 	}
 	if !usr.admin() {
 		text += tgT(c, "\n(دسترسی شما فقط دیدن است)", "\n(your access is read-only)")
 	}
 	b := func(fa, en, data string) tgBtn { return tgBtn{Text: tgT(c, fa, en), Data: data} }
-	return tgScreen{Text: text, Keys: [][]tgBtn{
+	keys := [][]tgBtn{
 		{b("📊 وضعیت", "📊 Status", "st"), b("🔗 تونل‌ها", "🔗 Tunnels", "tl")},
 		{b("🐶 نگهبان", "🐶 Watchdog", "wd"), b("🤖 Autopilot", "🤖 Autopilot", "ap")},
 		{b("👥 مشتری‌ها", "👥 Customers", "cu"), b("🔔 هشدارها", "🔔 Alerts", "al")},
@@ -194,7 +169,11 @@ func tgMenu(c tgBotConfig, usr *tgBotUser) tgScreen {
 		{b("💾 نسخه پشتیبان", "💾 Backups", "bk"), b("⬆️ آپدیت", "⬆️ Update", "up")},
 		{b("🌐 کلاستر", "🌐 Cluster", "cl"), b("🔑 لایسنس", "🔑 License", "li")},
 		{b("📜 لاگ", "📜 Logs", "lg"), b("❗️ خطاها", "❗️ Errors", "er"), b("❓ راهنما", "❓ Help", "h")},
-	}}
+	}
+	if tgIsCentral() {
+		keys = append([][]tgBtn{keys[0], {b("🗂 نودها", "🗂 Nodes", "nd")}}, keys[1:]...)
+	}
+	return tgScreen{Text: text, Keys: keys}
 }
 
 // tgOnButton answers a button (or the command that stands for one).
@@ -212,6 +191,12 @@ func tgOnButton(c tgBotConfig, usr *tgBotUser, chat int64, data string) tgScreen
 		return tgTunnel(c, usr, id)
 	case "tr", "tg", "tp", "tn", "tx":
 		return tgTunnelAction(c, usr, key, id)
+	case "hb", "xl", "bl", "sp":
+		return tgOtherTunnel(c, usr, data)
+	case "xs", "xp":
+		return tgXrayAction(c, usr, key, id)
+	case "nd":
+		return tgNodes(c)
 	case "wd":
 		return tgWatchdog(c, usr, arg)
 	case "bk", "bks", "bkr":
@@ -247,7 +232,7 @@ func tgOnButton(c tgBotConfig, usr *tgBotUser, chat int64, data string) tgScreen
 // ---- status and tunnels ----
 
 func tgStatus(c tgBotConfig) tgScreen {
-	s, links := tgLinks()
+	s, list := tgAllTunnels(c)
 	var b strings.Builder
 	fmt.Fprintf(&b, "📊 %s · %s\n", tgHost(), s.Local.Role)
 	if s.PublicIP != "" {
@@ -257,35 +242,35 @@ func tgStatus(c tgBotConfig) tgScreen {
 		fmt.Fprintf(&b, tgT(c, "به‌روز: %s\n", "As of: %s\n"), s.At.Local().Format("15:04:05"))
 	}
 	b.WriteString("\n")
-	if len(links) == 0 {
-		b.WriteString(tgT(c, "هنوز تونلی نیست.", "No tunnels yet."))
+	if len(list) == 0 {
+		b.WriteString(tgNoTunnels(c, s))
 	}
-	for _, l := range links {
-		fmt.Fprintf(&b, "%s %s", tgStateIcon(l.HealthState), tgLinkName(l))
-		if l.LatencyMs > 0 {
-			fmt.Fprintf(&b, " · %.0f ms", l.LatencyMs)
+	for _, t := range list {
+		fmt.Fprintf(&b, "%s %s", tgStateIcon(t.State), t.Name)
+		if t.Lat > 0 {
+			fmt.Fprintf(&b, " · %.0f ms", t.Lat)
 		}
-		if l.Rx != nil && l.Tx != nil {
-			fmt.Fprintf(&b, " · ↓%s ↑%s", fmtBytesDec(*l.Rx), fmtBytesDec(*l.Tx))
+		if t.Rx != nil && t.Tx != nil {
+			fmt.Fprintf(&b, " · ↓%s ↑%s", fmtBytesDec(*t.Rx), fmtBytesDec(*t.Tx))
 		}
 		b.WriteString("\n")
-		if l.HealthState != stateHealthy && len(l.Reasons) > 0 {
-			fmt.Fprintf(&b, "   ↳ %s\n", strings.Join(l.Reasons, "; "))
+		if t.State != stateHealthy && t.Why != "" {
+			fmt.Fprintf(&b, "   ↳ %s\n", tgCut(t.Why, 300))
 		}
 	}
 	return tgScreen{Text: b.String(), Keys: [][]tgBtn{{{Text: tgT(c, "🔄 تازه کن", "🔄 Refresh"), Data: "st"}, {Text: tgT(c, "🔗 تونل‌ها", "🔗 Tunnels"), Data: "tl"}}, tgBack(c, "m")}}
 }
 
 func tgTunnels(c tgBotConfig) tgScreen {
-	_, links := tgLinks()
+	s, list := tgAllTunnels(c)
 	var keys [][]tgBtn
-	for _, l := range links {
-		keys = append(keys, []tgBtn{{Text: tgStateIcon(l.HealthState) + " " + tgCut(tgLinkName(l), 50), Data: "t:" + strconv.Itoa(l.ID)}})
+	for _, t := range list {
+		keys = append(keys, []tgBtn{{Text: tgStateIcon(t.State) + " " + tgCut(t.Name, 50), Data: t.Data}})
 	}
 	keys = append(keys, tgBack(c, "m"))
 	text := tgT(c, "🔗 یک تونل را انتخاب کنید:", "🔗 Pick a tunnel:")
-	if len(links) == 0 {
-		text = tgT(c, "هنوز تونلی نیست. ساختن تونل از ربات ممکن نیست: از پنل بسازید.", "No tunnels yet. Tunnels are created in the panel, not from the bot.")
+	if len(list) == 0 {
+		text = tgNoTunnels(c, s) + tgT(c, "\nساختن تونل از ربات ممکن نیست: از پنل بسازید.", "\nTunnels are created in the panel, not from the bot.")
 	}
 	return tgScreen{Text: text, Keys: keys}
 }
@@ -348,10 +333,20 @@ func tgTunnel(c tgBotConfig, usr *tgBotUser, id int) tgScreen {
 		if id != mainTunnelID {
 			row = append(row, tgBtn{Text: tgT(c, "✏️ تغییر نام", "✏️ Rename"), Data: "tn:" + sid})
 		}
-		keys = append(keys, row, []tgBtn{{Text: tgT(c, "🗑 حذف تونل", "🗑 Remove tunnel"), Data: "tx:" + sid}})
+		keys = append(keys, row)
+		if !tgRemovesMore(id) {
+			keys = append(keys, []tgBtn{{Text: tgT(c, "🗑 حذف تونل", "🗑 Remove tunnel"), Data: "tx:" + sid}})
+		}
 	}
 	keys = append(keys, []tgBtn{{Text: tgT(c, "🔄 تازه کن", "🔄 Refresh"), Data: "t:" + sid}}, tgBack(c, "tl"))
 	return tgScreen{Text: b.String(), Keys: keys}
+}
+
+// tgRemovesMore: removing the first tunnel of a foreign server takes every
+// other hub's tunnel with it.
+func tgRemovesMore(id int) bool {
+	s := currentSnapshot()
+	return id == mainTunnelID && s.Main == nil && strings.HasPrefix(s.Local.Role, "foreign") && len(readJoinedHubs()) > 0
 }
 
 // tgActionBody is /api/action's body for a tunnel (the first tunnel has no peer_id).
@@ -406,6 +401,10 @@ func tgTunnelAction(c tgBotConfig, usr *tgBotUser, key string, id int) tgScreen 
 		})
 		return tgScreen{Text: tgT(c, "✏️ نام تازه‌ی «", "✏️ Send the new name for \"") + name + tgT(c, "» را بفرستید (یا /cancel).", "\" (or /cancel).")}
 	case "tx":
+		if tgRemovesMore(id) {
+			return tgScreen{Text: tgT(c, "این سرور به چند هاب ایران وصل است؛ حذف تونل اول همه را حذف می‌کند. از پنل حذف کنید.",
+				"This server serves several Iran hubs: removing its first tunnel removes them all. Remove it in the panel."), Keys: back}
+		}
 		return tgConfirm(c, usr, tgT(c, "تونل «", "Remove the tunnel \"")+name+tgT(c, "» حذف شود؟ سرویس‌ها و تنظیماتش پاک می‌شوند و کاربرانش قطع می‌شوند.", "\"? Its services and settings are deleted and its users are cut off."),
 			tgT(c, "در حال حذف تونل…", "Removing the tunnel…"), func(u *tgBotUser) string { return tgRunAction(c, u, "remove-tunnel", id) })
 	}

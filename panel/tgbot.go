@@ -794,7 +794,7 @@ func tgHandle(tok string, u tgUpdate) {
 func tgSlow(data string) bool {
 	key, arg, _ := strings.Cut(data, ":")
 	switch key {
-	case "tr", "tg", "tp", "lg", "bks":
+	case "tr", "tg", "tp", "lg", "bks", "xs", "nd":
 		return true
 	case "dr":
 		return arg == "run"

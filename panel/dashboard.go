@@ -107,13 +107,9 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 			health = "DEGRADED"
 		}
 	} else {
-		pingMs := parsePingMs(st.PingMs)
 		greConfigured := st.Gre.Exists || st.FrpUp
 		if greConfigured {
-			h := ComputeHealth(LinkSignals{
-				ServiceActive: st.FrpUp, GreIfUp: st.Gre.Exists, Session: snap.LocalSession, TCPRTTms: snap.LocalRTT,
-				ICMPOK: st.PingOK, ICMPms: pingMs, ICMPFresh: st.PingOK || snap.LocalSession,
-			})
+			h := spokeHealth(snap)
 			health = map[string]string{stateHealthy: "HEALTHY", stateDegraded: "DEGRADED", stateDown: "DOWN"}[h.State]
 			reasons, icmpFiltered, latMs, latKind = h.Reasons, h.ICMPFiltered, h.LatencyMs, h.LatencyKind
 		} else if bagherActive {

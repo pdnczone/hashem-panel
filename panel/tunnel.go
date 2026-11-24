@@ -33,14 +33,10 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	if m := snap.Main; m != nil {
 		lv.HealthState, lv.ICMPFiltered, lv.LatencyMs, lv.LatencyKind, lv.Reasons = m.HealthState, m.ICMPFiltered, m.LatencyMs, m.LatencyKind, m.Reasons
 		lv.Rx, lv.Tx = m.Rx, m.Tx
-	} else if st := snap.Local; st.Gre.Exists || st.FrpUp {
+	} else if snap.Local.Gre.Exists || snap.Local.FrpUp {
 		// a foreign server has no hub link: its health comes from its own
-		// session, as on the dashboard. A live session is not pinged
-		// (snapshot.go), so ping_ok alone would call a working tunnel weak.
-		h := ComputeHealth(LinkSignals{
-			ServiceActive: st.FrpUp, GreIfUp: st.Gre.Exists, Session: snap.LocalSession, TCPRTTms: snap.LocalRTT,
-			ICMPOK: st.PingOK, ICMPms: parsePingMs(st.PingMs), ICMPFresh: st.PingOK || snap.LocalSession,
-		})
+		// session, as on the dashboard
+		h := spokeHealth(snap)
 		lv.HealthState, lv.ICMPFiltered, lv.LatencyMs, lv.LatencyKind, lv.Reasons = h.State, h.ICMPFiltered, h.LatencyMs, h.LatencyKind, h.Reasons
 	}
 	lv.CarrierID = mainCarrierID(snap.Local)
