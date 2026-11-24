@@ -2973,9 +2973,18 @@
         <div class="tunnel-card">
           <div class="tc-header">
             <p class="tc-title">Telegram Alerts</p>
-            <span class="badge" id="wdTgRouteBadge">Direct</span>
+            <span class="badge" id="wdTgRouteBadge">—</span>
           </div>
-          <div class="qs-hint">Receive instant Telegram notifications when the tunnel drops or recovers. Middle of bot token is never exposed.</div>
+          <div class="qs-hint">The Watchdog's alerts go out through the panel's Telegram bot: the same bot, accounts and route as in Settings.</div>
+          <div id="wdTgOne">
+            <div class="ent-help" id="wdTgSum" aria-live="polite">—</div>
+            <div class="qs-actions">
+              <button class="hashem-btn hashem-btn-primary" id="wdTgOpen">Open Telegram Bot Settings</button>
+              <button class="hashem-btn hashem-btn-secondary" id="wdTestTgBtn">Test Alert</button>
+            </div>
+          </div>
+          <!-- a node's own panel settings are not relayed: in a node view its bot is set here -->
+          <div id="wdTgForm" class="hidden">
           <div class="fg">
             <label for="wdBotToken">Bot Token</label>
             <div class="u-flex-center-gap8">
@@ -2988,17 +2997,16 @@
             <input class="hashem-input" id="wdChatId" placeholder="e.g. 123456789 or -100123456789" autocomplete="off" spellcheck="false">
           </div>
           <div class="fg">
-            <span class="wd-lbl" id="wdRouteLbl">Send Telegram alerts through</span>
+            <span class="wd-lbl" id="wdRouteLbl">Reach Telegram</span>
             <div class="rt-pick" id="wdRoutePick" role="radiogroup" aria-labelledby="wdRouteLbl"></div>
             <div class="u-flex-center-wrap8 u-mt-8 hidden" id="wdProbeRow">
               <button type="button" class="hashem-btn hashem-btn-secondary u-btn-xs" id="wdProbeBtn">Check connection</button>
               <span class="ent-help u-m-0" id="wdProbeOut" aria-live="polite"></span>
             </div>
-            <div class="ent-help">Pick a tunnel when this server cannot reach Telegram. The alert goes out from the foreign server of that tunnel; nothing to set up there.</div>
           </div>
           <div class="qs-actions">
             <button class="hashem-btn hashem-btn-primary" id="wdSaveTgBtn">Save Telegram Settings</button>
-            <button class="hashem-btn hashem-btn-secondary" id="wdTestTgBtn">Test Alert</button>
+          </div>
           </div>
           <div class="qs-hint" id="wdTgMsg" aria-live="polite"></div>
         </div>
@@ -4117,14 +4125,23 @@
             </div>
             <div class="tunnel-card" id="tgbCard">
               <div class="tc-header"><div class="set-h"><span class="set-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></span><p class="tc-title">Telegram bot <span class="eng-pro hidden" id="tgbPro" data-no-i18n>PRO</span></p></div><span class="badge dim" id="tgbState">—</span></div>
-              <div class="ent-help">Run this panel from a Telegram chat: status, tunnels, watchdog, Autopilot, customers, doctor, backups and updates. Only the accounts you pair here can use it, and only in a private chat with the bot. Removing, restoring and updating ask once more. Each server needs a bot of its own.</div>
+              <div class="ent-help">One bot for this panel: its menu (status, tunnels, watchdog, Autopilot, customers, doctor, backups and updates) and every alert, the Watchdog's too. Only the accounts you pair here can use it, and only in a private chat with the bot. Removing, restoring and updating ask once more. Each server needs a bot of its own.</div>
               <div class="set-sws"><label class="set-sw"><input type="checkbox" id="tgbEnabled"> Enable the bot</label></div>
-              <div class="fg"><label for="tgbToken">Bot token from @BotFather (empty: the Watchdog tab's bot)</label><input class="hashem-input" id="tgbToken" placeholder="123456:ABC-…" autocomplete="off"></div>
+              <div class="fg"><label for="tgbToken">Bot token from @BotFather</label><input class="hashem-input" id="tgbToken" placeholder="123456:ABC-…" autocomplete="off"></div>
               <div class="fg"><label for="tgbLang">Bot language</label><select class="hashem-input" id="tgbLang"><option value="fa">Persian</option><option value="en">English</option></select></div>
+              <div class="fg">
+                <span class="wd-lbl" id="tgbRouteLbl">Reach Telegram</span>
+                <div class="rt-pick" id="tgbRoute" role="radiogroup" aria-labelledby="tgbRouteLbl"></div>
+                <div class="u-flex-center-wrap8 u-mt-8 hidden" id="tgbProbeRow">
+                  <button type="button" class="hashem-btn hashem-btn-secondary u-btn-xs" id="tgbProbe">Check connection</button>
+                  <span class="ent-help u-m-0" id="tgbProbeOut" aria-live="polite"></span>
+                </div>
+                <div class="ent-help" id="tgbVia" aria-live="polite"></div>
+              </div>
+              <div class="fg"><label for="tgbChat">Also send alerts to this chat (optional: a group or channel ID)</label><input class="hashem-input" id="tgbChat" placeholder="-100123456789" autocomplete="off" spellcheck="false"></div>
               <div class="set-acts">
                 <button class="hashem-btn hashem-btn-primary" id="tgbSave">Save</button>
                 <button class="hashem-btn hashem-btn-secondary" id="tgbTest">Send Test</button>
-                <button class="hashem-btn hashem-btn-secondary hidden" id="tgbUseWd">Use the Watchdog's Bot</button>
               </div>
               <div class="fg"><label for="tgbRole">Pair a Telegram account as</label><select class="hashem-input" id="tgbRole"><option value="admin">Admin: may change things</option><option value="viewer">Viewer: may only look</option></select></div>
               <div class="set-acts"><button class="hashem-btn hashem-btn-secondary" id="tgbPair">Get a Pairing Code</button></div>

@@ -8395,7 +8395,7 @@ init_watchdog_json() {
   "last_restart_date": "",
   "tg_bot_token": "",
   "tg_chat_id": "",
-  "tg_route": "direct",
+  "tg_route": "auto",
   "tg_tunnel_port": 0,
   "backup_every_hours": 0,
   "backup_daily_at": "",
@@ -8611,31 +8611,50 @@ tg_tunnel_host() {
     echo "${best:-127.0.0.1}"
 }
 
+# tg_bridge_ports: the panel's loopback bridges to its tunnels (17080 + the
+# tunnel's number; tunnel_egress.go), the ones that listen now.
+tg_bridge_ports() {
+    ss -H -ltn 2>/dev/null | awk '{print $4}' | sed -n 's/^127\.0\.0\.1:\(17\(0[89]\|1[0-9]\|2[0-7]\)[0-9]\|17280\)$/\1/p' | sort -n | head -n 4
+}
+
+# watchdog_send TEXT: one Telegram bot for the panel and the watchdog. The
+# message goes to every account paired with the bot (telegram_bot.json) that
+# did not mute alerts, and to the extra chat (tg_chat_id) when one is set.
 watchdog_send() {
     local TEXT="$1"
     [[ -z "$TEXT" ]] && return 1
     init_watchdog_json
 
-    local CFG
-    CFG=$(python3 -c '
-import json
+    local CFG BOT=0
+    pro_ok telegram_bot "Telegram bot" >/dev/null 2>&1 && BOT=1
+    CFG=$(BOT="$BOT" BOT_FILE="$(dirname "$WATCHDOG_FILE")/telegram_bot.json" python3 -c '
+import json, os
 try:
     with open("'"$WATCHDOG_FILE"'") as f:
         d = json.load(f)
-        tok = d.get("tg_bot_token", "").strip()
-        cid = str(d.get("tg_chat_id", "")).strip()
-        route = d.get("tg_route", "direct").strip()
-        port = str(d.get("tg_tunnel_port", 0)).strip()
-        print(f"{tok}\t{cid}\t{route}\t{port}")
 except Exception:
-    pass
+    d = {}
+try:
+    with open(os.environ["BOT_FILE"]) as f:
+        b = json.load(f)
+except Exception:
+    b = {}
+tok = str(d.get("tg_bot_token") or "").strip() or str(b.get("token") or "").strip()
+ids = []
+for cid in [d.get("tg_chat_id")] + ([u.get("id") for u in b.get("users") or [] if not u.get("mute")] if os.environ["BOT"] == "1" and b.get("enabled") else []):
+    cid = str(cid or "").strip()
+    if cid and cid not in ids:
+        ids.append(cid)
+route = str(d.get("tg_route") or "auto").strip()
+port = str(d.get("tg_tunnel_port") or 0)
+print("|".join([tok or "-", ",".join(ids) or "-", route, port]))
 ' 2>/dev/null)
 
-    local TG_TOKEN TG_CHAT_ID TG_ROUTE TG_PORT
-    IFS=$'\t' read -r TG_TOKEN TG_CHAT_ID TG_ROUTE TG_PORT <<< "$CFG"
+    local TG_TOKEN TG_CHATS TG_ROUTE TG_PORT
+    IFS='|' read -r TG_TOKEN TG_CHATS TG_ROUTE TG_PORT <<< "$CFG"
 
-    if [[ -z "$TG_TOKEN" || -z "$TG_CHAT_ID" ]]; then
-        echo -e "${YELLOW}[!] Telegram bot token or chat ID not configured in ${WATCHDOG_FILE}.${NC}" >&2
+    if [[ -z "$TG_TOKEN" || "$TG_TOKEN" == "-" || -z "$TG_CHATS" || "$TG_CHATS" == "-" ]]; then
+        echo -e "${YELLOW}[!] Telegram is not set up: set a bot token and pair an account (panel: Settings, Telegram bot), or set a chat ID in ${WATCHDOG_FILE}.${NC}" >&2
         return 1
     fi
 
@@ -8643,40 +8662,53 @@ except Exception:
     HOST="$(hostname 2>/dev/null || echo 'server')"
     local FULL_MSG="[Hashem ${HOST}] ${TEXT}"
 
-    # no -f: for a 4xx Telegram's reason ("Unauthorized", "chat not found") is in the body
-    local CURL_ARGS=(-sS)
+    # the ways to Telegram, in order ("direct" or a SOCKS5 port on this server)
+    local -a WAYS=(direct)
+    local p
     if [[ "$TG_ROUTE" == "tunnel" ]]; then
         if [[ -z "$TG_PORT" || "$TG_PORT" -le 0 ]]; then
             echo -e "${RED}[!] Telegram route is set to tunnel but tunnel port is not configured.${NC}" >&2
             return 1
         fi
-        CURL_ARGS+=(--max-time 20 --socks5-hostname "$(tg_tunnel_host "$TG_PORT"):${TG_PORT}")
-    else
-        CURL_ARGS+=(--max-time 15)
+        WAYS=("$TG_PORT" direct)   # the tunnel may be the one that is down
+    elif [[ "$TG_ROUTE" != "direct" ]]; then
+        for p in $(tg_bridge_ports); do WAYS+=("$p"); done
     fi
 
-    local CURL_OUT
-    CURL_OUT=$(curl "${CURL_ARGS[@]}" -d "chat_id=${TG_CHAT_ID}" --data-urlencode "text=${FULL_MSG}" "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" 2>&1)
-    local RET=$?
-    if [[ "$TG_ROUTE" == "tunnel" ]] && { [[ $RET -ne 0 ]] || ! grep -Eq '"ok" *: *true' <<<"$CURL_OUT"; }; then
-        # the tunnel the message goes through may be the one that is down
-        CURL_OUT=$(curl -sS --max-time 15 -d "chat_id=${TG_CHAT_ID}" --data-urlencode "text=${FULL_MSG}" "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" 2>&1)
-        RET=$?
-    fi
+    local CHAT WAY CURL_OUT RET SENT=0 LAST_OUT="" LAST_RET=0
+    local -a CURL_ARGS CHATS
+    IFS=',' read -r -a CHATS <<< "$TG_CHATS"
+    for CHAT in "${CHATS[@]}"; do
+        for WAY in "${WAYS[@]}"; do
+            # no -f: for a 4xx Telegram's reason ("Unauthorized", "chat not found") is in the body
+            CURL_ARGS=(-sS --connect-timeout 7 --max-time 15)
+            [[ "$WAY" != "direct" ]] && CURL_ARGS=(-sS --max-time 20 --socks5-hostname "$(tg_tunnel_host "$WAY"):${WAY}")
+            CURL_OUT=$(curl "${CURL_ARGS[@]}" -d "chat_id=${CHAT}" --data-urlencode "text=${FULL_MSG}" "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" 2>&1)
+            RET=$?
+            if [[ $RET -eq 0 ]] && grep -Eq '"ok" *: *(true|false)' <<<"$CURL_OUT"; then
+                WAYS=("$WAY")   # Telegram answered: the other chats go the same way
+                break
+            fi
+        done
+        if [[ $RET -eq 0 ]] && grep -Eq '"ok" *: *true' <<<"$CURL_OUT"; then
+            SENT=$((SENT + 1))
+        else
+            LAST_OUT="$CURL_OUT"; LAST_RET=$RET
+            [[ $RET -ne 0 ]] && break   # not reached: it will not be for the others either
+        fi
+    done
+    [[ $SENT -gt 0 ]] && return 0
 
-    if [[ $RET -ne 0 ]]; then
+    if [[ $LAST_RET -ne 0 ]]; then
         local REDACTED_ERR
-        REDACTED_ERR=$(echo "$CURL_OUT" | sed "s/${TG_TOKEN}/[REDACTED]/g")
+        REDACTED_ERR=$(echo "$LAST_OUT" | sed "s/${TG_TOKEN}/[REDACTED]/g")
         echo -e "${RED}[!] Telegram send failed: ${REDACTED_ERR}${NC}" >&2
         return 1
     fi
-    if ! grep -Eq '"ok" *: *true' <<<"$CURL_OUT"; then
-        local WHY
-        WHY=$(sed -n 's/.*"description" *: *"\([^"]*\)".*/\1/p' <<<"$CURL_OUT" | head -n1)
-        echo -e "${RED}[!] Telegram said: ${WHY:-$CURL_OUT}${NC}" >&2
-        return 1
-    fi
-    return 0
+    local WHY
+    WHY=$(sed -n 's/.*"description" *: *"\([^"]*\)".*/\1/p' <<<"$LAST_OUT" | head -n1)
+    echo -e "${RED}[!] Telegram said: ${WHY:-$LAST_OUT}${NC}" >&2
+    return 1
 }
 
 watchdog_test() {
@@ -9274,7 +9306,7 @@ try:
     else:
         masked = "(not configured)"
     cid = str(d.get("tg_chat_id", "")) or "(not configured)"
-    route = d.get("tg_route", "direct")
+    route = d.get("tg_route", "auto")
     port = str(d.get("tg_tunnel_port", 0))
     fails = str(d.get("consec_fails", 0))
     thresh = str(d.get("fail_threshold", 2))
@@ -9440,17 +9472,21 @@ except Exception as e:
                 ;;
             4)
                 echo -e "\n${CYAN}── Telegram Delivery Route ──${NC}"
-                echo "  1) Direct (curl direct to Telegram API)"
+                echo "  1) Direct only"
                 echo "  2) Via Tunnel (SOCKS5 through tunnel port)"
-                read -p "Choose route [1-2]: " ROUTE_CHOICE
-                if [[ "$ROUTE_CHOICE" == "1" ]]; then
+                echo "  3) Automatic (direct, then through this server's tunnels)"
+                read -p "Choose route [1-3]: " ROUTE_CHOICE
+                if [[ "$ROUTE_CHOICE" == "1" || "$ROUTE_CHOICE" == "3" ]]; then
+                    local ROUTE_NAME=direct
+                    [[ "$ROUTE_CHOICE" == "3" ]] && ROUTE_NAME=auto
                     python3 -c '
 import json
 path = "'"$WATCHDOG_FILE"'"
 try:
     with open(path) as f:
         d = json.load(f)
-    d["tg_route"] = "direct"
+    d["tg_route"] = "'"$ROUTE_NAME"'"
+    d["tg_one_bot"] = True
     with open(path + ".tmp", "w") as f:
         json.dump(d, f, indent=2)
     import os
@@ -9459,7 +9495,7 @@ try:
 except Exception:
     pass
 ' 2>/dev/null
-                    echo -e "${GREEN}[OK] Route set to Direct.${NC}"
+                    echo -e "${GREEN}[OK] Route set to ${ROUTE_NAME}.${NC}"
                 elif [[ "$ROUTE_CHOICE" == "2" ]]; then
                     local PORTS=()
                     mapfile -t PORTS < <(find_live_proxy_ports)

@@ -775,7 +775,7 @@ const I18N = {
     wd_restart_save: "Save Schedule",
     wd_restart_now: "Restart Tunnel Now",
     wd_tg_title: "Telegram Alerts",
-    wd_tg_hint: "Receive instant Telegram notifications when the tunnel drops or recovers. Middle of bot token is never exposed.",
+    wd_tg_hint: "The Watchdog's alerts go out through the panel's Telegram bot: the same bot, accounts and route as in Settings.",
     wd_tg_token: "Bot Token",
     wd_tg_chat: "Chat ID",
     wd_tg_route: "Telegram Route",
@@ -4755,8 +4755,8 @@ function apRenderStatus() {
   const kpi = (l, v, k) => `<div class="cl-kpi ${k || ''}"><span>${esc(tr('', l))}</span><b>${esc(String(v))}</b></div>`;
   $('apKpis').innerHTML = kpi('Tunnels watched', watched + ' / ' + tuns.length) + kpi('Down now', downNow, downNow ? 'warn' : '') +
     kpi('Switched in 24 hours', r.switched_day || 0, r.switched_day ? 'ok' : '') + kpi('Runs without a way through', r.failed_day || 0, r.failed_day ? 'warn' : '');
-  $('apNotifyNote').textContent = r.notify_ready ? tr('', 'To the webhook of External alerts and the Telegram bot of the Watchdog.')
-    : tr('', 'Nothing to send to yet: set a webhook in External alerts or a Telegram bot in the Watchdog tab.');
+  $('apNotifyNote').textContent = r.notify_ready ? tr('', 'To the webhook of External alerts and the Telegram bot.')
+    : tr('', 'Nothing to send to yet: set a webhook in External alerts or pair an account with the Telegram bot (Settings).');
   $('apTunnels').innerHTML = tuns.map(t => apTunHTML(t, c)).join('') || `<div class="ap-empty">${esc(tr('', 'No tunnels yet.'))}</div>`;
   const ev = r.events || [];
   $('apEvents').innerHTML = ev.length ? ev.map(e => `<li class="ap-ev ev-${esc(e.kind)}"><span class="ap-ev-dot"></span><div>` +
@@ -4923,7 +4923,7 @@ async function alertsRefresh() {
     const r = await api('/api/alerts');
     $('alEnabled').checked = !!r.enabled; $('alWebhook').value = r.webhook_url || '';
     $('alTelegram').checked = !!r.telegram; $('alDegraded').checked = !!r.notify_degraded; $('alGap').value = r.min_gap_sec || 120;
-    $('alTgNote').textContent = r.telegram_configured ? '' : '(set bot token + chat id in the Watchdog tab first)';
+    $('alTgNote').textContent = r.telegram_configured ? '' : '(set up the Telegram bot first)';
   } catch(e) {}
 }
 $('alSave').onclick = async () => {
@@ -4945,14 +4945,18 @@ function tgbRender(r) {
   $('tgbState').textContent = st + (r.username ? ' · @' + r.username : '');
   $('tgbState').className = 'badge ' + (r.state === 'running' ? 'ok' : r.state === 'error' ? 'err' : 'dim');
   $('tgbEnabled').checked = !!r.enabled;
-  $('tgbUseWd').classList.toggle('hidden', !r.own_token);
   $('tgbLang').value = r.lang || 'fa';
-  $('tgbToken').placeholder = r.own_token ? r.token_masked : (r.watchdog_token ? tr('', 'Using the Watchdog tab\'s bot') + ' (' + r.token_masked + ')' : '123456:ABC-…');
-  $('tgbMsg').textContent = r.error ? tr('', 'Last error') + ': ' + r.error : (!r.own_token && !r.watchdog_token ? tr('', 'Set a bot token here or in the Watchdog tab.') : '');
+  $('tgbToken').placeholder = r.token_set ? r.token_masked : '123456:ABC-…';
+  if (document.activeElement !== $('tgbChat')) $('tgbChat').value = r.chat_id || '';
+  rtRender($('tgbRoute'), r.tunnels || [], { route: r.route, tunnel_id: r.tunnel_id, tunnel_port: r.tunnel_port }, true);
+  $('tgbProbeRow').classList.toggle('hidden', rtValue($('tgbRoute')).route !== 'tunnel');
+  $('tgbVia').textContent = r.via ? (r.via === 'direct' ? tr('', 'Connected directly') : tr('', 'Connected through') + ' ' + r.via_name) : '';
+  $('tgbMsg').textContent = r.error ? tr('', 'Last error') + ': ' + r.error : (!r.token_set ? tr('', 'Paste the token @BotFather gave you, then pair your account.') : (r.alerts_to ? '' : tr('', 'Alerts go to no one yet: pair an account or set an alert chat.')));
   const users = r.users || [];
   $('tgbUsers').innerHTML = users.length ? '<div class="set-sub">' + users.map(u =>
     '<div class="qs-actions"><span>' + esc(u.name) + ' · ' + esc(String(u.id)) + ' · ' + esc(u.role === 'admin' ? tr('', 'Admin') : tr('', 'Viewer')) + '</span>' +
     '<button class="hashem-btn hashem-btn-secondary" data-tgb-role="' + esc(String(u.id)) + '" data-role="' + (u.role === 'admin' ? 'viewer' : 'admin') + '">' + esc(u.role === 'admin' ? tr('', 'Make Viewer') : tr('', 'Make Admin')) + '</button>' +
+    '<button class="hashem-btn hashem-btn-secondary" data-tgb-mute="' + esc(String(u.id)) + '" data-act="' + (u.mute ? 'unmute' : 'mute') + '">' + esc(u.mute ? tr('', 'Send Alerts') : tr('', 'Mute Alerts')) + '</button>' +
     '<button class="hashem-btn hashem-btn-secondary" data-tgb-remove="' + esc(String(u.id)) + '">' + esc(tr('', 'Remove')) + '</button></div>').join('') + '</div>'
     : '<div class="ent-help">' + esc(tr('', 'No Telegram account is paired yet.')) + '</div>';
 }
@@ -4964,13 +4968,23 @@ $('tgbSave').onclick = async () => {
   const body = { enabled: $('tgbEnabled').checked, lang: $('tgbLang').value };
   const tok = $('tgbToken').value.trim();
   if (tok) body.token = tok;
+  body.chat_id = $('tgbChat').value.trim();
+  const v = rtValue($('tgbRoute'));
+  body.route = v.route;
+  if (v.tunnel_id != null) body.tunnel_id = v.tunnel_id; else if (v.tunnel_port) body.tunnel_port = v.tunnel_port;
+  // nothing but the switch or the language changed: those need no license
+  if (!isProLicensed('telegram_bot')) { delete body.token; delete body.chat_id; delete body.route; delete body.tunnel_id; delete body.tunnel_port; }
+  $('tgbRoute').dataset.touched = '';
   try { tgbRender(await api('/api/telegram-bot', body)); $('tgbToken').value = ''; toastOk(tr('', 'Telegram bot saved')); }
   catch (e) { toastErr(tr('', 'Telegram bot'), e.message); }
 };
-$('tgbUseWd').onclick = async () => {
-  try { tgbRender(await api('/api/telegram-bot', { token: '' })); toastOk(tr('', 'The bot now uses the Watchdog tab\'s token')); }
-  catch (e) { toastErr(tr('', 'Telegram bot'), e.message); }
-};
+$('tgbRoute').addEventListener('change', () => {
+  const v = rtValue($('tgbRoute'));
+  $('tgbProbeRow').classList.toggle('hidden', v.route !== 'tunnel');
+  $('tgbProbeOut').textContent = '';
+  if (v.route === 'tunnel') $('tgbProbe').click();
+});
+$('tgbProbe').onclick = () => routeProbe(rtValue($('tgbRoute')), $('tgbProbeOut'), 'telegram');
 $('tgbTest').onclick = async () => {
   try { const r = await api('/api/telegram-bot', { action: 'test' }); tgbRender(r); toastOk(tr('', 'The bot answers') + (r.test_bot ? ': @' + r.test_bot : ''), tr('', 'Test messages sent') + ': ' + (r.test_sent || 0)); }
   catch (e) { toastErr(tr('', 'Telegram bot'), e.message); }
@@ -4985,11 +4999,13 @@ $('tgbPair').onclick = async () => {
   } catch (e) { toastErr(tr('', 'Telegram bot'), e.message); }
 };
 $('tgbUsers').onclick = async (ev) => {
-  const rm = ev.target.closest('[data-tgb-remove]'), ro = ev.target.closest('[data-tgb-role]');
+  const rm = ev.target.closest('[data-tgb-remove]'), ro = ev.target.closest('[data-tgb-role]'), mu = ev.target.closest('[data-tgb-mute]');
   try {
     if (rm) {
       if (!await entConfirm(tr('', 'Remove this Telegram account?'), tr('', 'It can no longer use the bot.'), tr('', 'Remove'))) return;
       tgbRender(await api('/api/telegram-bot', { action: 'remove-user', id: Number(rm.dataset.tgbRemove) }));
+    } else if (mu) {
+      tgbRender(await api('/api/telegram-bot', { action: mu.dataset.act, id: Number(mu.dataset.tgbMute) }));
     } else if (ro) {
       tgbRender(await api('/api/telegram-bot', { action: 'set-role', id: Number(ro.dataset.tgbRole), role: ro.dataset.role }));
     }
@@ -7189,16 +7205,16 @@ async function loadWatchdog() {
     // Telegram card
     if ($('wdBotToken')) $('wdBotToken').value = s.tg_bot_token_masked || '';
     if ($('wdChatId')) $('wdChatId').value = s.tg_chat_id || '';
-    rtRender($('wdRoutePick'), s.tunnels || [], { route: s.tg_route, tunnel_id: s.tg_tunnel_id, tunnel_port: s.tg_tunnel_port });
-    $('wdProbeRow').classList.toggle('hidden', rtValue($('wdRoutePick')).route !== 'tunnel');
-    if (s.tg_route === 'tunnel') {
-      const t = (s.tunnels || []).find(x => x.id === s.tg_tunnel_id);
-      $('wdTgRouteBadge').textContent = tr('', 'Tunnel') + (t ? ' · ' + t.name : '');
-      $('wdTgRouteBadge').className = 'badge info';
-    } else {
-      $('wdTgRouteBadge').textContent = tr('', 'Direct');
-      $('wdTgRouteBadge').className = 'badge';
-    }
+    $('wdTgForm').classList.toggle('hidden', !NV);
+    $('wdTgOpen').classList.toggle('hidden', NV);
+    rtRender($('wdRoutePick'), s.tunnels || [], { route: s.tg_route, tunnel_id: s.tg_tunnel_id, tunnel_port: s.tg_tunnel_port }, true);
+    $('wdProbeRow').classList.toggle('hidden', NV || rtValue($('wdRoutePick')).route !== 'tunnel');
+    const tgTun = s.tg_route === 'tunnel' && (s.tunnels || []).find(x => x.id === s.tg_tunnel_id);
+    $('wdTgRouteBadge').textContent = s.tg_route === 'tunnel' ? tr('', 'Tunnel') + (tgTun ? ' · ' + tgTun.name : '') : tr('', s.tg_route === 'direct' ? 'Direct' : 'Automatic');
+    $('wdTgRouteBadge').className = s.tg_route === 'tunnel' ? 'badge info' : 'badge';
+    $('wdTgSum').textContent = !s.tg_bot_token_masked ? tr('', 'No bot yet: set its token and pair your account in Settings.')
+      : s.tg_receivers ? docTpl('Alerts go to {0} chats through the bot {1}.', [s.tg_receivers, s.tg_bot_token_masked.split(':')[0]])
+      : tr('', 'Alerts go to no one yet: pair an account or set an alert chat.');
 
     // Tunnel Auto-Restart Scheduler card
     const rBadge = $('wdRestartBadge');
@@ -7320,6 +7336,7 @@ $('wdToggleBtn').onclick = async () => {
   }
 };
 
+$('wdTgOpen').onclick = () => { goTab('settings'); const c = $('tgbCard'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
 $('wdShowTokenBtn').onclick = () => {
   const inp = $('wdBotToken');
   inp.type = inp.type === 'password' ? 'text' : 'password';
@@ -7364,10 +7381,10 @@ $('wdTestTgBtn').onclick = async () => {
   const btn = $('wdTestTgBtn');
   btn.disabled = true;
   btn.textContent = 'Testing…';
-  // the test uses the saved settings: save what the card shows first, or a
+  // a node's card: the test uses the saved settings, so save what it shows first, or a
   // route or port chosen but not saved yet would be ignored
-  if (!await wdSaveTelegram()) { btn.disabled = false; btn.textContent = 'Test Alert'; return; }
-  $('wdTgMsg').textContent = 'Sending test alert ' + (rtValue($('wdRoutePick')).route === 'tunnel' ? 'through the tunnel' : 'directly') + '…';
+  if (NV && !await wdSaveTelegram()) { btn.disabled = false; btn.textContent = 'Test Alert'; return; }
+  $('wdTgMsg').textContent = tr('', 'Sending a test alert…');
   try {
     const res = await api('/api/watchdog', { action: 'test' });
     toastOk('Telegram test OK', res.detail);
@@ -11415,15 +11432,17 @@ async function clRulesShow() {
 // panel sends the call out from that tunnel's foreign server.
 const RT_STATE = { healthy: ['ok', 'Healthy'], degraded: ['warn', 'Degraded'], down: ['err', 'Down'] };
 
-// rtRender draws the choices into box. cfg is the saved route
+// rtRender draws the choices into box; auto adds Automatic (Telegram: direct,
+// then this server's tunnels). cfg is the saved route
 // ({route, tunnel_id, tunnel_port}); a choice the user made but has not saved
 // is kept when the card is redrawn.
-function rtRender(box, tunnels, cfg) {
+function rtRender(box, tunnels, cfg, auto) {
   const name = box.id;
-  let sel = 'direct';
-  if (cfg.route === 'tunnel') sel = cfg.tunnel_id != null ? 't:' + cfg.tunnel_id : (cfg.tunnel_port ? 'p:' + cfg.tunnel_port : 'direct');
+  let sel = auto && cfg.route !== 'direct' ? 'auto' : 'direct';
+  if (cfg.route === 'tunnel') sel = cfg.tunnel_id != null ? 't:' + cfg.tunnel_id : (cfg.tunnel_port ? 'p:' + cfg.tunnel_port : sel);
   if (box.dataset.touched === '1') { const cur = box.querySelector('input:checked'); if (cur) sel = cur.value; }
-  const rows = [{ v: 'direct', name: tr('', 'Direct'), sub: tr('', 'Straight out from this server'), state: '' }];
+  const rows = auto ? [{ v: 'auto', name: tr('', 'Automatic'), sub: tr('', 'Directly, and through a tunnel when Telegram is blocked here'), state: '' }] : [];
+  rows.push({ v: 'direct', name: tr('', auto ? 'Direct only' : 'Direct'), sub: tr('', 'Straight out from this server'), state: '' });
   tunnels.forEach(t => rows.push({ v: 't:' + t.id, name: t.name, sub: t.remote || '', state: t.state }));
   if (cfg.route === 'tunnel' && cfg.tunnel_id == null && cfg.tunnel_port) rows.push({ v: 'p:' + cfg.tunnel_port, name: tr('', 'Port') + ' ' + cfg.tunnel_port, sub: tr('', 'A SOCKS5 port saved by an older version'), state: '' });
   if (sel.startsWith('t:') && !tunnels.some(t => 't:' + t.id === sel)) rows.push({ v: sel, name: tr('', 'Tunnel') + ' ' + sel.slice(2), sub: tr('', 'No longer on this server'), state: 'down' });
@@ -11436,14 +11455,14 @@ function rtRender(box, tunnels, cfg) {
   box.querySelectorAll('input').forEach(i => i.addEventListener('change', () => { box.dataset.touched = '1'; }));
 }
 
-// rtValue is what the picker shows now: {route:'direct'} or
+// rtValue is what the picker shows now: {route:'direct'}, {route:'auto'} or
 // {route:'tunnel', tunnel_id} (or {route:'tunnel', tunnel_port} for a saved old port).
 function rtValue(box) {
   const c = box.querySelector('input:checked');
   const v = c ? c.value : 'direct';
   if (v.startsWith('t:')) return { route: 'tunnel', tunnel_id: Number(v.slice(2)) };
   if (v.startsWith('p:')) return { route: 'tunnel', tunnel_port: Number(v.slice(2)) };
-  return { route: 'direct' };
+  return { route: v };
 }
 
 // routeProbe makes a real connection to Telegram or Cloudflare out of the chosen
@@ -14506,7 +14525,7 @@ function openNodeHere(id, tab, act) { _nodeViewTab = tab || ''; _nodeViewDo = ac
     // what this page cannot do for a node: the central's login, access,
     // HTTPS, 2FA, terminal and node list, and this browser's own settings
     ['nodesNav', 'termNav', 'logoutBtn', 'logoutBtnM', 'langToggleBtn', 'langToggleBtnM', 'themeBtn', 'themeBtnM',
-      'metricsCard', 'accessCard', 'idleCard', 'twofaCard', 'appearanceCard', 'nodePick'].forEach(id => { const el = $(id); if (el) el.classList.add('nv-off'); });
+      'metricsCard', 'accessCard', 'idleCard', 'twofaCard', 'appearanceCard', 'nodePick', 'tgbCard'].forEach(id => { const el = $(id); if (el) el.classList.add('nv-off'); });
     ['curPass', 'termFlagDot', 'tlsDot'].forEach(id => { const el = $(id); const c = el && el.closest('.tunnel-card'); if (c) c.classList.add('nv-off'); });
     const note = $('settingsNodeNote');
     if (note) note.hidden = false;
