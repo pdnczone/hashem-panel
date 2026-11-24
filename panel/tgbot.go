@@ -2,9 +2,10 @@ package main
 
 // Telegram bot (Hashem Pro): the panel from a Telegram chat.
 //
-// The bot long-polls Telegram's Bot API (getUpdates) from this server, over
-// the watchdog's Telegram route (a tunnel's SOCKS5 proxy when one is set,
-// then direct), so it also works where api.telegram.org is blocked.
+// The bot long-polls Telegram's Bot API (getUpdates) from this server,
+// directly or through one of its tunnels (tgroute.go), so it also works where
+// api.telegram.org is blocked. It is the panel's only bot: the watchdog's and
+// every other alert go out through it.
 //
 // Who may use it: only Telegram accounts paired from the panel (Settings →
 // Telegram bot → Pair: a one-time code the account sends as /start <code>),
@@ -73,6 +74,7 @@ type tgBotUser struct {
 	Name  string `json:"name"`
 	Role  string `json:"role"` // "admin" | "viewer"
 	Added int64  `json:"added"`
+	Mute  bool   `json:"mute,omitempty"` // no alerts to this account
 }
 
 func (u *tgBotUser) admin() bool { return u != nil && u.Role == "admin" }
@@ -87,10 +89,12 @@ type tgNotify struct {
 
 type tgBotConfig struct {
 	Enabled bool        `json:"enabled"`
-	Token   string      `json:"token,omitempty"` // "" = the watchdog's bot token
+	Token   string      `json:"token,omitempty"` // an older version's: it moves to watchdog.json (tgMigrateOneBot)
 	Lang    string      `json:"lang"`            // "fa" | "en"
 	Users   []tgBotUser `json:"users"`
 	Notify  *tgNotify   `json:"notify,omitempty"`
+	// OldToken: the second bot's token of an older version, kept but unused.
+	OldToken string `json:"old_token,omitempty"`
 }
 
 func tgBotPath() string { return filepath.Join(configDir, "telegram_bot.json") }
@@ -136,14 +140,6 @@ func updateTGBotConfig(f func(c *tgBotConfig) error) (tgBotConfig, error) {
 		return c, err
 	}
 	return c, saveTGBotConfigLocked(c)
-}
-
-// tgBotToken is the token the bot polls with.
-func tgBotToken(c tgBotConfig) string {
-	if t := strings.TrimSpace(c.Token); t != "" {
-		return t
-	}
-	return strings.TrimSpace(loadWatchdogConfig().TGBotToken)
 }
 
 func (c tgBotConfig) user(id int64) *tgBotUser {
@@ -388,65 +384,6 @@ func (e *tgAPIError) Error() string {
 	return fmt.Sprintf("telegram said: %s (HTTP %d)", e.Desc, e.Code)
 }
 
-// tgBotClients: the watchdog's Telegram route first, then direct (tests
-// replace it).
-var tgBotClients = func(timeout time.Duration) []*http.Client {
-	var out []*http.Client
-	wd := loadWatchdogConfig()
-	if wd.TGRoute == "tunnel" && (wd.TGTunnelID != nil || wd.TGTunnelPort > 0) {
-		if port, err := routePort(wd.TGTunnelID, wd.TGTunnelPort); err == nil {
-			out = append(out, tunnelProxyClient(port, timeout))
-		}
-	}
-	return append(out, &http.Client{Timeout: timeout})
-}
-
-// tgDo sends one Bot API request (body is JSON, or a multipart form when
-// ctype is given) and decodes its result into out.
-func tgDo(token, method string, body []byte, ctype string, timeout time.Duration, out any) error {
-	if ctype == "" {
-		ctype = "application/json"
-	}
-	api := tgAPIBase + "/bot" + token + "/" + method
-	var last error
-	for _, c := range tgBotClients(timeout) {
-		req, err := http.NewRequest(http.MethodPost, api, bytes.NewReader(body))
-		if err != nil {
-			return redactErr(err, token)
-		}
-		req.Header.Set("Content-Type", ctype)
-		resp, err := c.Do(req)
-		if err != nil {
-			last = redactErr(err, token)
-			continue // the next route
-		}
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-		resp.Body.Close()
-		var r struct {
-			OK          bool            `json:"ok"`
-			Result      json.RawMessage `json:"result"`
-			Description string          `json:"description"`
-			Parameters  struct {
-				RetryAfter int `json:"retry_after"`
-			} `json:"parameters"`
-		}
-		if json.Unmarshal(data, &r) != nil {
-			return fmt.Errorf("telegram returned HTTP %d", resp.StatusCode)
-		}
-		if !r.OK {
-			return &tgAPIError{Code: resp.StatusCode, Desc: redactText(r.Description, token), RetryAfter: r.Parameters.RetryAfter}
-		}
-		if out != nil {
-			return json.Unmarshal(r.Result, out)
-		}
-		return nil
-	}
-	if last == nil {
-		last = errors.New("no route to Telegram")
-	}
-	return last
-}
-
 func tgCall(token, method string, params map[string]any, out any) error {
 	body, err := json.Marshal(params)
 	if err != nil {
@@ -586,7 +523,7 @@ func startTelegramBot() {
 // the next.
 func tgBotTick(backoff *time.Duration) time.Duration {
 	c := loadTGBotConfig()
-	tok := tgBotToken(c)
+	tok := tgToken(loadWatchdogConfig())
 	switch {
 	case !c.Enabled:
 		tgSetState("off", "")
@@ -597,7 +534,7 @@ func tgBotTick(backoff *time.Duration) time.Duration {
 		tgForget()
 		return 30 * time.Second
 	case tok == "":
-		tgSetState("error", "no bot token: set one here or in the Watchdog tab")
+		tgSetState("error", "no bot token: set one in Settings → Telegram bot")
 		tgForget()
 		return 30 * time.Second
 	}
@@ -958,10 +895,13 @@ func tgBotView() map[string]any {
 	users := append([]tgBotUser(nil), c.Users...)
 	sort.Slice(users, func(i, j int) bool { return users[i].Added < users[j].Added })
 	wd := loadWatchdogConfig()
+	tok := tgToken(wd)
+	via, viaName := tgVia()
 	return map[string]any{
 		"enabled": c.Enabled, "lang": c.Lang, "licensed": hasPro(proTelegramBot),
-		"own_token": c.Token != "", "token_masked": maskBotToken(tgBotToken(c)),
-		"watchdog_token": wd.TGBotToken != "", "route": wd.TGRoute,
+		"token_set": tok != "", "token_masked": maskBotToken(tok),
+		"chat_id": wd.TGChatID, "route": wd.TGRoute, "tunnel_id": wd.TGTunnelID, "tunnel_port": wd.TGTunnelPort, "tunnels": tunnelChoices(),
+		"via": via, "via_name": viaName, "alerts_to": len(tgReceivers(wd)),
 		"state": state, "error": lastErr, "username": username, "users": users,
 	}
 }
@@ -978,6 +918,11 @@ func handleTGBotPost(w http.ResponseWriter, r *http.Request) {
 		Lang    string  `json:"lang"`
 		Role    string  `json:"role"`
 		ID      int64   `json:"id"`
+		// the one bot's other settings (watchdog.json)
+		ChatID     *string `json:"chat_id"`
+		Route      string  `json:"route"`
+		TunnelID   *int    `json:"tunnel_id"`
+		TunnelPort int     `json:"tunnel_port"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&body); err != nil {
 		writeAPIError(w, r, "E-TG-04", "invalid json")
@@ -988,19 +933,44 @@ func handleTGBotPost(w http.ResponseWriter, r *http.Request) {
 		if body.Enabled != nil && *body.Enabled && proRequired(w, r, proTelegramBot, "The Telegram bot") {
 			return
 		}
-		if body.Token != nil {
-			t := strings.TrimSpace(*body.Token)
-			if t != "" && !tgTokenShape(t) {
-				writeAPIError(w, r, "E-TG-04", "this is not a bot token (it looks like 123456:ABC-...)")
+		transport := body.Token != nil || body.ChatID != nil || body.Route != "" || body.TunnelID != nil || body.TunnelPort > 0
+		if transport {
+			if proRequired(w, r, proTelegramBot, "The Telegram bot") {
 				return
 			}
+			wd := loadWatchdogConfig()
+			if body.Token != nil && !strings.Contains(*body.Token, "...") { // the masked one came back: unchanged
+				t := strings.TrimSpace(*body.Token)
+				if t != "" && !tgTokenShape(t) {
+					writeAPIError(w, r, "E-TG-04", "this is not a bot token (it looks like 123456:ABC-...)")
+					return
+				}
+				wd.TGBotToken = t
+			}
+			if body.ChatID != nil {
+				id := strings.TrimSpace(*body.ChatID)
+				if id != "" && !tgChatRe.MatchString(id) {
+					writeAPIError(w, r, "E-TG-04", "the alert chat is a chat ID (123456789, -100123456789) or @channel")
+					return
+				}
+				wd.TGChatID = id
+			}
+			if err := tgSetRoute(&wd, body.Route, body.TunnelID, body.TunnelPort); err != nil {
+				writeAPIError(w, r, "E-TG-04", err.Error())
+				return
+			}
+			if err := saveWatchdogConfig(wd); err != nil {
+				writeAPIError(w, r, "E-TG-04", err.Error())
+				return
+			}
+			tgGoodReset()
 		}
 		_, err := updateTGBotConfig(func(c *tgBotConfig) error {
 			if body.Enabled != nil {
 				c.Enabled = *body.Enabled
 			}
 			if body.Token != nil {
-				c.Token = strings.TrimSpace(*body.Token)
+				c.Token = "" // the one token is in watchdog.json
 			}
 			if body.Lang == "en" || body.Lang == "fa" {
 				c.Lang = body.Lang
@@ -1029,7 +999,7 @@ func handleTGBotPost(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, v)
 		return
-	case "remove-user", "set-role":
+	case "remove-user", "set-role", "mute", "unmute":
 		_, err := updateTGBotConfig(func(c *tgBotConfig) error {
 			for i := range c.Users {
 				if c.Users[i].ID != body.ID {
@@ -1037,6 +1007,8 @@ func handleTGBotPost(w http.ResponseWriter, r *http.Request) {
 				}
 				if body.Action == "remove-user" {
 					c.Users = append(c.Users[:i], c.Users[i+1:]...)
+				} else if body.Action == "mute" || body.Action == "unmute" {
+					c.Users[i].Mute = body.Action == "mute"
 				} else if body.Role == "admin" || body.Role == "viewer" {
 					c.Users[i].Role = body.Role
 				}
@@ -1062,9 +1034,9 @@ func handleTGBotPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c := loadTGBotConfig()
-		tok := tgBotToken(c)
+		tok := tgToken(loadWatchdogConfig())
 		if tok == "" {
-			writeAPIError(w, r, "E-TG-01", "no bot token: set one here or in the Watchdog tab")
+			writeAPIError(w, r, "E-TG-01", "no bot token: paste it above and save")
 			return
 		}
 		var me tgUser
@@ -1072,10 +1044,11 @@ func handleTGBotPost(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, r, "E-TG-01", err.Error())
 			return
 		}
-		sent := 0
-		for _, u := range c.Users {
-			if err := tgCall(tok, "sendMessage", map[string]any{"chat_id": u.ID, "text": tgT(c, "✅ پیام آزمایشی از پنل هاشم", "✅ Test message from the Hashem panel")}, nil); err == nil {
-				sent++
+		sent, err := 0, error(nil)
+		if wd := loadWatchdogConfig(); len(tgReceivers(wd)) > 0 {
+			if sent, err = sendTelegramCount(wd, tgT(c, "✅ پیام آزمایشی از پنل هاشم", "✅ Test message from the Hashem panel")); err != nil {
+				writeAPIError(w, r, "E-TG-02", err.Error())
+				return
 			}
 		}
 		v := tgBotView()

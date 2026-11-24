@@ -811,8 +811,8 @@ func apNotifyReal(e apEvent) {
 			}
 		}
 	}
-	if wd := loadWatchdogConfig(); wd.TGBotToken != "" && wd.TGChatID != "" {
-		if err := sendTelegram(wd, text); err != nil {
+	if tgAlertReady() {
+		if err := sendTelegram(loadWatchdogConfig(), text); err != nil {
 			recordError("E-WD-01", "autopilot", "telegram failed: "+err.Error())
 		}
 	}
@@ -925,10 +925,9 @@ func autopilotView() map[string]any {
 			all = append(all, e+":"+tr)
 		}
 	}
-	wd := loadWatchdogConfig()
 	return map[string]any{
 		"config": cfg, "licensed": hasPro(proAutopilot), "iran": iran, "tunnels": tunnels, "events": events,
-		"carriers": all, "notify_ready": loadAlertConfig().WebhookURL != "" || (wd.TGBotToken != "" && wd.TGChatID != ""),
+		"carriers": all, "notify_ready": loadAlertConfig().WebhookURL != "" || tgAlertReady(),
 		"path_test_licensed": hasPro(proPathTest),
 		"switched_day":       switched, "failed_day": failedRuns,
 	}

@@ -125,9 +125,10 @@ func newTGHarness(t *testing.T, licensed bool) *tgFake {
 	restore := withTempConfigDir(t)
 	f := &tgFake{}
 	srv := httptest.NewServer(http.HandlerFunc(f.handler))
-	oBase, oClients, oAsync, oMux, oBP := tgAPIBase, tgBotClients, tgAsync, nodeRelayMux, cfg.BasePath
+	oBase, oRoutes, oAsync, oMux, oBP := tgAPIBase, tgRoutes, tgAsync, nodeRelayMux, cfg.BasePath
 	tgAPIBase = srv.URL
-	tgBotClients = func(timeout time.Duration) []*http.Client { return []*http.Client{{Timeout: 5 * time.Second}} }
+	tgRoutes = func(watchdogConfig) []tgRoute { return []tgRoute{tgDirectRoute()} }
+	tgGoodReset()
 	tgAsync = func(fn func()) { fn() }
 	cfg.BasePath = "x"
 	m := http.NewServeMux()
@@ -164,7 +165,7 @@ func newTGHarness(t *testing.T, licensed bool) *tgFake {
 	tgBot.Unlock()
 	t.Cleanup(func() {
 		srv.Close()
-		tgAPIBase, tgBotClients, tgAsync, nodeRelayMux, cfg.BasePath = oBase, oClients, oAsync, oMux, oBP
+		tgAPIBase, tgRoutes, tgAsync, nodeRelayMux, cfg.BasePath = oBase, oRoutes, oAsync, oMux, oBP
 		tgForget()
 		snapPtr.Store(oSnap)
 		restore()

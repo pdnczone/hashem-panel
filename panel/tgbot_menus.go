@@ -419,7 +419,7 @@ type tgWDView struct {
 	CheckResult    string       `json:"check_result"`
 	LastCheck      string       `json:"last_check"`
 	AutoRestart    bool         `json:"auto_restart"`
-	TGChatID       string       `json:"tg_chat_id"`
+	TGReady        bool         `json:"tg_ready"`
 	WatchedByPanel bool         `json:"watched_by_panel"`
 	Links          []wdLink     `json:"links"`
 	Backups        []backupItem `json:"backups"`
@@ -471,8 +471,8 @@ func tgWatchdog(c tgBotConfig, usr *tgBotUser, arg string) tgScreen {
 		b.WriteString(note + "\n\n")
 	}
 	fmt.Fprintf(&b, tgT(c, "🐶 نگهبان: %s · ری‌استارت خودکار: %s\n", "🐶 Watchdog: %s · auto-restart: %s\n"), onoff(v.Enabled), onoff(v.AutoRestart))
-	if v.TGChatID == "" {
-		b.WriteString(tgT(c, "⚠️ چت هشدار تلگرام تنظیم نشده (تب نگهبان پنل).\n", "⚠️ No Telegram alert chat is set (the panel's Watchdog tab).\n"))
+	if !v.TGReady {
+		b.WriteString(tgT(c, "⚠️ هشدارها به کسی فرستاده نمی‌شوند: همه بی‌صدا شده‌اند (منوی هشدارها).\n", "⚠️ The alerts go to no one: every account muted them (the Alerts menu).\n"))
 	}
 	if v.CheckResult != "" {
 		fmt.Fprintf(&b, tgT(c, "آخرین بررسی: %s %s\n", "Last check: %s %s\n"), v.LastCheck, tgCut(v.CheckResult, 300))
@@ -659,6 +659,20 @@ func tgAlerts(c tgBotConfig, usr *tgBotUser, arg string) tgScreen {
 		}
 	}
 	switch arg {
+	case "mute", "unmute": // only this account's own alerts, so a viewer may too
+		nc, err := updateTGBotConfig(func(c *tgBotConfig) error {
+			for i := range c.Users {
+				if c.Users[i].ID == usr.ID {
+					c.Users[i].Mute = arg == "mute"
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			note = "❌ " + err.Error() + "\n\n"
+		} else if u := nc.user(usr.ID); u != nil {
+			usr = u
+		}
 	case "on", "off":
 		set(map[string]any{"enabled": arg == "on"})
 	case "tg1", "tg0":
@@ -672,11 +686,10 @@ func tgAlerts(c tgBotConfig, usr *tgBotUser, arg string) tgScreen {
 		}
 	}
 	var v struct {
-		Enabled    bool   `json:"enabled"`
-		Telegram   bool   `json:"telegram"`
-		Degraded   bool   `json:"notify_degraded"`
-		Webhook    string `json:"webhook_url"`
-		Configured bool   `json:"telegram_configured"`
+		Enabled  bool   `json:"enabled"`
+		Telegram bool   `json:"telegram"`
+		Degraded bool   `json:"notify_degraded"`
+		Webhook  string `json:"webhook_url"`
 	}
 	if err := tgAPIJSON(usr, http.MethodGet, "/api/alerts", nil, &v); err != nil {
 		return tgErrScreen(c, "m", err)
@@ -689,10 +702,15 @@ func tgAlerts(c tgBotConfig, usr *tgBotUser, arg string) tgScreen {
 	}
 	text := note + fmt.Sprintf(tgT(c, "🔔 هشدارها %s\nتلگرام %s · وضعیت ضعیف هم %s\nوب‌هوک: %s", "🔔 Alerts %s\nTelegram %s · also degraded %s\nWebhook: %s"),
 		yes(v.Enabled), yes(v.Telegram), yes(v.Degraded), map[bool]string{true: v.Webhook, false: "—"}[v.Webhook != ""])
-	if !v.Configured {
-		text += tgT(c, "\n⚠️ برای هشدار تلگرام، چت آن را در تب نگهبان پنل بگذارید.", "\n⚠️ For Telegram alerts set their chat in the panel's Watchdog tab.")
-	}
+	text += tgT(c, "\nهشدارهای نگهبان، Autopilot و پنل برای این حساب: ", "\nThe watchdog's, Autopilot's and the panel's alerts to this account: ")
 	keys := [][]tgBtn{}
+	if usr.Mute {
+		text += "🔕"
+		keys = append(keys, []tgBtn{{Text: tgT(c, "🔔 برای من بفرست", "🔔 Send them to me"), Data: "al:unmute"}})
+	} else {
+		text += "🔔"
+		keys = append(keys, []tgBtn{{Text: tgT(c, "🔕 برای من نفرست", "🔕 Do not send them to me"), Data: "al:mute"}})
+	}
 	if usr.admin() {
 		flip := func(on bool, label, data1, data0 string) tgBtn {
 			if on {
@@ -1328,7 +1346,7 @@ func tgHelp(c tgBotConfig) tgScreen {
 
 نکته‌ها:
 • هر سرور یک ربات (توکن) جدا لازم دارد.
-• اگر تلگرام روی سرور بسته باشد، ربات از مسیر تلگرام نگهبان (تونل) وصل می‌شود؛ اگر آن تونل هم قطع باشد، ربات تا برگشتنش جواب نمی‌دهد.
+• اگر تلگرام روی سرور بسته باشد، ربات خودش از تونل‌های همین سرور وصل می‌شود (مسیر «خودکار»)؛ اگر همه‌ی تونل‌ها قطع باشند، تا برگشتنشان جواب نمی‌دهد.
 • دکمه‌های تأیید ۲ دقیقه اعتبار دارند و یک بار مصرف‌اند.`, `❓ Hashem bot
 
 Use the buttons, or these commands:
@@ -1350,6 +1368,6 @@ What the bot cannot do:
 
 Notes:
 • Each server needs a bot (token) of its own.
-• If Telegram is blocked on the server the bot goes out over the watchdog's Telegram route (a tunnel); if that tunnel is down too, the bot is silent until it is back.
+• If Telegram is blocked on the server the bot goes out through this server's tunnels by itself (the Automatic route); if every tunnel is down, it is silent until one is back.
 • Confirm buttons last 2 minutes and work once.`), Keys: [][]tgBtn{tgBack(c, "m")}}
 }

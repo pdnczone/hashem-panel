@@ -22,7 +22,7 @@ import (
 type alertConfig struct {
 	Enabled      bool   `json:"enabled"`
 	WebhookURL   string `json:"webhook_url,omitempty"`
-	Telegram     bool   `json:"telegram"`              // reuse bot token/chat from watchdog.json
+	Telegram     bool   `json:"telegram"`              // also through the panel's Telegram bot (tgroute.go)
 	NotifyDegrad bool   `json:"notify_degraded"`       // also alert on healthy<->degraded
 	MinGapSec    int    `json:"min_gap_sec,omitempty"` // per-link minimum between alerts (default 120)
 }
@@ -180,50 +180,6 @@ func sendWebhook(raw string, e alertEvent) error {
 // tgAPIBase is Telegram's Bot API address; tests point it elsewhere.
 var tgAPIBase = "https://api.telegram.org"
 
-func sendTelegram(wd watchdogConfig, text string) error {
-	if wd.TGBotToken == "" || wd.TGChatID == "" {
-		return fmt.Errorf("telegram bot token/chat id not configured (Watchdog tab)")
-	}
-	client := alertClient
-	viaTunnel := wd.TGRoute == "tunnel" && (wd.TGTunnelID != nil || wd.TGTunnelPort > 0)
-	if viaTunnel {
-		port, err := routePort(wd.TGTunnelID, wd.TGTunnelPort)
-		if err != nil {
-			return fmt.Errorf("telegram tunnel route: %v", err)
-		}
-		if wd.TGTunnelID == nil { // an old manual port: say now if it is no SOCKS5 proxy
-			if err := tunnelProxyReady(port); err != nil {
-				return fmt.Errorf("telegram tunnel route: %v", err)
-			}
-		}
-		client = tunnelProxyClient(port, 20*time.Second)
-	}
-	api := tgAPIBase + "/bot" + wd.TGBotToken + "/sendMessage"
-	resp, err := client.PostForm(api, url.Values{"chat_id": {wd.TGChatID}, "text": {text}})
-	if err != nil {
-		if viaTunnel && wd.TGTunnelID != nil {
-			if why := routeWhy(wd.TGTunnelID); why != "" {
-				return fmt.Errorf("telegram tunnel route: %s", why)
-			}
-		}
-		return redactErr(err, wd.TGBotToken)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	if resp.StatusCode >= 300 {
-		// Telegram says what is wrong in the body ("Unauthorized" for a bad
-		// token, "chat not found" for a bad chat id): pass it on.
-		var r struct {
-			Description string `json:"description"`
-		}
-		if json.Unmarshal(body, &r) == nil && r.Description != "" {
-			return fmt.Errorf("telegram said: %s (HTTP %d)", redactText(r.Description, wd.TGBotToken), resp.StatusCode)
-		}
-		return fmt.Errorf("telegram returned HTTP %d", resp.StatusCode)
-	}
-	return nil
-}
-
 func redactText(s, secret string) string {
 	if secret == "" {
 		return s
@@ -304,11 +260,10 @@ func alertLinks(s *HubSnapshot, now time.Time, t *alertTracker) []linkSnap {
 
 func handleAlertsGet(w http.ResponseWriter, r *http.Request) {
 	c := loadAlertConfig()
-	wd := loadWatchdogConfig()
 	writeJSON(w, map[string]any{
 		"enabled": c.Enabled, "webhook_url": maskURL(c.WebhookURL), "telegram": c.Telegram,
 		"notify_degraded": c.NotifyDegrad, "min_gap_sec": c.MinGapSec,
-		"telegram_configured": wd.TGBotToken != "" && wd.TGChatID != "",
+		"telegram_configured": tgAlertReady(),
 	})
 }
 

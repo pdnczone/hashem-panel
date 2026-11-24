@@ -861,6 +861,7 @@ func main() {
 	// after the busy-port switch: the sold relays' plugin calls go to cfg.Port
 	go startCustomersLoop()
 	go startRouteBridges() // Telegram / Cloudflare routes that go out through a chosen tunnel
+	tgMigrateOneBot()      // tgroute.go: one bot for the menu and every alert
 	go startTelegramBot()  // tgbot.go: the panel from a Telegram chat (Pro)
 	srv := &http.Server{
 		Handler:           panelChain(mux),

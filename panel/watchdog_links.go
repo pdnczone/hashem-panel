@@ -325,27 +325,16 @@ func wdRestartUnits(name string, units []string) {
 	LogSecurityAudit("watchdog_restart", "watchdog", "127.0.0.1", name+": "+strings.Join(units, ", "))
 }
 
-// wdSendReal sends text to the watchdog's Telegram chat. When it goes through
-// a tunnel and that fails (the tunnel may be the one that is down), it is sent
-// directly instead.
+// wdSendReal sends text through the panel's Telegram bot (tgroute.go).
 func wdSendReal(text string) error {
-	c := loadWatchdogConfig()
-	if c.TGBotToken == "" || c.TGChatID == "" {
+	if !tgAlertReady() {
 		return nil // alerts are not set up: the restarts still run
 	}
 	host, _ := os.Hostname()
 	if host == "" {
 		host = "server"
 	}
-	text = "[Hashem " + host + "] " + text
-	err := sendTelegram(c, text)
-	if err != nil && c.TGRoute == "tunnel" {
-		direct := c
-		direct.TGRoute = "direct"
-		if derr := sendTelegram(direct, text); derr == nil {
-			return nil
-		}
-	}
+	err := sendTelegram(loadWatchdogConfig(), "[Hashem "+host+"] "+text)
 	if err != nil {
 		recordError("E-WD-02", "watchdog", "telegram failed: "+err.Error())
 	}
@@ -425,11 +414,10 @@ func watchdogPanelResult() (string, []wdLink, bool) {
 	return fmt.Sprintf("WATCHDOG status=up fails=0 detail=%d of %d tunnels up, each one watched by the panel", up, len(links)), links, true
 }
 
-// watchdogSendsTunnels: the panel's watchdog watches the tunnels and has a
-// Telegram chat, so alerts.go leaves tunnel events out of its Telegram copy.
+// watchdogSendsTunnels: the panel's watchdog watches the tunnels and has
+// someone to tell, so alerts.go leaves tunnel events out of its Telegram copy.
 func watchdogSendsTunnels() bool {
-	c := loadWatchdogConfig()
-	if c.TGBotToken == "" || c.TGChatID == "" {
+	if !tgAlertReady() {
 		return false
 	}
 	_, _, active := watchdogPanelResult()

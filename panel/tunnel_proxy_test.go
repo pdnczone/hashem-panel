@@ -112,6 +112,7 @@ func TestTelegramViaTunnel(t *testing.T) {
 	if path != "/bot123:secret/sendMessage" {
 		t.Fatalf("Telegram got %q", path)
 	}
+	tgBlocked(t)
 	wd.TGTunnelPort = serveOnce(t, func(c net.Conn) { _, _ = io.Copy(io.Discard, c) })
 	err := sendTelegram(wd, "hello")
 	if err == nil || !strings.Contains(err.Error(), "not a SOCKS5 proxy") || strings.Contains(err.Error(), "secret") {

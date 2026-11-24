@@ -30,6 +30,7 @@ type watchdogConfig struct {
 	TGRoute           string `json:"tg_route"`
 	TGTunnelPort      int    `json:"tg_tunnel_port"` // the local SOCKS5 port (hashem.sh reads it); the panel sets it for a chosen tunnel
 	TGTunnelID        *int   `json:"tg_tunnel_id,omitempty"`
+	TGOneBot          bool   `json:"tg_one_bot,omitempty"` // tgMigrateOneBot has run
 	BackupEveryHours  int    `json:"backup_every_hours"`
 	BackupDailyAt     string `json:"backup_daily_at"`
 	LastCheck         string `json:"last_check"`
@@ -60,6 +61,8 @@ type watchdogStatusResponse struct {
 	NextRestartHuman  string         `json:"next_restart_human"`
 	TGBotTokenMasked  string         `json:"tg_bot_token_masked"`
 	TGChatID          string         `json:"tg_chat_id"`
+	TGReady           bool           `json:"tg_ready"`     // alerts have a bot and someone to go to
+	TGReceivers       int            `json:"tg_receivers"` // how many chats get them
 	TGRoute           string         `json:"tg_route"`
 	TGTunnelPort      int            `json:"tg_tunnel_port"`
 	TGTunnelID        *int           `json:"tg_tunnel_id"`
@@ -100,7 +103,7 @@ func loadWatchdogConfig() watchdogConfig {
 		Enabled:       false,
 		IntervalSec:   60,
 		FailThreshold: 2,
-		TGRoute:       "direct",
+		TGRoute:       "auto",
 	}
 	data, err := os.ReadFile(watchdogConfigPath())
 	if err != nil {
@@ -117,12 +120,13 @@ func loadWatchdogConfig() watchdogConfig {
 		c.FailThreshold = 2
 	}
 	if c.TGRoute == "" {
-		c.TGRoute = "direct"
+		c.TGRoute = "auto"
 	}
 	return c
 }
 
 func saveWatchdogConfig(c watchdogConfig) error {
+	c.TGOneBot = true
 	_ = os.MkdirAll(configDir, 0700)
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
@@ -319,8 +323,10 @@ func handleWatchdogGet(w http.ResponseWriter, r *http.Request) {
 		LastRestart:       c.LastRestart,
 		LastRestartDate:   c.LastRestartDate,
 		NextRestartHuman:  formatRestartSchedule(c),
-		TGBotTokenMasked:  maskBotToken(c.TGBotToken),
+		TGBotTokenMasked:  maskBotToken(tgToken(c)),
 		TGChatID:          c.TGChatID,
+		TGReady:           tgAlertReady(),
+		TGReceivers:       len(tgReceivers(c)),
 		TGRoute:           c.TGRoute,
 		TGTunnelPort:      c.TGTunnelPort,
 		TGTunnelID:        c.TGTunnelID,
@@ -423,18 +429,20 @@ func handleWatchdogPost(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		out, err := runWatchdogCmd("watchdog", "test")
+		n, err := sendTelegramCount(loadWatchdogConfig(), "✅ Hashem watchdog test OK")
 		if err != nil {
-			// "Telegram said: ..." means it was reached and refused (a bad token or
-			// chat id); only a send that never got there on the tunnel route is a
-			// route problem. The generic "check ... route" line must not count.
+			// Telegram's own answer (a bad token or chat) is not a route problem
 			code := "E-WD-02"
-			if !strings.Contains(out, "Telegram said:") && loadWatchdogConfig().TGRoute == "tunnel" {
+			if strings.Contains(err.Error(), "telegram tunnel route") {
 				code = "E-WD-05"
 			}
-			recordError(code, "watchdog", "Telegram test failed: "+out)
-			writeAPIError(w, r, code, out)
+			recordError(code, "watchdog", "Telegram test failed: "+err.Error())
+			writeAPIError(w, r, code, err.Error())
 			return
+		}
+		out := fmt.Sprintf("Telegram test message sent to %d chat(s)", n)
+		if key, name := tgVia(); key != "" && key != "direct" {
+			out += " through " + name
 		}
 		recordError("E-WD-00", "watchdog", "Telegram test message sent successfully")
 		writeJSON(w, map[string]string{"status": "ok", "detail": out})
@@ -479,27 +487,15 @@ func handleWatchdogPost(w http.ResponseWriter, r *http.Request) {
 		if id := strings.TrimSpace(body.ChatID); id != "" {
 			c.TGChatID = id
 		}
-		if body.Route == "direct" || body.Route == "tunnel" {
-			c.TGRoute = body.Route
-		}
-		if body.TunnelID != nil {
-			port, err := bridgeEnsure(*body.TunnelID)
-			if err != nil {
-				writeAPIError(w, r, "E-WD-05", err.Error())
-				return
-			}
-			c.TGTunnelID, c.TGTunnelPort = body.TunnelID, port
-		} else if body.TunnelPort > 0 && body.TunnelPort <= 65535 {
-			c.TGTunnelID, c.TGTunnelPort = nil, body.TunnelPort // an old manual port
-		}
-		if c.TGRoute == "tunnel" && c.TGTunnelID == nil && c.TGTunnelPort == 0 {
-			writeAPIError(w, r, "E-WD-01", "choose a tunnel, or choose Direct")
+		if err := tgSetRoute(&c, body.Route, body.TunnelID, body.TunnelPort); err != nil {
+			writeAPIError(w, r, "E-WD-01", err.Error())
 			return
 		}
 		if err := saveWatchdogConfig(c); err != nil {
 			writeAPIError(w, r, "E-WD-01", "failed to save config: "+err.Error())
 			return
 		}
+		tgGoodReset()
 		recordError("E-WD-00", "watchdog", "Telegram settings updated")
 		writeJSON(w, map[string]string{"status": "ok", "detail": "Telegram settings saved"})
 

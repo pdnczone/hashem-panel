@@ -242,6 +242,7 @@ func TestTelegramViaTunnelNamesTheReason(t *testing.T) {
 	old := tgAPIBase
 	tgAPIBase = "http://api.telegram.org:443"
 	defer func() { tgAPIBase = old }()
+	tgBlocked(t)
 	wd := watchdogConfig{TGBotToken: "123:secret", TGChatID: "42", TGRoute: "tunnel", TGTunnelID: &id}
 	err := sendTelegram(wd, "hello")
 	if err == nil || !strings.Contains(err.Error(), "cannot reach the foreign panel") || strings.Contains(err.Error(), "secret") {
