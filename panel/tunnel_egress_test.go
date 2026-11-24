@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -32,8 +33,25 @@ func egressLab(t *testing.T) (id int, seen *[]string) {
 
 	mux := http.NewServeMux()
 	mountPeerRoutes(mux, "/base")
-	foreign := httptest.NewServer(panelChain(mux))
-	t.Cleanup(foreign.Close)
+	// A relayed connection is hijacked, so Close does not wait for its handler,
+	// and the next test must not change cfg while one still reads it.
+	var relays sync.WaitGroup
+	chain := panelChain(mux)
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		relays.Add(1)
+		defer relays.Done()
+		chain.ServeHTTP(w, r)
+	}))
+	t.Cleanup(func() {
+		done := make(chan struct{})
+		go func() { relays.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("a relay is still open")
+		}
+		foreign.Close()
+	})
 	updateTunnelLink(2, func(l *tunnelLink) { l.LastURL = foreign.URL })
 
 	oAllow, oDial, oTun := egressAllow, egressDialTarget, egressTunnelFor
