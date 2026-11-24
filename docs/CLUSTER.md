@@ -207,7 +207,7 @@ hashem leave-hub --id 2     # stop serving one
 
 How it works: Mashhad asks Tehran for its tunnels over the signed hub channel (addresses, ports and engine, no token), makes each tunnel like Setup does, then sends the bundle to Tehran, which hands it to the foreign server over their Peer Link (`/api/peer/join-hub`, accepted only with that tunnel's secret) so that it runs `join-hub`. The bundle holds the tunnel's token, so it is sealed with the cluster secret (AES-GCM) on the hub channel, which is plain HTTP. Tehran only passes on a bundle that names the hub that asked, uses the engine of its own tunnel to that server and forwards exactly the ports of that tunnel: a linked hub cannot use this to publish other ports of the foreign server. A foreign server that already serves a hub at the new hub's address from an earlier join is reported as failed (remove the old join with `hashem leave-hub` first).
 
-The manual way above and this one end the same: the foreign server runs a second client (`frpc-h2` or `backhaul-client-h2`) with its own GRE interface `gre-h2`. If the bundle's GRE addresses are already used on this server, it dials the hub's public IP instead. Options:
+The manual way above and this one end the same: the foreign server runs a second client (`frpc-h2` or `backhaul-client-h2`) with its own GRE interface `gre-h2`. If the bundle's GRE addresses are already used on this server (the whole /30 counts), it dials the hub's public IP instead; a suggested pair is free on the Iran server and on its linked hubs. Options:
 
 - `--dial auto|gre|public` chooses how it dials the hub.
 - `--relay-ip` sets the local service address, 127.0.0.1 by default.
@@ -239,13 +239,18 @@ Users connect to `vpn.example.com` instead of an IP. The domain always holds the
 2. On **one** hub (the one you want in charge, say Iran 1) open **Cluster → DNS Failover**. The card draws it: users, then your domain, then every Iran hub, each with its state and share of users.
 3. Write **Your domain** (`vpn.example.com`) and paste the **Cloudflare key** (*How do I get the key?* under the field: Cloudflare → My Profile → API Tokens → Create Token → template *Edit zone DNS* → your domain's zone). Press **Turn on for all N servers**. The key is checked first (the answer stays under the button: the zone it found, where the name points now); only then is it turned on.
 4. That hub now **controls** the domain: it sends the domain, the key, the TTL and every hub's share to all linked hubs (sealed with the cluster secret, over the signed hub channel), and they **follow** it. A hub linked later, or one that was down, gets the settings as soon as it answers. On a following hub the card is read-only and says which hub controls it; **Control from this server** moves the control there (the others, the old controller included, follow the new one).
-5. While the controller answers, it writes the record: A records for every hub that works, so users are shared between all of them. When it stops answering for 30 s, the following hub with the lowest id writes in its place, with the same shares. A hub that stops working is taken out of the domain within about 30 s and put back when it works again; records that point anywhere else are never touched, and the last record is never removed.
-6. **Change shares** sets each hub's share with a slider. Shares are approximate: equal shares keep every working hub in the record (DNS round robin); different shares make the record point to one hub at a time, in turns of about the TTL. **Settings** changes the domain, the key, the TTL, the provider and how this server reaches Cloudflare (each hub keeps its own route: its tunnels are its own). **Turn off** turns it off on every hub; the domain keeps the addresses it has.
+5. One hub **writes** the record: the controller while it answers and can reach Cloudflare. When it stops answering (20 s), or only its way to Cloudflare is cut, another hub that can reach Cloudflare writes in its place with the same settings, and the controller takes it back when it can again. The card says which hub writes now. A hub that stops working is taken out of the domain within about 30 s and put back when it works again. Addresses that were never a hub's are not touched (the card lists them: users go there too), and the last record is never removed.
+6. **Balance or failover** says how users are shared:
+   - **Balance:** every hub gets its share (sliders; equal by default). A domain name alone cannot promise that: resolvers keep one answer for many phones, phones prefer one of several addresses, and a VPN session stays where it is for hours. So the panel measures the traffic every hub really carries ("Carries now" on the card) and, while a hub is below its share, points the domain more to it until they match. After a change that takes a few hours, since open sessions do not move.
+   - **Failover:** all users on the first working hub of the list. When it stops, the domain moves to the next one; back to an earlier one when it has worked for a minute.
+
+   **Settings** changes the domain, the key, the TTL, the provider and how this server reaches Cloudflare (each hub keeps its own route: its tunnels are its own). **Turn off** turns it off on every hub; the domain keeps the addresses it has.
 7. The card warns, on each hub, when a hub needs a panel update, cannot reach Cloudflare (it could not take over), or does not serve a port this hub serves (users sent there on that port would fail: press **Sync Tunnels**).
 
 - The record must be **DNS only** (grey cloud); a proxied record is refused because Cloudflare's proxy does not carry tunnels.
 - **Webhook:** for any other DNS provider (ArvanCloud, your own API…) pick it under **More options**. See [9.2](#92-webhook).
-- Two hubs that cannot reach each other at all (the link between them is cut, both still work) both write the record, each without the other: nothing on two hubs alone can tell that from a dead hub. Short breaks do not change the record (the 30 s wait).
+- Two hubs that cannot reach each other at all (the link between them is cut, both still work) both write the record, each without the other: nothing on two hubs alone can tell that from a dead hub. Short breaks do not change the record (the 20 s wait).
+- Want no DNS bias at all? Give half of your users one name and half another, each in failover mode with the other hub first.
 
 ### 4.13 Full mesh
 
@@ -361,7 +366,7 @@ A tunnel whose ports include a pool's port **joins the pool by itself**. A membe
 
 ## 9. DNS failover
 
-Every hub with DNS failover on reports the record name in its heartbeat. Among the reachable hubs with the same name, **the one with the lowest id writes** the record, so two hubs never fight over it. Writes happen when the set of working hubs changes, and every 30 seconds.
+Every hub with DNS failover on reports the record name in its heartbeat, and whether it can reach the provider (checked every minute, every 20 s after a failure). Among the reachable hubs with the same name **one hub writes**: first those that can reach the provider, then the controller, then the lowest id. All use the same rule, so two hubs never fight over it. Writes happen when the set of working hubs changes, and every 30 seconds.
 
 ### 9.1 Cloudflare
 
@@ -370,8 +375,11 @@ Every hub with DNS failover on reports the record name in its heartbeat. Among t
 - The last record is never removed: if every hub looks down, the record stays as it was.
 - A proxied (orange cloud) record is refused.
 - **A route through a tunnel, for an Iran server that cannot reach Cloudflare.** Under **Reach Cloudflare through** pick one of this server's tunnels from the list (name, foreign IP, health), or **Direct**. No port to type and nothing to set up on the foreign server: the panel starts a SOCKS5 bridge on `127.0.0.1` itself and carries each call to the foreign server's panel over the same authenticated link the two panels already use, and that panel makes the call to `api.cloudflare.com` (it relays only to `api.cloudflare.com` and `api.telegram.org`, port 443, nothing else). **Check connection** makes a real connection out of the chosen tunnel and says whether it worked, which address of the foreign panel carried it, or what is wrong. Each foreign server must run this version of the panel (`hashem update`): an older one answers "update its panel". The panel link must be reachable from the Iran server (the tunnel's inner address is tried first, then the public one). **Test Connection** uses the route. The webhook is not routed.
-- **Master.** To keep the token and the percentages on one panel, tick **This hub is the master** on one hub. While it answers, only it writes the record, and its table sets every hub's share (the other hubs need no token and no share of their own). If the master is unreachable the record stays as it is; a hub that has DNS failover on and a token takes over only then. For fully independent hubs (no Iran-to-Iran traffic), turn off **Forward a pool to another hub when no foreign server here can serve it**: a hub whose servers are all down then leaves the record instead of passing users on.
-- **Shares without a paid plan.** Cloudflare's plain DNS has no weights. Give each hub a share in **Share of users for this hub** (on each hub's own panel); when the shares differ, the record points to **one hub at a time** and moves to the next every TTL (at least 60 s), in smooth weighted order (70/30 gives A A B A A B A A B A). Over time each hub gets about its share of the users who look the name up. It is approximate: resolvers that hold an answer longer than the TTL, and few users, skew it. A hub that stops working is dropped at once. Equal shares (the default) keep every working hub in the record.
+- **Controller.** The hub where DNS failover is turned on sends its settings to the others; while it answers and can reach the provider, it writes the record. For fully independent hubs (no Iran-to-Iran traffic), turn off **Forward a pool to another hub when no foreign server here can serve it**: a hub whose servers are all down then leaves the record instead of passing users on.
+- **Shares without a paid plan.** Cloudflare's plain DNS has no weights. With equal shares the record holds every working hub; with different shares it points to **one hub at a time** and moves to the next every TTL (at least 60 s), in smooth weighted order (70/30 gives A A B A A B A A B A). A hub that stops working is dropped at once.
+- **Measured shares.** Each heartbeat carries the hub's tunnel traffic (both ways, every engine). The writer averages it over about 5 minutes. When a hub is 3% or more off its share (measured for 3 minutes at least, and 64 KiB/s in all), the record points to one hub at a time with the turns corrected, and goes on so for 6 hours after the shares were last off. Every hub keeps at least a tenth of its turns. A hub that gets almost nothing for 30 minutes although the domain points to it is not given more (its address or ports may be blocked for users): the card says so, and it is tried again after 2 hours. Not used with a webhook (its receiver splits by `weights`), nor while a hub runs an older panel.
+- **IPv6.** An AAAA record is published only when every hub in the record has an IPv6 address: else all IPv6 users would go to the one that has it.
+- **The way to Cloudflare** is Automatic by default: directly, and when that fails through this hub's tunnels (healthy ones first). Direct only, and one chosen tunnel, are the other choices.
 
 ### 9.2 Webhook
 
@@ -481,7 +489,7 @@ All routes are under the panel's secret path. Changes need a session and the CSR
 | POST | `/api/cluster/settings` | `{health:{interval_ms, fall, rise}, hub_forward, name, public_ip}` |
 | POST | `/api/cluster/join-code` | `{code}` |
 | POST | `/api/cluster/hubs/add` · `/hubs/delete` | `{code}` · `{id}` |
-| POST | `/api/cluster/dns` | `{enabled, provider: cloudflare|webhook, token, url, name, ttl, test}` |
+| POST | `/api/cluster/dns` | `{enabled, provider: cloudflare|webhook, token, url, name, ttl, mode: balance|failover, order: [hub ids], hub_weights, route: auto|direct_only|tunnel, tunnel_id, take_over, test}` |
 | POST | `/api/cluster/join-hub` · `/leave-hub` | foreign side: `{bundle, name}` · `{id}` |
 
 ---
@@ -533,7 +541,8 @@ All routes are under the panel's secret path. Changes need a session and the CSR
 | Linked hub **unreachable** | The panel port is closed between the hubs, the clocks differ by more than 90 s, or the hubs have different secrets (re-link with a fresh join code). Run `timedatectl`. |
 | Hub forwarding does nothing | The other hub has no pool on the same port and protocol, or its pool is not Healthy/Degraded. |
 | DNS: *record is proxied* | Turn the record grey (DNS only) in Cloudflare. |
-| DNS: *Another hub writes the record* | Normal: only the lowest id writes. |
+| DNS: *Another hub writes the record* | Normal: one hub writes (the controller, or another while it is cut off from Cloudflare). |
+| DNS: one server gets more users | Look at "Carries now" and wait a few hours after a change. Check that the domain has no other addresses (the card lists them) and that users reach every hub's ports. |
 | A pooled port answers from the wrong server after removing a pool | Removing a pool unbinds the relays (each restarts once). Wait 5–10 s. |
 
 Useful commands on the hub:
