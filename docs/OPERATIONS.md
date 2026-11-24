@@ -62,7 +62,7 @@ The dashboard's overall status uses the same function. The main tunnel counts as
 
 ## Automation
 
-- **Watchdog** — a systemd timer (`hashem-watchdog.timer`) runs `hashem watchdog tick` every minute. Control it with `hashem watchdog on|off|status|test|tick`. Telegram alerts are configured in the watchdog settings; `hashem tgsend "msg"` sends a manual message. `auto_restart` defaults to **off** (alert only).
+- **Watchdog** — a systemd timer (`hashem-watchdog.timer`) runs `hashem watchdog tick` every minute. Control it with `hashem watchdog on|off|status|test|tick`. Its alerts go out through the panel's Telegram bot ([guide](TELEGRAM_BOT.md)); `hashem tgsend "msg"` sends a manual message. `auto_restart` defaults to **off** (alert only).
 - **Dial route** — on foreign servers, `hashem dial [status|auto|gre|public]` chooses whether `frpc` / `backhaul-client` dials the hub over the GRE inner IP or the hub public IP. `auto` uses GRE if it answers (ping or TCP to the control port), otherwise public. The watchdog switches to public automatically when GRE is dead and the client is not connected, and back to GRE once GRE has carried the control port for 5 checks in a row (5 minutes). If the client cannot connect over GRE after that move, it goes back to the public IP and waits 30 minutes before trying again. The foreign side of Setup asks for the route when the bundle uses GRE. Foreign servers show a "Route to the Iran hub" card.
 - **Carrier failover** — `hashem carrier` manages and cycles carriers. Switching is manual; the advisor only suggests.
 - **Backups** — `hashem backup now|restore|schedule|status` (encrypted archives in `/var/backups/hashem`).

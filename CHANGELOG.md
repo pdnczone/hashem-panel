@@ -3,6 +3,14 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
+## Unreleased
+
+**The Telegram bot lists every tunnel, reaches a blocked Telegram through this server's tunnels by itself, and is one bot for the menu and every alert.**
+
+- **The bot shows every tunnel the panel shows.** On a foreign server it said there were no tunnels: it listed an Iran server's links only. Now a foreign server's own tunnel and the extra Iran hubs it serves are there, and on every server the Xray, Bagher and Spoof tunnels too. An Xray link can be restarted and stopped from the bot. A central has a Nodes button (read only). Right after a start the bot says the state has not been read yet, not that there are no tunnels. The first tunnel of a foreign server that serves several hubs is not removed from the bot: that would remove them all.
+- **Telegram's route is Automatic by default.** The bot and the alerts go straight out from this server, and when Telegram is blocked there, through its tunnels (FRP, Backhaul and GRE), healthy ones first; the way that worked is tried first for the next hour. Nothing has to be chosen. A blocked direct connection is given up after 7 seconds and no longer holds up the bot's long poll. **Direct only** and one chosen tunnel stay possible. A saved "direct", which was the default nobody picked, becomes Automatic once. The relay is the foreign server's panel, as before: a server whose only tunnels are Xray, Bagher or Spoof still has no relay.
+- **One bot.** The Telegram bot (Settings) and the watchdog's alerts had a token each. Now there is one token, one route and one list of receivers, on one card in Settings; the Watchdog tab shows where its alerts go. The watchdog's, Autopilot's and the external alerts go to every paired account (each can mute them, in the panel or in the bot) and to an extra chat, when one is set. With two different tokens, the bot that is on and has paired accounts stays, else the watchdog's; the other token is kept in `telegram_bot.json`, unused. If your alert chat is a group, add the bot that stays to it. `hashem.sh`'s watchdog sends to the same accounts over the same route.
+
 ## v3.2.8 — 2026-11-23
 
 **Settings → Danger Zone removes every tunnel at once, other servers are updated from this one, and a cluster takes a third, fourth and fifth Iran hub. Reverse Xray Reality links no longer reset their users. A Telegram bot runs the panel from a chat. Tunnels that went down after an update are shown and can be removed again, a second Iran hub copies many foreign servers correctly, the watchdog watches every tunnel, and Autopilot acts on a blocked tunnel.** Run `hashem update` on every server.

@@ -13,32 +13,49 @@ other panel API request.
    steal each other's messages (the panel then shows "another program reads
    this bot's messages").
 2. In the panel: **Settings → Alerts & monitoring → Telegram bot**. Paste the
-   token, or leave it empty to use the Watchdog tab's bot. Pick the bot's
-   language (Persian or English), tick **Enable the bot** and press **Save**.
+   token, pick the bot's language (Persian or English), tick **Enable the
+   bot** and press **Save**.
 3. Pick **Admin** or **Viewer** and press **Get a Pairing Code**. Open the
    link it shows in Telegram (or send `/start CODE` to your bot). The code
    works once, for 10 minutes. Pair each account you want to use the bot.
 
 The badge on the card says whether the bot is running, and its last error.
-**Send Test** checks the token and sends a message to every paired account.
+**Send Test** checks the token and sends a message to everyone who gets alerts.
+
+### One bot for everything
+
+The same bot carries the menu and every alert: the watchdog's, Autopilot's and
+the external alerts. They go to every paired account, and to the **alert chat**
+on the card when one is set (a group or channel; add the bot to it). An account
+mutes its own alerts in the bot (🔔 Alerts) or on the card.
+
+Older versions had a second token in the Watchdog tab. At the update the bot
+that is on and has paired accounts stays, else the watchdog's; the other token
+is kept in `telegram_bot.json`, unused.
 
 ### When Telegram is blocked on the server
 
-The bot uses the **watchdog's Telegram route**. In the Watchdog tab, set the
-route to "through a tunnel" and pick a tunnel: the bot then reaches Telegram
-through the foreign server, and falls back to a direct connection when that
-fails.
+Nothing to set: on the **Automatic** route the bot goes straight out from this
+server, and when that fails, through this server's tunnels (healthy ones
+first). The card says which way it is connected. **Direct only** and one chosen
+tunnel (then direct) are the other choices.
+
+The tunnel's foreign panel makes the connection, over the Peer Link the panels
+already share, and only to Telegram and Cloudflare. So it needs an FRP,
+Backhaul or GRE tunnel whose foreign server runs this panel. Xray, Bagher and
+Spoof tunnels have no such relay.
 
 ## What it can do
 
 | Menu | What you get |
 |---|---|
 | 📊 Status | every tunnel's state, latency, traffic, and why it is not healthy |
-| 🔗 Tunnels | per tunnel: details, restart relay, restart GRE, ping, rename, remove |
+| 🔗 Tunnels | every tunnel of this server (hub links, a foreign server's own tunnel and its other Iran hubs, Xray, Bagher, Spoof): details; restart relay, restart GRE, ping, rename, remove; restart or stop an Xray link |
+| 🗂 Nodes | on a central: its nodes, their state and number of tunnels (read only) |
 | 🐶 Watchdog | on/off, auto-restart, test message, restart every tunnel, back up now, each tunnel's watchdog state |
 | 💾 Backups | the last 10 backups: download (the encrypted file), restore |
 | 🤖 Autopilot | on/off, each tunnel's carrier and state, recent switches |
-| 🔔 Alerts | on/off, Telegram copy, degraded alerts, test |
+| 🔔 Alerts | on/off, Telegram copy, degraded alerts, test; mute the alerts to this account |
 | 👥 Customers | each customer's usage, end date and links; pause/resume, renew, reset usage, remove |
 | 🩺 Doctor | the last report, run again, Quick Repair |
 | 🛠 Tools | optimize / restore the network tuning, tuning status, tunnel health test, carrier advice, limits, Sentinel |
@@ -98,9 +115,9 @@ Commands: `/menu /status /tunnels /watchdog /autopilot /customers /doctor
 - **Uploading files**, such as a custom TLS certificate or a backup to restore
   from your computer. Restoring a backup the server already has works.
 - **Charts**: text only.
-- **Other nodes**: each server's bot manages that server only.
-- **When the server cannot reach Telegram** (blocked, and the routing tunnel is
-  down too) the bot is silent until it can. The watchdog's alerts use the same
-  route and fall back to direct.
+- **Managing other nodes**: each server's bot manages that server only (a
+  central's bot shows its nodes).
+- **When the server cannot reach Telegram** (blocked, and every tunnel is down
+  too) the bot is silent until it can, and so are the alerts.
 - Long jobs (an update, a doctor run) answer when they finish; Telegram shows
   "⏳" until then.

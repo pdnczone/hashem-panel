@@ -906,6 +906,12 @@ func tgBotView() map[string]any {
 	}
 }
 
+func tgBotUsername() string {
+	tgBot.Lock()
+	defer tgBot.Unlock()
+	return tgBot.username
+}
+
 func handleTGBotGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, tgBotView())
 }

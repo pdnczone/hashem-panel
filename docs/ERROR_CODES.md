@@ -334,9 +334,10 @@ lines in the Logs tab. `HTTP 0` means the code is a log annotation, not an HTTP 
 
 | Code | HTTP | Meaning | What to do |
 | --- | --- | --- | --- |
-| `E-TG-01` | 502 | telegram bot cannot reach Telegram | Check the bot token, and the watchdog's Telegram route if Telegram is blocked here. Each server needs a bot of its own. |
+| `E-TG-01` | 502 | telegram bot cannot reach Telegram | Check the bot token and the route in Settings → Telegram bot. On the automatic route a blocked server goes through its tunnels: the foreign server's panel must be running. Each server needs a bot of its own. |
 | `E-TG-02` | 502 | telegram bot message not sent | Telegram refused or could not be reached: see the detail. |
 | `E-TG-03` | 500 | telegram bot update failed | An internal error while answering a Telegram message: see the detail. |
 | `E-TG-04` | 400 | bad telegram bot request | Check the request parameters. |
+| `E-TG-05` | — | one Telegram bot | Informational: the bot and the watchdog's alerts are one bot now; the other token is no longer used. |
 
-Total: 178 codes.
+Total: 179 codes.

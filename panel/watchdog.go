@@ -61,6 +61,7 @@ type watchdogStatusResponse struct {
 	NextRestartHuman  string         `json:"next_restart_human"`
 	TGBotTokenMasked  string         `json:"tg_bot_token_masked"`
 	TGChatID          string         `json:"tg_chat_id"`
+	TGBot             string         `json:"tg_bot,omitempty"` // the bot's username, when it is running
 	TGReady           bool           `json:"tg_ready"`     // alerts have a bot and someone to go to
 	TGReceivers       int            `json:"tg_receivers"` // how many chats get them
 	TGRoute           string         `json:"tg_route"`
@@ -325,6 +326,7 @@ func handleWatchdogGet(w http.ResponseWriter, r *http.Request) {
 		NextRestartHuman:  formatRestartSchedule(c),
 		TGBotTokenMasked:  maskBotToken(tgToken(c)),
 		TGChatID:          c.TGChatID,
+		TGBot:             tgBotUsername(),
 		TGReady:           tgAlertReady(),
 		TGReceivers:       len(tgReceivers(c)),
 		TGRoute:           c.TGRoute,

@@ -7213,7 +7213,7 @@ async function loadWatchdog() {
     $('wdTgRouteBadge').textContent = s.tg_route === 'tunnel' ? tr('', 'Tunnel') + (tgTun ? ' · ' + tgTun.name : '') : tr('', s.tg_route === 'direct' ? 'Direct' : 'Automatic');
     $('wdTgRouteBadge').className = s.tg_route === 'tunnel' ? 'badge info' : 'badge';
     $('wdTgSum').textContent = !s.tg_bot_token_masked ? tr('', 'No bot yet: set its token and pair your account in Settings.')
-      : s.tg_receivers ? docTpl('Alerts go to {0} chats through the bot {1}.', [s.tg_receivers, s.tg_bot_token_masked.split(':')[0]])
+      : s.tg_receivers ? docTpl('Alerts go to {0} chats through the bot {1}.', [s.tg_receivers, s.tg_bot ? '@' + s.tg_bot : s.tg_bot_token_masked.split(':')[0]])
       : tr('', 'Alerts go to no one yet: pair an account or set an alert chat.');
 
     // Tunnel Auto-Restart Scheduler card
@@ -11449,7 +11449,7 @@ function rtRender(box, tunnels, cfg, auto) {
   box.innerHTML = rows.map(r => {
     const st = RT_STATE[r.state];
     return `<label class="rt-opt"><input type="radio" name="${esc(name)}" value="${esc(r.v)}"${r.v === sel ? ' checked' : ''}>`
-      + `<span class="rt-main"><span class="rt-name">${esc(r.name)}</span>${r.sub ? `<span class="rt-sub u-mono">${esc(r.sub)}</span>` : ''}</span>`
+      + `<span class="rt-main"><span class="rt-name">${esc(r.name)}</span>${r.sub ? `<span class="rt-sub${/[\u0600-\u06FF]/.test(r.sub) ? '' : ' u-mono'}">${esc(r.sub)}</span>` : ''}</span>`
       + (st ? `<span class="badge ${st[0]}">${esc(tr('', st[1]))}</span>` : '') + '</label>';
   }).join('') + (tunnels.length ? '' : `<div class="rt-empty">${esc(tr('', 'This server has no tunnels to choose from.'))}</div>`);
   box.querySelectorAll('input').forEach(i => i.addEventListener('change', () => { box.dataset.touched = '1'; }));

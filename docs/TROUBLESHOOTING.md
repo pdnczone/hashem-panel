@@ -81,7 +81,7 @@ For MTU trouble (large transfers stall, small ones work): `hashem doctor` tests 
 ## Watchdog and alerts
 
 - **It alerts but does not restart.** That is the default: `auto_restart` is off. Enable it in the Watchdog tab if you want restarts.
-- **No Telegram messages.** Test with `hashem watchdog test` or `hashem tgsend "test"`. The server must reach `api.telegram.org`, which Iranian servers often cannot — use the webhook alert instead, or send from the foreign side.
+- **No Telegram messages.** Test with `hashem watchdog test` or `hashem tgsend "test"`. An Iranian server often cannot reach `api.telegram.org`: on the Automatic route (Settings, Telegram bot) the panel goes through a tunnel. **Send Test** says why when no way works. A server with only Xray, Bagher or Spoof tunnels has no such way: use the webhook alert, or run the bot on the foreign server.
 
 ## When you ask for help
 
