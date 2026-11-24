@@ -1532,7 +1532,11 @@ carrier_apply() {
             DEV_IP=$(ip -o -4 addr show dev "$dev" 2>/dev/null | awk '{print $4}' | head -1)
             if [[ -z "$DEV_IP" ]]; then
                 if [[ "$dev" == "$TUNNEL_NAME" ]]; then
-                    if [[ -f "/etc/frp/frps.toml" ]]; then
+                    # the address its unit sets, else the default
+                    DEV_IP=$(grep -o "addr replace [0-9.]*/30" "/etc/systemd/system/${dev}.service" 2>/dev/null | awk '{print $3; exit}')
+                    if [[ -n "$DEV_IP" ]]; then
+                        :
+                    elif [[ -f "/etc/frp/frps.toml" ]]; then
                         DEV_IP="10.10.10.2/30"
                     elif [[ -f "/etc/frp/frpc.toml" ]]; then
                         DEV_IP="10.10.10.1/30"
@@ -1913,6 +1917,111 @@ prompt_ports() { # $1=varname $2=label — at least one valid port
 
 # validate_setup_common checks non-interactive args with the same rules as
 # the prompts above. Prints a clear error per bad field, returns non-zero.
+# Inner GRE addresses (gre_pair.go in the panel has the same rules). A tunnel's two ends are the two hosts of one /30.
+#   gre_py free                the first free pair: "IRAN FOREIGN"
+#   gre_py clash A B [IFACE]   why A/B cannot be used; IFACE's own address and
+#                              the tunnel recorded for it do not count. A line that starts with
+#                              "warn:" is only a network of this server around the pair.
+gre_py() {
+    command -v python3 >/dev/null 2>&1 || return 0
+    PEERS_F="${PEERS_FILE:-}" HUBS_F="${HUBS_FILE:-}" IRAN_D="$IRAN_GRE_IP" FOREIGN_D="$FOREIGN_GRE_IP" \
+        ADDRS=$(ip -o -4 addr show 2>/dev/null | awk '{print $2, $4}') python3 - "$@" <<'PYEOF'
+import ipaddress, json, os, sys
+net = lambda a: ipaddress.ip_network(a if "/" in a else a + "/30", strict=False)
+op, args = sys.argv[1], sys.argv[2:]
+skip = args[2] if op == "clash" and len(args) > 2 else ""
+used = []  # (network, who, is a tunnel)
+for line in os.environ.get("ADDRS", "").splitlines():
+    f = line.split()
+    if len(f) != 2 or f[0].split("@")[0] in ("lo", skip):
+        continue
+    try:
+        n = ipaddress.ip_interface(f[1])
+    except ValueError:
+        continue
+    used.append((net(str(n.ip)), f[0].split("@")[0], True))
+    if n.network.prefixlen < 30:
+        used.append((n.network, f[0].split("@")[0] + " " + str(n.network), False))
+for f, key, ends in (("PEERS_F", "peers", ("local_gre", "peer_gre")), ("HUBS_F", "hubs", ("iran_gre", "foreign_gre"))):
+    try:
+        recs = json.load(open(os.environ[f])).get(key, [])
+    except Exception:
+        continue
+    for r in recs:
+        if r.get("gre_if") in (skip, "none", "") and r.get("gre_if") is not None:
+            continue
+        for e in ends:
+            try:
+                used.append((net(r.get(e) or ""), r.get("name") or key, True))
+            except ValueError:
+                pass
+def hit(a):
+    n = net(a)
+    return sorted((u for u in used if u[0].overlaps(n)), key=lambda u: not u[2])
+if op == "free":
+    c = [(os.environ["IRAN_D"], os.environ["FOREIGN_D"])]
+    c += [("10.1%d.0.2" % k, "10.1%d.0.1" % k) for k in range(1, 90)]
+    c += [("172.30.%d.2" % k, "172.30.%d.1" % k) for k in range(1, 61)]
+    c += [("192.168.%d.2" % k, "192.168.%d.1" % k) for k in range(191, 251)]
+    for a, b in c:
+        if not hit(a):
+            print(a, b)
+            break
+else:
+    a, b = args[0].split("/")[0], args[1].split("/")[0]
+    try:
+        if net(a) != net(b) or a == b or not all(0 < int(ipaddress.ip_address(x)) % 4 < 3 for x in (a, b)):
+            print("%s and %s are not the two ends of one /30 (as 10.11.0.2 and 10.11.0.1)" % (a, b))
+            sys.exit()
+    except ValueError:
+        sys.exit()
+    h = hit(a)
+    if h:
+        print(("%s/30 is already used by %s" if h[0][2] else "warn:%s/30 is inside this server's network %s") % (net(a).network_address, h[0][1]))
+PYEOF
+}
+
+# gre_pair_ok A B [IFACE]: refuses a pair another tunnel uses, warns about one
+# inside a network of this server.
+gre_pair_ok() {
+    local why
+    why=$(gre_py clash "$@" 2>/dev/null)
+    case "$why" in
+        "") return 0 ;;
+        warn:*) echo -e "${YELLOW}[!] GRE ${why#warn:}: its hosts at these two addresses are not reachable any more.${NC}"; return 0 ;;
+    esac
+    echo -e "${RED}[!] GRE address: ${why}.${NC}"
+    local f; f=$(gre_py free 2>/dev/null)
+    [[ -n "$f" ]] && echo -e "${YELLOW}    Free here: --local-gre ${f% *} --peer-gre ${f#* } (Iran side).${NC}"
+    return 1
+}
+
+# gre_other_end A: the other host of A's /30.
+gre_other_end() {
+    local a=${1%/*} d
+    d=${a##*.}
+    [[ "$d" =~ ^[0-9]+$ ]] || return 0
+    if (( d % 2 == 0 )); then echo "${a%.*}.$((d - 1))"; else echo "${a%.*}.$((d + 1))"; fi
+}
+
+# gre_default_pair: the pair a first tunnel gets when none is given: the one
+# it has now, else a free one. Prints "IRAN FOREIGN".
+gre_default_pair() {
+    local f="" own
+    if ip link show "$TUNNEL_NAME" >/dev/null 2>&1; then
+        own=$(ip -o -4 addr show 2>/dev/null | awk -v d="$TUNNEL_NAME" '{sub(/@.*/, "", $2)} $2 == d {sub(/\/.*/, "", $4); print $4; exit}')
+        # on a server that was the foreign end the same pair, the other way round
+        case "$own" in
+            "") ;;
+            *[13579]) f="$(gre_other_end "$own") $own" ;;
+            *) f="$own $(gre_other_end "$own")" ;;
+        esac
+    else
+        f=$(gre_py free 2>/dev/null)
+    fi
+    echo "${f:-$IRAN_GRE_IP $FOREIGN_GRE_IP}"
+}
+
 validate_setup_common() { # $1=local_pub $2=remote_pub $3=frp_port $4=local_gre
     local ok=1
     is_valid_ip "$1" || { echo -e "${RED}[!] Invalid local public IP: '$1'${NC}"; ok=0; }
@@ -5331,10 +5440,8 @@ cli_add_peer() {
         echo -e "${RED}[!] Control port ${FRP_PORT} is already in use on this server — use another one.${NC}"
         return 1
     fi
-    # GRE inner IPs must be unique across peers
-    if grep -q "\"local_gre\": *\"${LOCAL_GRE}\"" "$PEERS_FILE" || grep -q "\"peer_gre\": *\"${LOCAL_GRE}\"" "$PEERS_FILE"; then
-        echo -e "${RED}[!] GRE IP ${LOCAL_GRE} is already used by another peer.${NC}"; return 1
-    fi
+    # the pair must be free: another tunnel's /30 would share its routes
+    gre_pair_ok "$LOCAL_GRE" "$PEER_GRE" || return 1
     [[ -z "$NAME" ]] && NAME="peer-${ID}"
     # this server's first tunnel (the hub copy makes it with add-peer too):
     # what setup-iran does around it, so a fresh hub is set up the same way
@@ -5567,6 +5674,7 @@ cli_add_backhaul_peer() {
         ENGINE="gre-backhaul"
         is_valid_ip "$LOCAL_GRE" || { echo -e "${RED}[!] Invalid local GRE IP: '$LOCAL_GRE'${NC}"; return 1; }
         is_valid_ip "$PEER_GRE" || { echo -e "${RED}[!] Invalid peer GRE IP: '$PEER_GRE'${NC}"; return 1; }
+        gre_pair_ok "$LOCAL_GRE" "$PEER_GRE" || return 1
         if [[ "$ID" -eq 1 && "$FIRST_TUN" -eq 1 ]]; then
             GRE_IF="$TUNNEL_NAME"
             setup_gre_systemd "$LOCAL_PUB" "$REMOTE_PUB" "$LOCAL_GRE" "$PEER_GRE"
@@ -5883,7 +5991,8 @@ setup_iran_server() {
     prompt_token TOKEN "Enter Secret Auth Token" "$AUTO_TOKEN"
 
     # single source of truth: GRE + frps + panel all happen inside
-    setup_iran_server_noninteractive "$IP_IRAN" "$IP_FOREIGN" "$BIND_PORT" "$TOKEN" "$IRAN_GRE_IP" "$FOREIGN_GRE_IP"
+    local GP; GP=$(gre_default_pair)
+    setup_iran_server_noninteractive "$IP_IRAN" "$IP_FOREIGN" "$BIND_PORT" "$TOKEN" "${GP% *}" "${GP#* }"
 }
 
 # interactive wrapper for cli_add_peer: prompts for one more foreign server.
@@ -5902,7 +6011,8 @@ menu_add_peer() {
     local NEXT_ID SU_FP SU_LG SU_PG
     NEXT_ID=$(peer_next_id 2>/dev/null || echo 2)
     SU_FP=$(gen_random_port)
-    SU_LG="10.1${NEXT_ID}.0.2"; SU_PG="10.1${NEXT_ID}.0.1"
+    SU_LG=$(gre_py free 2>/dev/null); SU_PG=${SU_LG#* }; SU_LG=${SU_LG% *}
+    [[ -n "$SU_LG" ]] || { SU_LG="10.1${NEXT_ID}.0.2"; SU_PG="10.1${NEXT_ID}.0.1"; }
     prompt_port CPORT "Enter FRP Control Port (unique per peer)" "$SU_FP"
     AUTO_TOKEN=$(gen_token32)
     prompt_token TOKEN "Peer token (each peer gets its own)" "$AUTO_TOKEN"
@@ -6047,13 +6157,8 @@ check_status() {
     # 2. Ping Test
     if ip link show "$TUNNEL_NAME" >/dev/null 2>&1; then
         echo -e "\n${CYAN}[2] GRE Ping Test:${NC}"
-        if ip addr show dev "$TUNNEL_NAME" 2>/dev/null | grep -q "$IRAN_GRE_IP"; then
-            TARGET_PING="$FOREIGN_GRE_IP"
-            echo "Testing ping to Foreign GRE IP ($TARGET_PING)..."
-        else
-            TARGET_PING="$IRAN_GRE_IP"
-            echo "Testing ping to Iran GRE IP ($TARGET_PING)..."
-        fi
+        TARGET_PING=$(watchdog_get_peer_gre)
+        echo "Testing ping to the other end of the tunnel ($TARGET_PING)..."
         ping -c 3 -W 2 "$TARGET_PING" && echo -e "${GREEN}[OK] Ping OK.${NC}" || echo -e "${YELLOW}[!] Remote peer did not answer ping.${NC}"
     fi
 
@@ -6159,13 +6264,8 @@ doctor_diagnostics() {
         IFACE=$(ip -o link show type gre 2>/dev/null | awk -F': ' '{print $2}' | cut -d'@' -f1 | grep -v -e '^hpt' -e '^hcg' -e '^hcc' | head -n1)
         if [[ -n "$IFACE" ]]; then
             LOCAL_IP=$(ip -o -4 addr show dev "$IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)
-            if [[ "$LOCAL_IP" =~ \.1$ ]]; then
-                TARGET_IP="${LOCAL_IP%.*}.2"
-                ROLE="Foreign"
-            elif [[ "$LOCAL_IP" =~ \.2$ ]]; then
-                TARGET_IP="${LOCAL_IP%.*}.1"
-                ROLE="Iran"
-            fi
+            TARGET_IP=$(gre_other_end "$LOCAL_IP")
+            if [[ -f "${CONFIG_DIR}/frps.toml" || -n "$(compgen -G "${CONFIG_DIR}/frps-*.toml")" ]]; then ROLE="Iran"; else ROLE="Foreign"; fi
         fi
     fi
 
@@ -6439,7 +6539,7 @@ doctor_health_check() {
     if [[ -f /etc/frp/frpc.toml ]]; then
         PEER_PING_TARGET=$(awk -F'=' '/serverAddr/{gsub(/[ "]/,"",$2); print $2}' /etc/frp/frpc.toml 2>/dev/null)
     elif [[ -f /etc/frp/frps.toml ]]; then
-        PEER_PING_TARGET="$FOREIGN_GRE_IP"
+        PEER_PING_TARGET=$(watchdog_get_peer_gre)
     fi
     if [[ -n "$PEER_PING_TARGET" ]]; then
         local P_OUT
@@ -11433,7 +11533,7 @@ EOF
 
 
 cli_setup_iran() {
-    local LOCAL_PUB="" REMOTE_PUB="" FRP_PORT="" LOCAL_GRE="$IRAN_GRE_IP" PEER_GRE="$FOREIGN_GRE_IP" TOKEN="" FORCE=0 PORTS="" FRP_TRANSPORT="tcp"
+    local LOCAL_PUB="" REMOTE_PUB="" FRP_PORT="" LOCAL_GRE="" PEER_GRE="" GP="" TOKEN="" FORCE=0 PORTS="" FRP_TRANSPORT="tcp"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --local-pub) LOCAL_PUB="$2"; shift 2 ;;
@@ -11452,6 +11552,8 @@ cli_setup_iran() {
     LOCAL_PUB=${LOCAL_PUB:-$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}')}
     [[ -z "$LOCAL_PUB" ]] && LOCAL_PUB=$(curl -4 -sSL --max-time 5 https://api.ipify.org 2>/dev/null)
     FRP_PORT=${FRP_PORT:-$(gen_random_port)}
+    [[ -n "$LOCAL_GRE" ]] || { GP=$(gre_default_pair); LOCAL_GRE=${GP% *}; PEER_GRE=${PEER_GRE:-${GP#* }}; }
+    PEER_GRE=${PEER_GRE:-$(gre_other_end "$LOCAL_GRE")}
     validate_setup_common "$LOCAL_PUB" "$REMOTE_PUB" "$FRP_PORT" "$LOCAL_GRE" || return 1
     is_valid_ip "$PEER_GRE" || { echo -e "${RED}[!] Invalid peer GRE IP: '$PEER_GRE'${NC}"; return 1; }
     if [[ -z "$TOKEN" ]]; then
@@ -11462,6 +11564,7 @@ cli_setup_iran() {
         echo -e "${RED}[!] Tunnel already exists — pass --force to overwrite.${NC}"
         return 1
     fi
+    gre_pair_ok "$LOCAL_GRE" "$PEER_GRE" "$TUNNEL_NAME" || return 1
     setup_iran_server_noninteractive "$LOCAL_PUB" "$REMOTE_PUB" "$FRP_PORT" "$TOKEN" "$LOCAL_GRE" "$PEER_GRE" "$PORTS" "$FRP_TRANSPORT"
 }
 
@@ -11569,6 +11672,7 @@ cli_setup_foreign() {
         echo -e "${RED}[!] Tunnel already exists — pass --force to overwrite.${NC}"
         return 1
     fi
+    gre_pair_ok "$LOCAL_GRE" "$PEER_GRE" "$TUNNEL_NAME" || return 1
     setup_foreign_server_noninteractive "$LOCAL_PUB" "$REMOTE_PUB" "$FRP_PORT" "$TOKEN" "$LOCAL_GRE" "$PEER_GRE" "$CLEANED" "$RELAY_IP" "$PROXY_PROTOCOL" "$FRP_TRANSPORT" "$FRP_ENCRYPTION" "$FRP_COMPRESSION"
 }
 
@@ -11644,7 +11748,7 @@ cli_setup_backhaul_foreign() {
 }
 
 cli_setup_gre_backhaul_iran() {
-    local LOCAL_PUB="" REMOTE_PUB="" PORT="" LOCAL_GRE="$IRAN_GRE_IP" PEER_GRE="$FOREIGN_GRE_IP" TRANSPORT="tcpmux" TOKEN="" PORTS="" FORCE=0
+    local LOCAL_PUB="" REMOTE_PUB="" PORT="" LOCAL_GRE="" PEER_GRE="" GP="" TRANSPORT="tcpmux" TOKEN="" PORTS="" FORCE=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --local-pub) LOCAL_PUB="$2"; shift 2 ;;
@@ -11665,6 +11769,8 @@ cli_setup_gre_backhaul_iran() {
     LOCAL_PUB=${LOCAL_PUB:-$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}')}
     [[ -z "$LOCAL_PUB" ]] && LOCAL_PUB=$(curl -4 -sSL --max-time 5 https://api.ipify.org 2>/dev/null)
     PORT=${PORT:-$(gen_random_port)}
+    [[ -n "$LOCAL_GRE" ]] || { GP=$(gre_default_pair); LOCAL_GRE=${GP% *}; PEER_GRE=${PEER_GRE:-${GP#* }}; }
+    PEER_GRE=${PEER_GRE:-$(gre_other_end "$LOCAL_GRE")}
     validate_setup_common "$LOCAL_PUB" "$REMOTE_PUB" "$PORT" "$LOCAL_GRE" || return 1
     is_valid_ip "$PEER_GRE" || { echo -e "${RED}[!] Invalid peer GRE IP: '$PEER_GRE'${NC}"; return 1; }
     if [[ -z "$TOKEN" ]]; then
@@ -11675,6 +11781,7 @@ cli_setup_gre_backhaul_iran() {
         echo -e "${RED}[!] Tunnel already exists — pass --force to overwrite.${NC}"
         return 1
     fi
+    gre_pair_ok "$LOCAL_GRE" "$PEER_GRE" "$TUNNEL_NAME" || return 1
     setup_gre_backhaul_iran_server_noninteractive "$LOCAL_PUB" "$REMOTE_PUB" "$PORT" "$TOKEN" "$LOCAL_GRE" "$PEER_GRE" "$TRANSPORT" "$PORTS"
 }
 
@@ -11721,6 +11828,7 @@ cli_setup_gre_backhaul_foreign() {
         echo -e "${RED}[!] Tunnel already exists — pass --force to overwrite.${NC}"
         return 1
     fi
+    gre_pair_ok "$LOCAL_GRE" "$PEER_GRE" "$TUNNEL_NAME" || return 1
     setup_gre_backhaul_foreign_server_noninteractive "$LOCAL_PUB" "$REMOTE_PUB" "$PORT" "$TOKEN" "$LOCAL_GRE" "$PEER_GRE" "$TRANSPORT"
 }
 
@@ -12664,8 +12772,11 @@ cli_join_hub() {
     LOCAL_PUB=$(ip route get "$B_IRAN_PUB" 2>/dev/null | awk '/src/ {for (i = 1; i <= NF; i++) if ($i == "src") {print $(i + 1); exit}}')
     # GRE when the bundle carries one and its inner addresses are free here
     if [[ "$B_ENGINE" != "backhaul" && -n "${B_FOREIGN_GRE:-}" ]]; then
-        if ip -o -4 addr show 2>/dev/null | grep -qw "$B_FOREIGN_GRE"; then
-            echo -e "${YELLOW}[!] The GRE address ${B_FOREIGN_GRE} in this bundle is already used here; this hub is dialed on its public IP, without GRE.${NC}"
+        local GRE_WHY
+        GRE_WHY=$(gre_py clash "$B_FOREIGN_GRE" "$B_IRAN_GRE" 2>/dev/null)
+        [[ "$GRE_WHY" == warn:* ]] && { echo -e "${YELLOW}[!] GRE ${GRE_WHY#warn:}.${NC}"; GRE_WHY=""; }
+        if [[ -n "$GRE_WHY" ]]; then
+            echo -e "${YELLOW}[!] GRE of this bundle: ${GRE_WHY}; this hub is dialed on its public IP, without GRE.${NC}"
         else
             GRE_IF="gre-h${ID}"
             carrier_init_kernel 2>/dev/null || true

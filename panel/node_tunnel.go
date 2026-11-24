@@ -534,20 +534,7 @@ func nodeTunDraftFor(ctx context.Context, q nodeTunReq) (nodeTunDraft, error) {
 	if q.Engine == "backhaul" {
 		return d, nil // no GRE
 	}
-	used := map[string]bool{}
-	for _, a := range append(append([]string{}, s.GreUsed...), c.GreUsed...) {
-		used[a] = true
-	}
-	pairs := [][2]string{{defaultIranGRE, defaultForeignGRE}}
-	for k := 1; k <= 89; k++ {
-		pairs = append(pairs, [2]string{fmt.Sprintf("10.1%d.0.2", k), fmt.Sprintf("10.1%d.0.1", k)})
-	}
-	for _, p := range pairs {
-		if !used[p[0]] && !used[p[1]] {
-			d.LocalGre, d.PeerGre = p[0], p[1]
-			break
-		}
-	}
+	d.LocalGre, d.PeerGre = greFreePair(append(append([]string{}, s.GreUsed...), c.GreUsed...))
 	if d.LocalGre == "" {
 		problem("no free GRE address pair")
 	}

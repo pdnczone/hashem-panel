@@ -1992,6 +1992,23 @@ async function refresh() {
   loadCarrier().catch(e => reportErr('carrier', e));
   return ok;
 }
+// The first GRE pair whose /30 overlaps nothing in used (addresses count as
+// their /30, networks as written), as greFreePair in gre_pair.go.
+function greFreePair(used) {
+  const num = a => a.split('.').reduce((n, x) => n * 256 + (Number(x) || 0), 0);
+  const range = u => {
+    const [a, b] = String(u).split('/');
+    const bits = b == null || Number(b) > 30 ? 30 : Number(b), size = 2 ** (32 - bits), at = Math.floor(num(a) / size) * size;
+    return [at, at + size - 1];
+  };
+  const taken = used.map(range);
+  for (let k = 0; k <= 209; k++) {
+    const net = k === 0 ? '10.10.10.' : k <= 89 ? '10.1' + k + '.0.' : k <= 149 ? '172.30.' + (k - 89) + '.' : '192.168.' + (k + 41) + '.';
+    const [lo, hi] = range(net + '2');
+    if (!taken.some(t => t[0] <= hi && lo <= t[1])) return [net + '2', net + '1'];
+  }
+  return ['', ''];
+}
 // peer add-form: prefill Iran IP + suggest next control port / GRE pair
 let setupDefaults = null;
 async function updatePeerHints(s) {
@@ -2004,14 +2021,12 @@ async function updatePeerHints(s) {
     // Suggest a control port and GRE pair no tunnel here uses yet.
     const peers = (s && s.peers) || [], L = (s && s.local) || {};
     const usedPorts = new Set([L.frp_port, L.bind_port, ...peers.map(p => p.frp_port)].filter(Boolean).map(Number));
-    const usedGre = new Set([(L.gre && L.gre.inner || '').split('/')[0], ...peers.map(p => p.local_gre)].filter(Boolean));
+    const usedGre = [L.gre && L.gre.inner, ...peers.map(p => p.local_gre), ...peers.map(p => p.peer_gre), ...(d.gre_used || [])].filter(Boolean);
     let port = 7001;
     while (usedPorts.has(port)) port++;
-    let k = n + 1;
-    while (usedGre.has('10.1' + k + '.0.2') && k < 99) k++;
+    const pair = greFreePair(usedGre);
     if (!$('pFrpPort').value) $('pFrpPort').value = port;
-    if (!$('pLocalGre').value) $('pLocalGre').value = '10.1' + k + '.0.2';
-    if (!$('pPeerGre').value) $('pPeerGre').value = '10.1' + k + '.0.1';
+    if (!$('pLocalGre').value && !$('pPeerGre').value) { $('pLocalGre').value = pair[0]; $('pPeerGre').value = pair[1]; }
   } catch(e) { reportErr('peers', e); }
 }
 $('addPeerBtn').onclick = async () => {

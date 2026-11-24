@@ -291,11 +291,14 @@ func currentIranBundle() (string, string) {
 
 func handleSetupGet(w http.ResponseWriter, r *http.Request) {
 	st := currentLocal()
+	plan := buildSetupPlan("", 0)
+	iranGre, foreignGre := greSetupPair(st, plan.GreUsed)
 	resp := map[string]any{
 		"local_public":  detectPublicIP(),
 		"local_public6": detectPublicIP6(),
-		"iran_gre":      defaultIranGRE,
-		"foreign_gre":   defaultForeignGRE,
+		"iran_gre":      iranGre,
+		"foreign_gre":   foreignGre,
+		"gre_used":      plan.GreUsed, // for the next tunnel's suggested pair
 		"frp_port":      randomFrpPort(),
 		"role_guess":    st.Role,
 		"exists":        tunnelExists(),
@@ -306,6 +309,55 @@ func handleSetupGet(w http.ResponseWriter, r *http.Request) {
 		resp["token"] = tok
 	}
 	writeJSON(w, resp)
+}
+
+// greSetupPair is the pair Setup shows: the first tunnel's own when it has
+// one, else a free one.
+func greSetupPair(st tunnelStatus, used []string) (iran, foreign string) {
+	if st.Gre.Exists && st.Gre.Inner != "" {
+		mine, other := strings.SplitN(st.Gre.Inner, "/", 2)[0], grePeerInner(st.Gre.Inner)
+		if strings.Contains(st.Role, "foreign") {
+			return other, mine
+		}
+		return mine, other
+	}
+	if iran, foreign = greFreePair(used); iran == "" {
+		return defaultIranGRE, defaultForeignGRE
+	}
+	return iran, foreign
+}
+
+// greClash says why a new tunnel cannot have these inner addresses: not the two
+// ends of one /30, or another tunnel of this server is in it.
+func greClash(body setupRequest) string {
+	if !grePairOK(body.LocalGre, body.PeerGre) {
+		return fmt.Sprintf("the GRE addresses %s and %s are not the two ends of one /30 (as 10.11.0.2 and 10.11.0.1)", body.LocalGre, body.PeerGre)
+	}
+	if body.Role == "foreign" {
+		for _, h := range readJoinedHubs() {
+			if !h.noGre() && greOverlap(body.LocalGre, []string{h.IranGre}) != "" {
+				return fmt.Sprintf("GRE address %s is used by the Iran hub %q — make the tunnel on the Iran server with another pair", body.LocalGre, h.Name)
+			}
+		}
+		return ""
+	}
+	base := -1
+	peers := loadPeers()
+	if body.Role == "iran" { // Setup replaces the first tunnel: its own pair is free
+		if p := basePeer(peers); p != nil {
+			base = p.ID
+		}
+	} else if ft := firstTunnelInfo(); ft.Exists && basePeer(peers) == nil {
+		if greOverlap(body.LocalGre, []string{ft.LocalGre, ft.PeerGre}) != "" {
+			return fmt.Sprintf("GRE address %s is the first tunnel's — pick another pair", body.LocalGre)
+		}
+	}
+	for _, p := range peers {
+		if p.ID != base && greOverlap(body.LocalGre, []string{p.LocalGre, p.PeerGre}) != "" {
+			return fmt.Sprintf("GRE address %s is tunnel %q's — pick another pair", body.LocalGre, p.Name)
+		}
+	}
+	return ""
 }
 
 func tunnelExists() bool {
@@ -712,10 +764,12 @@ func handleSetupPost(w http.ResponseWriter, r *http.Request) {
 				writeAPIError(w, r, "E-SETUP-07", fmt.Sprintf("control port %d is tunnel %q's — pick another", body.FrpPort, p.Name))
 				return
 			}
-			if body.Engine != "backhaul" && body.LocalGre != "" && (body.LocalGre == p.LocalGre || body.LocalGre == p.PeerGre) {
-				writeAPIError(w, r, "E-SETUP-05", fmt.Sprintf("GRE address %s is tunnel %q's — pick another pair", body.LocalGre, p.Name))
-				return
-			}
+		}
+	}
+	if body.Engine != "backhaul" {
+		if why := greClash(body); why != "" {
+			writeAPIError(w, r, "E-SETUP-05", why)
+			return
 		}
 	}
 	// the same on a foreign server that serves other Iran hubs; with no first

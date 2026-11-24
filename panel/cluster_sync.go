@@ -688,22 +688,7 @@ var syncRemove = func(id int) error {
 // /30, not only when one of its two addresses is used (10.11.0.5 and 10.11.0.6
 // on another tunnel are a different /30, 10.11.0.1 is not).
 func syncGrePair(used []string, avoid ...string) (string, string) {
-	taken := map[string]bool{}
-	for _, a := range append(append([]string{}, used...), avoid...) {
-		if n := gre30(a); n != "" {
-			taken[n] = true
-		}
-	}
-	pairs := [][2]string{{defaultIranGRE, defaultForeignGRE}}
-	for k := 1; k <= 89; k++ {
-		pairs = append(pairs, [2]string{fmt.Sprintf("10.1%d.0.2", k), fmt.Sprintf("10.1%d.0.1", k)})
-	}
-	for _, p := range pairs {
-		if !taken[gre30(p[0])] && !taken[gre30(p[1])] {
-			return p[0], p[1]
-		}
-	}
-	return "", ""
+	return greFreePair(append(append([]string{}, used...), avoid...))
 }
 
 // gre30 is the /30 network of an IPv4 address ("10.11.0.2" -> "10.11.0.0"),

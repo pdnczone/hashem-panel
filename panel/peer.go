@@ -91,7 +91,13 @@ func defaultPeerConfig() PeerConfig {
 
 	secret := randomToken(32)
 
-	internalIP := st.GrePeer
+	internalIP := "" // the peer's inner address (st.GrePeer is its public one)
+	if st.Gre.Inner != "" {
+		internalIP = grePeerInner(st.Gre.Inner)
+	}
+	if internalIP == "" {
+		internalIP = st.GrePeer
+	}
 	if internalIP == "" {
 		if role == "master" {
 			internalIP = defaultForeignGRE

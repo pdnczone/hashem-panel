@@ -315,12 +315,11 @@ func buildSetupPlan(wanted string, relay int) setupPlan {
 			}
 		}
 	}
-	if addrs, err := net.InterfaceAddrs(); err == nil {
-		for _, a := range addrs {
-			if ip, _, err := net.ParseCIDR(a.String()); err == nil && ip.To4() != nil {
-				gre[ip.String()] = true
-			}
-		}
+	for _, a := range greConnected() {
+		gre[a] = true
+	}
+	for _, a := range clusterGre() {
+		gre[a] = true
 	}
 	for a := range gre {
 		if a != "" {
