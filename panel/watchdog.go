@@ -62,8 +62,8 @@ type watchdogStatusResponse struct {
 	TGBotTokenMasked  string         `json:"tg_bot_token_masked"`
 	TGChatID          string         `json:"tg_chat_id"`
 	TGBot             string         `json:"tg_bot,omitempty"` // the bot's username, when it is running
-	TGReady           bool           `json:"tg_ready"`     // alerts have a bot and someone to go to
-	TGReceivers       int            `json:"tg_receivers"` // how many chats get them
+	TGReady           bool           `json:"tg_ready"`         // alerts have a bot and someone to go to
+	TGReceivers       int            `json:"tg_receivers"`     // how many chats get them
 	TGRoute           string         `json:"tg_route"`
 	TGTunnelPort      int            `json:"tg_tunnel_port"`
 	TGTunnelID        *int           `json:"tg_tunnel_id"`
