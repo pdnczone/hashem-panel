@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -164,6 +165,13 @@ func cloneClusterConfig(c ClusterConfig) ClusterConfig {
 	}
 	out.Hubs = append([]HubPeer(nil), c.Hubs...)
 	out.DNS.Records = append([]string(nil), c.DNS.Records...)
+	out.DNS.Order = append([]string(nil), c.DNS.Order...)
+	out.DNS.Owned = append([]string(nil), c.DNS.Owned...)
+	out.DNS.HubWeights = maps.Clone(c.DNS.HubWeights)
+	if c.DNS.TunnelID != nil {
+		id := *c.DNS.TunnelID
+		out.DNS.TunnelID = &id
+	}
 	return out
 }
 
@@ -541,21 +549,35 @@ type lbMemberInfo struct {
 // lbSessionOf finds the link's control session among the host's sockets.
 // Sessions from loopback (the WSS front relaying to frps) count, but the
 // remote reported is a real one when there is any.
-func lbSessionOf(socks []sockInfo, ctrlPort int) (bool, string) {
-	if ctrlPort <= 0 {
+//
+// A session on the link's own control port is its own. Its neighbours (port+2,
+// port-2) may belong to another link: there a session counts only when it comes
+// from this link's foreign server, or when no other link can own that port.
+func lbSessionOf(socks []sockInfo, l lbLink, all []lbLink) (bool, string) {
+	if l.CtrlPort <= 0 {
 		return false, ""
 	}
-	ports := map[uint16]bool{}
-	for _, p := range controlPorts(ctrlPort) {
-		ports[uint16(p)] = true
+	ports := controlPorts(l.CtrlPort)
+	ctrl := make([]int, 0, len(all))
+	for _, o := range all {
+		if o.CtrlPort > 0 {
+			ctrl = append(ctrl, o.CtrlPort)
+		}
 	}
+	owners := portOwners(ctrl)
 	found, remote := false, ""
 	for _, s := range socks {
-		if s.Proto != "tcp" || s.State != sockEstablished || !ports[s.Local.Port()] {
+		p := int(s.Local.Port())
+		if s.Proto != "tcp" || s.State != sockEstablished || !hasInt(ports, p) {
+			continue
+		}
+		a := s.Remote.Addr()
+		mine := a.String() == normHost(l.Remote) || (l.PeerGre != "" && a.String() == l.PeerGre)
+		if p != l.CtrlPort && !mine && (hasInt(ctrl, p) || owners[p] > 1) {
 			continue
 		}
 		found = true
-		if a := s.Remote.Addr(); !a.IsLoopback() && remote == "" {
+		if !a.IsLoopback() && (remote == "" || mine) {
 			remote = a.String()
 		}
 	}
@@ -705,9 +727,13 @@ func clusterTick(now time.Time) (idle bool) {
 	listen := lbListening(socks)
 
 	// Links whose ports include a pool port join that pool by themselves.
-	if joined := lbAutoJoin(&cfg, links); joined {
-		if err := saveClusterConfig(cfg); err != nil {
+	if lbAutoJoin(&cfg, links, false) {
+		// on the latest config: a setting saved meanwhile is not undone
+		n, err := updateClusterConfig(func(x *ClusterConfig) error { lbAutoJoin(x, links, true); return nil })
+		if err != nil {
 			clusterEventf("error", "Cannot save cluster.json: %v", err)
+		} else {
+			cfg = n
 		}
 	}
 
@@ -718,7 +744,7 @@ func clusterTick(now time.Time) (idle bool) {
 	var pingList []string
 	sess := map[int]bool{}
 	for _, l := range links {
-		s, remote := lbSessionOf(socks, l.CtrlPort)
+		s, remote := lbSessionOf(socks, l, links)
 		if !s && (l.Transport == "kcp" || l.Transport == "quic" || l.Transport == "udp") {
 			// UDP transports hold no TCP session: use the snapshot's verdict.
 			s = l.SnapHealth == stateHealthy || l.SnapHealth == stateDegraded
@@ -1103,7 +1129,7 @@ func poolAlert(label, from, to, where string) {
 
 // lbAutoJoin adds every link whose ports include a pool port to that pool
 // (unless it was removed from it by hand). It reports a change.
-func lbAutoJoin(c *ClusterConfig, links []lbLink) bool {
+func lbAutoJoin(c *ClusterConfig, links []lbLink, say bool) bool {
 	changed := false
 	for i := range c.Pools {
 		p := &c.Pools[i]
@@ -1115,7 +1141,9 @@ func lbAutoJoin(c *ClusterConfig, links []lbLink) bool {
 				continue
 			}
 			p.Members = append(p.Members, LBMember{Link: l.ID, Remote: l.Remote, Weight: 1, Priority: nextPriority(*p)})
-			clusterEventf("info", "%s joined %s (its ports include %d).", lbLinkName(l), poolLabel(*p), p.Port)
+			if say {
+				clusterEventf("info", "%s joined %s (its ports include %d).", lbLinkName(l), poolLabel(*p), p.Port)
+			}
 			changed = true
 		}
 	}

@@ -98,6 +98,7 @@ func resetClusterState() {
 	clusterCache, clusterMod = nil, time.Time{}
 	clusterMu.Unlock()
 	clusterRT = newClusterRuntime()
+	dnsStateReset()
 	clusterEvMu.Lock()
 	clusterEvs, clusterEvOK = nil, false
 	clusterEvMu.Unlock()
@@ -939,7 +940,7 @@ func TestCloudflareSync(t *testing.T) {
 	d := DNSConfig{Token: "tok", Name: "vpn.example.com", TTL: 60}
 	hubs := map[string]bool{"5.5.5.5": true, "6.6.6.6": true, "7.7.7.7": true}
 	// hub 6.6.6.6 died, 7.7.7.7 joined
-	if _, err := cfSyncA(d, []string{"5.5.5.5", "7.7.7.7"}, hubs); err != nil {
+	if _, _, err := cfSyncA(d, []string{"5.5.5.5", "7.7.7.7"}, hubs); err != nil {
 		t.Fatal(err)
 	}
 	var got []string
@@ -955,7 +956,7 @@ func TestCloudflareSync(t *testing.T) {
 	// IPv6 hubs get AAAA records, beside the A ones
 	hubs["2001:db8::5"], hubs["2001:db8::6"] = true, true
 	recs = append(recs, rec{"r9", "2001:db8::6"}) // hub 2001:db8::6 died
-	if _, err := cfSyncA(d, []string{"5.5.5.5", "7.7.7.7", "2001:db8::5"}, hubs); err != nil {
+	if _, _, err := cfSyncA(d, []string{"5.5.5.5", "7.7.7.7", "2001:db8::5"}, hubs); err != nil {
 		t.Fatal(err)
 	}
 	got = nil
@@ -966,11 +967,11 @@ func TestCloudflareSync(t *testing.T) {
 		t.Fatalf("records with IPv6 %v", got)
 	}
 	d.Token = "bad"
-	if _, err := cfSyncA(d, []string{"5.5.5.5"}, hubs); err == nil || !strings.Contains(err.Error(), "Invalid API Token") || strings.Contains(err.Error(), "bad") {
+	if _, _, err := cfSyncA(d, []string{"5.5.5.5"}, hubs); err == nil || !strings.Contains(err.Error(), "Invalid API Token") || strings.Contains(err.Error(), "bad") {
 		t.Fatalf("token error %v", err)
 	}
 	d.Token, d.Name = "tok", "vpn.other.org"
-	if _, err := cfSyncA(d, nil, hubs); err == nil || !strings.Contains(err.Error(), "no Cloudflare zone") {
+	if _, _, err := cfSyncA(d, nil, hubs); err == nil || !strings.Contains(err.Error(), "no Cloudflare zone") {
 		t.Fatalf("zone error %v", err)
 	}
 }

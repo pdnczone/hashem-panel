@@ -22,7 +22,9 @@ func dnsCtlFresh(t *testing.T) {
 		dnsFollowMu.Unlock()
 	}
 	reset()
-	t.Cleanup(reset)
+	up := panelUptime
+	panelUptime = func() time.Duration { return time.Hour }
+	t.Cleanup(func() { panelUptime = up; reset() })
 }
 
 func setBeat(id string, up bool, b meshBeat) {

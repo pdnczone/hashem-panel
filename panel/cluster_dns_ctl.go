@@ -30,7 +30,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -130,6 +132,9 @@ type dnsPush struct {
 	Name     string         `json:"name"`
 	TTL      int            `json:"ttl"`
 	Weights  map[string]int `json:"weights"` // hub id -> share, the controller's own included
+	Mode     string         `json:"mode,omitempty"`
+	Order    []string       `json:"order,omitempty"`
+	Owned    []string       `json:"owned,omitempty"` // addresses the record may hold from before
 }
 
 type dnsConfReq struct {
@@ -157,7 +162,8 @@ func dnsPushFor(c ClusterConfig) dnsPush {
 	}
 	return dnsPush{Type: "dnsconf", From: c.NodeID, FromName: hubLabel(HubPeer{Name: c.Name, PublicIP: meshSelfBeat(c).IP}),
 		Version: c.DNS.Version, Enabled: c.DNS.Enabled, Provider: c.DNS.Provider, Token: c.DNS.Token, URL: c.DNS.URL,
-		Name: c.DNS.Name, TTL: dnsClampTTL(c.DNS.TTL), Weights: w}
+		Name: c.DNS.Name, TTL: dnsClampTTL(c.DNS.TTL), Weights: w,
+		Mode: dnsMode(c.DNS), Order: c.DNS.Order, Owned: c.DNS.Owned}
 }
 
 // ---- the controller side ----
@@ -339,6 +345,12 @@ func dnsTakeSettings(from HubPeer, p dnsPush) dnsConfAns {
 		}
 		d.TTL = dnsClampTTL(p.TTL)
 		d.Version, d.ManagedBy, d.ManagedName = p.Version, from.ID, p.FromName
+		d.Mode, d.Order = p.Mode, p.Order
+		for _, ip := range p.Owned {
+			if net.ParseIP(ip) != nil && !slices.Contains(d.Owned, ip) && len(d.Owned) < 64 {
+				d.Owned = append(d.Owned, ip)
+			}
+		}
 		d.HubWeights = map[string]int{}
 		for id, v := range p.Weights {
 			if id == x.NodeID {
@@ -368,9 +380,11 @@ func dnsTakeSettings(from HubPeer, p dnsPush) dnsConfAns {
 	}
 	if took.Provider == "cloudflare" {
 		ans.Checked = true
-		if _, err := cfZone(*took, took.Name); err != nil {
+		_, err := cfZone(*took, took.Name)
+		if err != nil {
 			ans.ReachErr = err.Error()
 		}
+		dnsReachNote(*took, err)
 	}
 	dnsWake()
 	return ans

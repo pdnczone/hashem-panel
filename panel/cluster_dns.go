@@ -14,12 +14,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -64,6 +68,16 @@ type DNSConfig struct {
 	Version     int64  `json:"version,omitempty"`
 	ManagedBy   string `json:"managed_by,omitempty"`
 	ManagedName string `json:"managed_name,omitempty"`
+
+	// Mode: "balance" (default; users are split by the shares) or "failover"
+	// (the domain points to the first working hub of Order, hub ids; hubs the
+	// order does not name come last). cluster_dns_pick.go.
+	Mode  string   `json:"mode,omitempty"`
+	Order []string `json:"order,omitempty"`
+	// Owned are the hub addresses this cluster may have put in the record, also
+	// of hubs unlinked since or whose address changed: the writer takes out the
+	// ones that no longer belong there.
+	Owned []string `json:"owned,omitempty"`
 }
 
 // dnsControllerID is the hub whose settings this hub uses: the controller it
@@ -87,13 +101,16 @@ var (
 	dnsLastErr string
 	dnsLeader  bool
 	dnsWant    []string
-	dnsLastSig string // what the webhook last got: working hubs and their weights
+	dnsExtra   []string // addresses in the record that are no hub's
+	dnsLastSig string   // what the webhook last got: working hubs and their weights
 	dnsEvery   = 30 * time.Second
+	// dnsRetryAfter: how soon a failed write is tried again.
+	dnsRetryAfter = 10 * time.Second
 	// dnsTakeoverAfter: how long the master must be silent before another hub
 	// writes the record (a short break of the link between hubs is no reason
 	// to change the record twice). Two hubs that cannot reach each other at
 	// all both write: nothing on two hubs alone can tell that from a dead one.
-	dnsTakeoverAfter = 30 * time.Second
+	dnsTakeoverAfter = 20 * time.Second
 	cfAPI            = "https://api.cloudflare.com/client/v4"
 	cfClient         = &http.Client{Timeout: 15 * time.Second}
 )
@@ -133,55 +150,48 @@ func dnsBeatIPs(b meshBeat, v4 string) []string {
 	return ips
 }
 
+// dnsKeepSilent: a hub in the record that stopped answering stays in it this
+// long (its panel may only be restarting; its tunnels run on).
+const dnsKeepSilent = 15 * time.Second
+
 // dnsHealthyGroups lists the working hubs (this one included) and whether this
-// hub leads the writes.
+// hub leads the writes. A hub in the record whose panel has just started and
+// does not know its own state yet stays in it.
 func dnsHealthyGroups(c ClusterConfig) (groups []dnsGroup, leader bool) {
+	inRecord := func(ip string) bool { return ip != "" && slices.Contains(c.DNS.Records, ip) }
 	self := meshSelfBeat(c)
+	if self.Starting && inRecord(self.IP) {
+		self.Healthy = true
+	}
 	if ips := dnsBeatIPs(self, self.IP); len(ips) > 0 {
 		groups = append(groups, dnsGroup{Key: c.NodeID, IPs: ips, Weight: dnsWeight(c.DNS.Weight)})
 	}
-	leader = true
 	meshMu.Lock()
 	for _, h := range c.Hubs {
 		st := meshState[h.ID]
 		if st == nil {
 			continue
 		}
-		if !st.Up {
-			// A master that stopped answering a moment ago may be back at once:
-			// the others wait dnsTakeoverAfter before they write in its place.
-			if st.Beat.Master && st.Beat.DNS == c.DNS.Name && !c.DNS.Master && time.Since(st.LastSeen) < dnsTakeoverAfter {
-				leader = false
-			}
+		b, ip := st.Beat, hubIP4(h, st)
+		if !st.Up && (!inRecord(ip) || time.Since(st.LastSeen) >= dnsKeepSilent) {
 			continue
 		}
-		if st.Beat.DNS == c.DNS.Name {
-			switch {
-			case st.Beat.Master && !c.DNS.Master:
-				leader = false // a master that answers writes, whatever the ids
-			case !st.Beat.Master && c.DNS.Master:
-				// I am the master; they do not outrank me
-			case st.Beat.ID < c.NodeID:
-				leader = false // same kind: the lowest id writes
-			}
+		if b.Starting && inRecord(ip) {
+			b.Healthy = true
 		}
-		if ips := dnsBeatIPs(st.Beat, h.PublicIP); len(ips) > 0 {
-			groups = append(groups, dnsGroup{Key: h.ID, IPs: ips, Weight: dnsHubWeight(c, h.ID, st.Beat.Weight)})
+		if ips := dnsBeatIPs(b, ip); len(ips) > 0 {
+			groups = append(groups, dnsGroup{Key: h.ID, IPs: ips, Weight: dnsHubWeight(c, h.ID, b.Weight)})
 		}
 	}
 	meshMu.Unlock()
-	return groups, leader
+	return groups, dnsWriter(c) == c.NodeID
 }
 
 // dnsHealthyIPs is the set of hub IPs the record should hold, and whether
 // this hub leads the writes.
 func dnsHealthyIPs(c ClusterConfig) (ips []string, leader bool) {
 	groups, leader := dnsHealthyGroups(c)
-	for _, g := range groups {
-		ips = append(ips, g.IPs...)
-	}
-	sort.Strings(ips)
-	return ips, leader
+	return dnsIPs(groups), leader
 }
 
 // dnsUnequal: the working hubs do not all have the same weight.
@@ -263,8 +273,8 @@ func dnsIPWeights(c ClusterConfig) map[string]int {
 			continue
 		}
 		hw := dnsHubWeight(c, h.ID, st.Beat.Weight)
-		if h.PublicIP != "" {
-			w[h.PublicIP] = hw
+		if ip := hubIP4(h, st); ip != "" {
+			w[ip] = hw
 		}
 		if st.Beat.IP6 != "" {
 			w[st.Beat.IP6] = hw
@@ -287,66 +297,71 @@ func dnsSig(ips []string, w map[string]int) string {
 // every dnsEvery.
 func dnsTick(c ClusterConfig) {
 	if !dnsReady(c.DNS) {
+		dnsLeading.Store(false)
 		return
 	}
+	now := time.Now()
+	writer := dnsWriter(c)
+	if writer != c.NodeID {
+		c = dnsAdoptRecords(c, writer)
+	}
 	groups, leader := dnsHealthyGroups(c)
-	var ips []string
-	for _, g := range groups {
-		ips = append(ips, g.IPs...)
-	}
-	sort.Strings(ips)
+	dnsTrackWorking(groups, now)
+	dnsLoadSample(c, groups, now)
+	// want is what the record holds (cluster_dns_pick.go)
+	want := dnsChoose(c, groups, now)
 	hook := c.DNS.Provider == "webhook"
-	// want is what the record holds: every working hub, or with Cloudflare and
-	// different shares only the hub whose turn it is
-	want := ips
-	if !hook && leader && dnsUnequal(groups) {
-		want = dnsRotate(groups, time.Duration(max(c.DNS.TTL, 60))*time.Second, time.Now())
-		sort.Strings(want)
-	}
 	var weights map[string]int
 	sig := ""
 	if hook {
 		weights = dnsIPWeights(c)
-		sig = dnsSig(ips, weights)
+		sig = dnsSig(want, weights)
+	}
+	shown := want
+	if dnsMode(c.DNS) == dnsBalance {
+		shown = dnsIPs(groups) // in a rotation the others wait for their turn
 	}
 	dnsMu.Lock()
-	dnsLeader, dnsWant = leader, ips
+	dnsLeader, dnsWant = leader, shown
 	due := time.Since(dnsLastRun) >= dnsEvery || strings.Join(want, ",") != strings.Join(c.DNS.Records, ",") || (hook && sig != dnsLastSig)
+	if dnsLastErr != "" && time.Since(dnsLastRun) < dnsRetryAfter {
+		due = false // a failing provider is not called on every tick
+	}
+	if !leader {
+		dnsLastErr = "" // what failed while this hub wrote is the writer's business now
+	}
 	dnsMu.Unlock()
-	if !leader || !due || len(want) == 0 || !dnsSettled(c) {
+	if !leader {
+		dnsLeading.Store(false)
+		dnsReachTick(c.DNS)
 		return
 	}
-	hubIPs := map[string]bool{}
-	if self := meshSelfBeat(c); self.IP != "" {
-		hubIPs[self.IP] = true
-		if self.IP6 != "" {
-			hubIPs[self.IP6] = true
-		}
+	if !due || len(want) == 0 || !dnsSettled(c) {
+		return
 	}
-	meshMu.Lock()
-	for _, h := range c.Hubs {
-		hubIPs[h.PublicIP] = true
-		if st := meshState[h.ID]; st != nil && st.Beat.IP6 != "" {
-			hubIPs[st.Beat.IP6] = true
-		}
-	}
-	meshMu.Unlock()
-	var got []string
+	var got, extra []string
 	var err error
 	if hook {
 		dnsMu.Lock()
-		dnsLastSig = sig // a failing receiver is retried every dnsEvery, not every tick
+		dnsLastSig = sig
 		dnsMu.Unlock()
-		got, err = dnsWebhookW(c, ips, weights, false)
+		got, err = dnsWebhookW(c, want, weights, false)
 	} else {
-		got, err = cfSyncA(c.DNS, want, hubIPs)
+		hubIPs := dnsKnownIPs(c)
+		for _, ip := range c.DNS.Owned {
+			hubIPs[ip] = true
+		}
+		got, extra, err = cfSyncA(c.DNS, want, hubIPs)
 	}
+	dnsReachNote(c.DNS, err)
 	dnsMu.Lock()
 	dnsLastRun = time.Now()
 	old := dnsLastErr
 	dnsLastErr = ""
 	if err != nil {
 		dnsLastErr = err.Error()
+	} else {
+		dnsExtra = extra
 	}
 	dnsMu.Unlock()
 	if err != nil {
@@ -355,9 +370,21 @@ func dnsTick(c ClusterConfig) {
 		}
 		return
 	}
-	if strings.Join(got, ",") != strings.Join(c.DNS.Records, ",") {
+	if !dnsLeading.Swap(true) && !c.DNS.Master {
+		clusterEventf("info", "DNS failover: this hub writes the domain now (%s).", c.DNS.Name)
+	}
+	// what the hubs' addresses are now: anything else was taken out
+	owned := make([]string, 0, 8)
+	for ip := range dnsKnownIPs(c) {
+		owned = append(owned, ip)
+	}
+	sort.Strings(owned)
+	moved := strings.Join(got, ",") != strings.Join(c.DNS.Records, ",")
+	if moved {
 		clusterEventf("info", "DNS failover: %s now points to %s.", c.DNS.Name, strings.Join(got, ", "))
-		_, _ = updateClusterConfig(func(x *ClusterConfig) error { x.DNS.Records = got; return nil })
+	}
+	if moved || !slices.Equal(owned, c.DNS.Owned) {
+		_, _ = updateClusterConfig(func(x *ClusterConfig) error { x.DNS.Records, x.DNS.Owned = got, owned; return nil })
 	}
 }
 
@@ -368,6 +395,9 @@ func dnsTick(c ClusterConfig) {
 func dnsSettled(c ClusterConfig) bool {
 	if s := lbSnapshot(); s == nil || s.AgeMs() < 0 {
 		return false
+	}
+	if self := meshSelfBeat(c); self.IP == "" && panelUptime() < time.Minute {
+		return false // its own address is not found yet
 	}
 	meshMu.Lock()
 	defer meshMu.Unlock()
@@ -436,7 +466,7 @@ func dnsWebhookW(c ClusterConfig, ips []string, weights map[string]int, test boo
 	}
 	resp, err := cfClient.Do(req)
 	if err != nil {
-		return nil, redactErr(fmt.Errorf("webhook unreachable: %v", err), c.DNS.Token)
+		return nil, reachErr{redactErr(fmt.Errorf("webhook unreachable: %v", err), c.DNS.Token)}
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
@@ -454,78 +484,175 @@ type cfResp struct {
 	Result  json.RawMessage            `json:"result"`
 }
 
+// dnsRoute is how this hub reaches Cloudflare: "auto" (directly, and when that
+// fails through this hub's tunnels), "direct_only", or "tunnel" (one chosen
+// tunnel). "direct", what older versions saved by default, is "auto".
 func dnsRoute(d DNSConfig) string {
-	if d.Route == "tunnel" {
-		return "tunnel"
+	switch d.Route {
+	case "tunnel", "direct_only":
+		return d.Route
 	}
-	return "direct"
+	return "auto"
 }
 
-// dnsClient is the HTTP client for Cloudflare: direct, or through the tunnel's
-// SOCKS5 proxy ("socks5h": the name is resolved on the foreign side too).
-func dnsClient(d DNSConfig) *http.Client {
-	if d.Route == "tunnel" {
-		if port, err := routePort(d.TunnelID, d.TunnelPort); err == nil {
-			return tunnelProxyClient(port, 25*time.Second)
+// cfRoutes are the ways to Cloudflare in the order to try; the one that worked
+// last is tried first for an hour (tests replace it).
+var cfRoutes = func(d DNSConfig) []tgRoute {
+	direct := tgRoute{key: "direct", name: "directly", connect: tgDirectConnect,
+		client: func(time.Duration) (*http.Client, error) { return cfClient, nil }}
+	if dnsRoute(d) == "direct_only" {
+		return []tgRoute{direct}
+	}
+	out := append([]tgRoute{direct}, tgAutoTunnels()...)
+	cfGood.Lock()
+	key, fresh := cfGood.key, time.Since(cfGood.at) < tgRouteKeep
+	cfGood.Unlock()
+	for i, r := range out {
+		if fresh && r.key == key && i > 0 {
+			copy(out[1:i+1], out[:i])
+			out[0] = r
+			break
 		}
 	}
-	return cfClient
+	return out
+}
+
+// cfGood is the tunnel that reached Cloudflare when the direct way did not.
+var cfGood struct {
+	sync.Mutex
+	key string
+	at  time.Time
+}
+
+func cfGoodSet(key string, ok bool) {
+	cfGood.Lock()
+	defer cfGood.Unlock()
+	switch {
+	case !ok && cfGood.key == key:
+		cfGood.key = ""
+	case ok && (cfGood.key != key || time.Since(cfGood.at) >= tgRouteKeep):
+		cfGood.key, cfGood.at = key, time.Now()
+	}
+}
+
+// cfSend makes one API call with this client. connect > 0: given up when it is
+// not connected by then (a blocked way must not hold the others up).
+func cfSend(cl *http.Client, connect time.Duration, token, method, path string, body []byte) ([]byte, int, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if connect > 0 {
+		slow := time.AfterFunc(connect, cancel)
+		defer slow.Stop()
+		ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { slow.Stop() }})
+	}
+	var rd io.Reader
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, cfAPI+path, rd)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := cl.Do(req)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			err = fmt.Errorf("no connection within %d seconds", int(connect/time.Second))
+		}
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return data, resp.StatusCode, err
+}
+
+// cfAnswer reads an API answer. An answer that is not the API's (a block page,
+// a gateway error) or that refuses this server's address says the way is bad,
+// not the settings: reachErr.
+func cfAnswer(data []byte, status int) (json.RawMessage, error) {
+	var r cfResp
+	if json.Unmarshal(data, &r) != nil {
+		return nil, reachErr{fmt.Errorf("Cloudflare answered HTTP %d", status)}
+	}
+	if r.Success {
+		return r.Result, nil
+	}
+	var msgs []string
+	for _, e := range r.Errors {
+		msgs = append(msgs, e.Message)
+	}
+	if len(msgs) == 0 {
+		msgs = append(msgs, fmt.Sprintf("HTTP %d", status))
+	}
+	err := fmt.Errorf("Cloudflare: %s", strings.Join(msgs, "; "))
+	if status >= 500 || strings.Contains(err.Error(), "from location") { // a token limited to some addresses
+		return nil, reachErr{err}
+	}
+	return nil, err
 }
 
 func cfCall(d DNSConfig, method, path string, body any) (json.RawMessage, error) {
 	token := d.Token
-	var rd io.Reader
+	var b []byte
 	if body != nil {
-		b, _ := json.Marshal(body)
-		rd = bytes.NewReader(b)
+		b, _ = json.Marshal(body)
 	}
-	req, err := http.NewRequest(method, cfAPI+path, rd)
-	if err != nil {
-		return nil, err
+	if dnsRoute(d) == "tunnel" {
+		return cfCallTunnel(d, method, path, b)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	viaTunnel := d.Route == "tunnel"
-	if viaTunnel {
-		port, err := routePort(d.TunnelID, d.TunnelPort)
-		if err != nil {
-			return nil, fmt.Errorf("Cloudflare tunnel route: %v", err)
-		}
-		if d.TunnelID == nil { // an old manual port: say now if it is no SOCKS5 proxy
-			if err := tunnelProxyReady(port); err != nil {
-				return nil, fmt.Errorf("Cloudflare tunnel route: %v", err)
-			}
-		}
-	}
-	resp, err := dnsClient(d).Do(req)
-	if err != nil {
-		if viaTunnel {
-			if d.TunnelID != nil {
-				if why := routeWhy(d.TunnelID); why != "" {
-					return nil, fmt.Errorf("Cloudflare tunnel route: %s", why)
+	var whys []string
+	for _, r := range cfRoutes(d) {
+		cl, err := r.client(25 * time.Second)
+		var res json.RawMessage
+		if err == nil {
+			var data []byte
+			var status int
+			data, status, err = cfSend(cl, r.connect, token, method, path, b)
+			if err == nil {
+				var re reachErr
+				res, err = cfAnswer(data, status)
+				if !errors.As(err, &re) {
+					cfGoodSet(r.key, true)
+					return res, err
 				}
 			}
-			return nil, redactErr(fmt.Errorf("Cloudflare unreachable through the tunnel: %v", err), token)
 		}
-		return nil, redactErr(fmt.Errorf("Cloudflare unreachable: %v", err), token)
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	var r cfResp
-	if json.Unmarshal(data, &r) != nil {
-		return nil, fmt.Errorf("Cloudflare answered HTTP %d", resp.StatusCode)
-	}
-	if !r.Success {
-		var msgs []string
-		for _, e := range r.Errors {
-			msgs = append(msgs, e.Message)
+		cfGoodSet(r.key, false)
+		why := redactErr(err, token).Error()
+		if r.tunnel != nil {
+			if w := routeWhy(r.tunnel); w != "" {
+				why = w
+			}
+			why = "through " + r.name + ": " + why
 		}
-		if len(msgs) == 0 {
-			msgs = append(msgs, fmt.Sprintf("HTTP %d", resp.StatusCode))
-		}
-		return nil, fmt.Errorf("Cloudflare: %s", strings.Join(msgs, "; "))
+		whys = append(whys, why)
 	}
-	return r.Result, nil
+	if len(whys) == 1 && strings.HasPrefix(whys[0], "Cloudflare") {
+		return nil, reachErr{errors.New(whys[0])}
+	}
+	return nil, reachErr{errors.New("Cloudflare unreachable: " + tgCut(strings.Join(whys, "; "), 600))}
+}
+
+// cfCallTunnel is cfCall through the one chosen tunnel.
+func cfCallTunnel(d DNSConfig, method, path string, body []byte) (json.RawMessage, error) {
+	port, err := routePort(d.TunnelID, d.TunnelPort)
+	if err == nil && d.TunnelID == nil { // an old manual port: say now if it is no SOCKS5 proxy
+		err = tunnelProxyReady(port)
+	}
+	if err != nil {
+		return nil, reachErr{fmt.Errorf("Cloudflare tunnel route: %v", err)}
+	}
+	data, status, err := cfSend(tunnelProxyClient(port, 25*time.Second), 0, d.Token, method, path, body)
+	if err != nil {
+		if d.TunnelID != nil {
+			if why := routeWhy(d.TunnelID); why != "" {
+				return nil, reachErr{fmt.Errorf("Cloudflare tunnel route: %s", why)}
+			}
+		}
+		return nil, reachErr{redactErr(fmt.Errorf("Cloudflare unreachable through the tunnel: %v", err), d.Token)}
+	}
+	return cfAnswer(data, status)
 }
 
 // cfZone finds the zone that holds name by trying its parent domains.
@@ -576,15 +703,16 @@ func cfListA(d DNSConfig, zone, name string) ([]cfRecord, error) {
 }
 
 // cfSyncA makes name's A and AAAA records equal want. Records whose IP is not
-// a hub's are left alone; the result is the hub IPs the record holds afterwards.
-func cfSyncA(d DNSConfig, want []string, hubIPs map[string]bool) ([]string, error) {
+// a hub's are left alone (extra lists them); got is the hub IPs the record
+// holds afterwards.
+func cfSyncA(d DNSConfig, want []string, hubIPs map[string]bool) (got, extra []string, err error) {
 	zone, err := cfZone(d, d.Name)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	have, err := cfListA(d, zone, d.Name)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	wantSet := map[string]bool{}
 	for _, ip := range want {
@@ -593,8 +721,11 @@ func cfSyncA(d DNSConfig, want []string, hubIPs map[string]bool) ([]string, erro
 	haveSet := map[string]bool{}
 	for _, r := range have {
 		haveSet[r.Content] = true
+		if !hubIPs[r.Content] && !wantSet[r.Content] && !slices.Contains(extra, r.Content) {
+			extra = append(extra, r.Content)
+		}
 		if r.Proxied {
-			return nil, fmt.Errorf("%s is proxied (orange cloud); tunnels need DNS only (grey cloud)", d.Name)
+			return nil, nil, fmt.Errorf("%s is proxied (orange cloud); tunnels need DNS only (grey cloud)", d.Name)
 		}
 	}
 	ttl := d.TTL
@@ -606,7 +737,7 @@ func cfSyncA(d DNSConfig, want []string, hubIPs map[string]bool) ([]string, erro
 			if _, err := cfCall(d, "POST", "/zones/"+zone+"/dns_records", map[string]any{
 				"type": dnsRecordType(ip), "name": d.Name, "content": ip, "ttl": ttl, "proxied": false,
 			}); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
@@ -614,16 +745,16 @@ func cfSyncA(d DNSConfig, want []string, hubIPs map[string]bool) ([]string, erro
 		// a TTL changed in the panel reaches the records already there
 		if wantSet[r.Content] && hubIPs[r.Content] && r.TTL != ttl {
 			if _, err := cfCall(d, "PATCH", "/zones/"+zone+"/dns_records/"+r.ID, map[string]any{"ttl": ttl}); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 		if hubIPs[r.Content] && !wantSet[r.Content] {
 			if _, err := cfCall(d, "DELETE", "/zones/"+zone+"/dns_records/"+r.ID, nil); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
-	return want, nil
+	return want, extra, nil
 }
 
 // dnsRecordType is A for an IPv4 address, AAAA for an IPv6 one.
@@ -662,7 +793,18 @@ type dnsViewT struct {
 	// Role: "controller" (its settings go to every hub), "follower" (it uses
 	// ManagedName's), "solo" (on, from an older version, not sent to the
 	// others) or "off".
-	Role        string `json:"role"`
+	Role string `json:"role"`
+	// Mode and Order: see DNSConfig (Order lists every hub). Writer is the hub
+	// that writes the domain now. Extra are addresses in the record that belong
+	// to no hub: users go there too. Balancing: the record is moved to bring the
+	// measured shares to the wanted ones.
+	Mode      string          `json:"mode"`
+	Order     []string        `json:"order"`
+	Writer    string          `json:"writer,omitempty"`
+	Extra     []string        `json:"extra,omitempty"`
+	Balancing bool            `json:"balancing,omitempty"`
+	Stuck     map[string]bool `json:"stuck,omitempty"`
+
 	ManagedName string `json:"managed_name,omitempty"`
 	ManagedBy   string `json:"managed_by,omitempty"`
 	SelfID      string `json:"self_id"`
@@ -686,6 +828,8 @@ type dnsMember struct {
 	FollowEr string `json:"follow_err,omitempty"` // why it did not take them
 	Old      bool   `json:"old,omitempty"`        // its panel needs an update first
 	ReachErr string `json:"reach_err,omitempty"`  // it cannot reach the provider with its own route
+	// NoReach: its heartbeat says it cannot reach the provider now.
+	NoReach bool `json:"no_reach,omitempty"`
 	// MissingPorts: ports this hub serves and that hub does not: users sent
 	// there on them would fail (Sync Tunnels fixes it).
 	MissingPorts []int  `json:"missing_ports,omitempty"`
@@ -701,10 +845,11 @@ func dnsMembers(c ClusterConfig) []dnsMember {
 	meshMu.Lock()
 	defer meshMu.Unlock()
 	for _, h := range c.Hubs {
-		m := dnsMember{ID: h.ID, Name: h.Name, IP: h.PublicIP, Weight: dnsHubWeight(c, h.ID, 0)}
+		m := dnsMember{ID: h.ID, Name: h.Name, IP: hubIP4(h, meshState[h.ID]), Weight: dnsHubWeight(c, h.ID, 0)}
 		if st := meshState[h.ID]; st != nil {
 			m.Up = st.Up
 			m.Weight = dnsHubWeight(c, h.ID, st.Beat.Weight)
+			m.NoReach = st.Up && st.Beat.DNSDown
 			m.DNSOn = st.Up && c.DNS.Name != "" && st.Beat.DNS == c.DNS.Name
 			m.Healthy = st.Up && st.Beat.Healthy
 			m.Follows = st.Up && st.Beat.DNSBy == c.NodeID && st.Beat.DNSVer == c.DNS.Version && dnsIsController(c)
@@ -743,11 +888,15 @@ func dnsMembersFollow(c ClusterConfig, ms []dnsMember) {
 
 // dnsShare is one working hub and the share of users its weight gives it.
 type dnsShare struct {
+	ID      string `json:"id"`
 	Name    string `json:"name"`
 	IP      string `json:"ip"`
 	Weight  int    `json:"weight"`
 	Percent int    `json:"percent"`
-	Self    bool   `json:"self,omitempty"`
+	// Actual is the share of the traffic the hub really carries (the last few
+	// minutes), nil while it is not measured.
+	Actual *float64 `json:"actual,omitempty"`
+	Self   bool     `json:"self,omitempty"`
 }
 
 // dnsShares lists the working hubs (this one included) with their percentages.
@@ -755,12 +904,12 @@ func dnsShares(c ClusterConfig) []dnsShare {
 	self := meshSelfBeat(c)
 	var out []dnsShare
 	if self.Healthy && isIPv4(self.IP) {
-		out = append(out, dnsShare{Name: c.Name, IP: self.IP, Weight: dnsWeight(c.DNS.Weight), Self: true})
+		out = append(out, dnsShare{ID: c.NodeID, Name: c.Name, IP: self.IP, Weight: dnsWeight(c.DNS.Weight), Self: true})
 	}
 	meshMu.Lock()
 	for _, h := range c.Hubs {
-		if st := meshState[h.ID]; st != nil && st.Up && st.Beat.Healthy && isIPv4(h.PublicIP) {
-			out = append(out, dnsShare{Name: h.Name, IP: h.PublicIP, Weight: dnsHubWeight(c, h.ID, st.Beat.Weight)})
+		if st := meshState[h.ID]; st != nil && st.Up && st.Beat.Healthy && isIPv4(hubIP4(h, st)) {
+			out = append(out, dnsShare{ID: h.ID, Name: h.Name, IP: hubIP4(h, st), Weight: dnsHubWeight(c, h.ID, st.Beat.Weight)})
 		}
 	}
 	meshMu.Unlock()
@@ -768,7 +917,16 @@ func dnsShares(c ClusterConfig) []dnsShare {
 	for _, s := range out {
 		sum += s.Weight
 	}
+	keys := make([]string, 0, len(out))
+	for _, s := range out {
+		keys = append(keys, s.ID)
+	}
+	actual, ok := dnsActual(keys, time.Now())
 	for i := range out {
+		if ok {
+			v := math.Round(1000*actual[out[i].ID]) / 10
+			out[i].Actual = &v
+		}
 		out[i].Percent = int(math.Round(100 * float64(out[i].Weight) / float64(sum)))
 	}
 	return out
@@ -787,14 +945,37 @@ func dnsView(c ClusterConfig) dnsViewT {
 	case c.DNS.Enabled:
 		role = "solo"
 	}
+	writer := ""
+	if dnsReady(c.DNS) {
+		writer = dnsWriter(c)
+	}
+	dnsBal.Lock()
+	balancing := dnsBal.active && dnsMode(c.DNS) == dnsBalance && c.DNS.Provider != "webhook"
+	dnsBal.Unlock()
+	stuck := dnsStuckIDs(time.Now())
+	reachWhy := ""
+	if dnsReachDown(c.DNS) {
+		dnsReach.Lock()
+		reachWhy = dnsReach.err
+		dnsReach.Unlock()
+	}
 	dnsMu.Lock()
 	defer dnsMu.Unlock()
-	v := dnsViewT{Enabled: c.DNS.Enabled, Provider: c.DNS.Provider, URL: c.DNS.URL, Name: c.DNS.Name, TTL: c.DNS.TTL,
+	v := dnsViewT{Mode: dnsMode(c.DNS), Order: dnsOrdered(c), Writer: writer, Balancing: balancing, Stuck: stuck,
+		Enabled: c.DNS.Enabled, Provider: c.DNS.Provider, URL: c.DNS.URL, Name: c.DNS.Name, TTL: c.DNS.TTL,
 		HasToken: c.DNS.Token != "", Records: c.DNS.Records, Want: dnsWant, Leader: dnsLeader, Error: dnsLastErr, Weight: dnsWeight(c.DNS.Weight), Shares: shares, Master: c.DNS.Master, Members: members,
 		Route: dnsRoute(c.DNS), TunnelID: c.DNS.TunnelID, TunnelPort: c.DNS.TunnelPort, Tunnels: tunnels,
 		Role: role, ManagedName: dnsManagedLabel(c), ManagedBy: c.DNS.ManagedBy, SelfID: c.NodeID}
 	if role != "follower" {
 		v.ManagedName = ""
+	}
+	if v.Leader {
+		v.Extra = dnsExtra
+	}
+	for i := range v.Members {
+		if v.Members[i].Self && reachWhy != "" {
+			v.Members[i].ReachErr = reachWhy
+		}
 	}
 	if !dnsLastRun.IsZero() {
 		v.LastRun = dnsLastRun.Format("2006-01-02 15:04:05")
@@ -845,6 +1026,8 @@ func handleClusterDNS(w http.ResponseWriter, r *http.Request) {
 		HubWeights map[string]int `json:"hub_weights"`
 		Test       bool           `json:"test"`
 		TakeOver   bool           `json:"take_over"`
+		Mode       *string        `json:"mode"`
+		Order      []string       `json:"order"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<13)).Decode(&req) != nil {
 		writeAPIError(w, r, "E-CLUSTER-01", "")
@@ -855,7 +1038,7 @@ func handleClusterDNS(w http.ResponseWriter, r *http.Request) {
 	following := d.ManagedBy != ""
 	if following && !req.Test && !req.TakeOver {
 		// only the route to the provider is this hub's own
-		if req.Enabled != nil || req.Provider != nil || req.Token != nil || req.URL != nil || req.Name != nil || req.TTL > 0 || req.Weight > 0 || req.HubWeights != nil {
+		if req.Enabled != nil || req.Provider != nil || req.Token != nil || req.URL != nil || req.Name != nil || req.TTL > 0 || req.Weight > 0 || req.HubWeights != nil || req.Mode != nil || req.Order != nil {
 			writeAPIError(w, r, "E-CLUSTER-02", "this hub follows the DNS failover settings of "+dnsManagedLabel(c)+": change them there, or take over here")
 			return
 		}
@@ -881,8 +1064,8 @@ func handleClusterDNS(w http.ResponseWriter, r *http.Request) {
 		d.Weight = dnsWeight(req.Weight)
 	}
 	if req.Route != nil {
-		if *req.Route != "direct" && *req.Route != "tunnel" {
-			writeAPIError(w, r, "E-CLUSTER-02", "the route to Cloudflare is direct or tunnel")
+		if !slices.Contains([]string{"auto", "direct", "direct_only", "tunnel"}, *req.Route) {
+			writeAPIError(w, r, "E-CLUSTER-02", "the route to Cloudflare is auto, direct_only or tunnel")
 			return
 		}
 		d.Route = *req.Route
@@ -902,7 +1085,7 @@ func handleClusterDNS(w http.ResponseWriter, r *http.Request) {
 		d.TunnelID, d.TunnelPort = nil, req.TunnelPort // an old manual port
 	}
 	if d.Route == "tunnel" && d.TunnelID == nil && d.TunnelPort == 0 && d.Provider != "webhook" {
-		writeAPIError(w, r, "E-CLUSTER-02", "choose a tunnel, or choose Direct")
+		writeAPIError(w, r, "E-CLUSTER-02", "choose a tunnel, or choose Automatic")
 		return
 	}
 	if req.HubWeights != nil && !following {
@@ -928,6 +1111,22 @@ func handleClusterDNS(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			d.HubWeights[id] = share
+		}
+	}
+	if req.Mode != nil && !following {
+		if *req.Mode != dnsBalance && *req.Mode != dnsFailover {
+			writeAPIError(w, r, "E-CLUSTER-02", "the mode is balance or failover")
+			return
+		}
+		d.Mode = *req.Mode
+	}
+	if req.Order != nil && !following {
+		known := dnsOrdered(c)
+		d.Order = nil
+		for _, id := range req.Order {
+			if slices.Contains(known, id) && !slices.Contains(d.Order, id) {
+				d.Order = append(d.Order, id)
+			}
 		}
 	}
 	if req.Enabled != nil {
@@ -999,7 +1198,11 @@ func handleClusterDNS(w http.ResponseWriter, r *http.Request) {
 			d.Version = c.DNS.Version + 1
 		}
 	}
-	if _, err := updateClusterConfig(func(x *ClusterConfig) error { x.DNS = d; return nil }); err != nil {
+	if _, err := updateClusterConfig(func(x *ClusterConfig) error {
+		d.Records, d.Owned = x.DNS.Records, x.DNS.Owned // the loop may have written them meanwhile
+		x.DNS = d
+		return nil
+	}); err != nil {
 		writeAPIError(w, r, "E-CLUSTER-06", err.Error())
 		return
 	}

@@ -81,6 +81,17 @@ type meshBeat struct {
 	DNSBy  string `json:"dns_by,omitempty"`
 	DNSVer int64  `json:"dns_ver,omitempty"`
 
+	// DNSDown: the hub cannot reach the DNS provider, so another one writes the
+	// domain. DNSRecs is what the domain points to, from the hub that writes it.
+	DNSDown bool     `json:"dns_down,omitempty"`
+	DNSRecs []string `json:"dns_recs,omitempty"`
+	// Starting: the panel has just started and does not know yet whether its
+	// tunnels work (Healthy says nothing).
+	Starting bool `json:"starting,omitempty"`
+	// Load is the traffic of the hub's tunnels in bytes per second, nil when it
+	// is not measured for every one of them.
+	Load *float64 `json:"load,omitempty"`
+
 	// Links are the hub's foreign servers, for the cluster map of the other
 	// hubs (which foreign server each Iran hub reaches).
 	Links []meshLink `json:"links,omitempty"`
@@ -173,6 +184,30 @@ func meshLinksOf(s *HubSnapshot) []meshLink {
 	}
 	return out
 }
+
+// meshLoad is the traffic of all tunnels together, nil when one that works has
+// no counters (the others' sum would say nothing about the hub's share).
+func meshLoad(s *HubSnapshot, links []meshLink) *float64 {
+	if s == nil || len(links) == 0 {
+		return nil
+	}
+	for _, l := range s.All() {
+		if l.RemotePub != "" && (l.HealthState == stateHealthy || l.HealthState == stateDegraded) && (l.Rx == nil || l.Tx == nil) {
+			return nil
+		}
+	}
+	sum := 0.0
+	for _, l := range links {
+		sum += l.Bps
+	}
+	return &sum
+}
+
+// meshWarmup: how long after its start a panel may need to see its tunnels.
+const meshWarmup = 20 * time.Second
+
+// panelUptime is how long the panel runs (a var for tests).
+var panelUptime = func() time.Duration { return time.Since(panelStartedAt) }
 
 // hubRT is what this hub knows about another one right now.
 type hubRT struct {
@@ -301,7 +336,7 @@ func meshSelfBeat(c ClusterConfig) meshBeat {
 	}
 	b := meshBeat{ID: c.NodeID, Name: c.Name, IP: ip, IP6: meshIP6(), Port: cfg.Port, Pools: map[string]meshPoolState{}, Version: panelVersion}
 	clusterRT.mu.Lock()
-	anyOK := false
+	anyOK, pools := false, 0
 	for _, p := range c.Pools {
 		pl := clusterRT.plans[p.key()]
 		healthy := 0
@@ -309,6 +344,9 @@ func meshSelfBeat(c ClusterConfig) meshBeat {
 			if lr := clusterRT.links[t.Link]; lr != nil && lr.Up {
 				healthy++
 			}
+		}
+		if !p.Disabled {
+			pools++
 		}
 		if pl.State == poolOK || pl.State == poolDegraded {
 			anyOK = true
@@ -319,17 +357,23 @@ func meshSelfBeat(c ClusterConfig) meshBeat {
 	}
 	clusterRT.mu.Unlock()
 	snap := lbSnapshot()
-	if len(c.Pools) == 0 {
-		// Without pools the cluster monitor is idle and its link list stops
+	if pools == 0 {
+		// Without (enabled) pools the cluster monitor is idle and its link list stops
 		// being updated (it keeps what it had when the last pool went): the
 		// live snapshot says whether a tunnel works.
 		anyOK = snapAnyLinkWorks(snap)
 	}
 	b.Links = meshLinksOf(snap)
+	b.Load = meshLoad(snap, b.Links)
 	b.Healthy = anyOK
+	b.Starting = !anyOK && (snap == nil || snap.AgeMs() < 0 || panelUptime() < meshWarmup)
 	if c.DNS.Enabled {
 		b.DNS = c.DNS.Name
 		b.DNSBy, b.DNSVer = dnsControllerID(c), c.DNS.Version
+		b.DNSDown = dnsReachDown(c.DNS)
+		if dnsLeading.Load() {
+			b.DNSRecs = c.DNS.Records
+		}
 	}
 	b.Weight = dnsWeight(c.DNS.Weight)
 	b.Master = c.DNS.Enabled && c.DNS.Master
@@ -749,7 +793,7 @@ func meshForwardTarget(c ClusterConfig, p LBPool) string {
 	best, bestLat := "", 0.0
 	for _, h := range c.Hubs {
 		st := meshState[h.ID]
-		if st == nil || !st.Up || !isIPv4(h.PublicIP) {
+		if st == nil || !st.Up || !isIPv4(hubIP4(h, st)) {
 			continue
 		}
 		okAll := true
@@ -760,7 +804,7 @@ func meshForwardTarget(c ClusterConfig, p LBPool) string {
 			}
 		}
 		if okAll && (best == "" || st.LatencyMs < bestLat) {
-			best, bestLat = h.PublicIP, st.LatencyMs
+			best, bestLat = hubIP4(h, st), st.LatencyMs
 		}
 	}
 	return best

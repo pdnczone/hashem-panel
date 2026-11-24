@@ -517,9 +517,6 @@ func TestCloudflareViaTunnelProxy(t *testing.T) {
 	if _, err := cfZone(d, d.Name); err == nil || !strings.Contains(err.Error(), "nothing answers on 127.0.0.1:1") || strings.Contains(err.Error(), "tok") {
 		t.Fatalf("a dead proxy: %v", err)
 	}
-	if dnsClient(DNSConfig{Route: "tunnel"}) != cfClient || dnsClient(DNSConfig{TunnelPort: 9}) != cfClient {
-		t.Fatal("no port or direct route means the plain client")
-	}
 }
 
 func TestDNSWebhook(t *testing.T) {
