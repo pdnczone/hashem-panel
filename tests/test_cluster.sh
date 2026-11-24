@@ -86,7 +86,7 @@ PANEL_BIN="$T/none" check "no panel: refused" 1 "$(PANEL_BIN="$T/none" cli_clust
 # extra hubs on a foreign server
 check "join-hub asks for Pro first" 1 "$(ext cli_join_hub | grep -c 'pro_ok cluster')"
 check "join-hub refuses the first hub's IP" 1 "$(ext cli_join_hub | grep -c 'already serves the Iran hub')"
-check "join-hub never reuses a GRE address" 1 "$(ext cli_join_hub | grep -c 'is already used here')"
+check "join-hub never reuses a GRE address" 1 "$(ext cli_join_hub | grep -c 'gre_py clash "$B_FOREIGN_GRE" "$B_IRAN_GRE"')"
 hubs_init
 check "hubs.json created" '{"hubs": []}' "$(cat "$HUBS_FILE")"
 check "first extra hub is 2" 2 "$(hub_next_id)"

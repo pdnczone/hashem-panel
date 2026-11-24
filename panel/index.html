@@ -1055,6 +1055,11 @@
   .dnsw-actions { display:flex; flex-wrap:wrap; gap:8px; }
   .dnsw-panel { padding:12px; border:1px solid var(--ln); border-radius:var(--r-md); background:var(--s2); }
   .dnsw-sliders { display:grid; gap:10px; }
+  .dnsw-order { display:grid; gap:6px; margin-bottom:8px; counter-reset:dnsw; }
+  .dnsw-ord { display:flex; align-items:center; gap:10px; font-size:var(--fs-small); color:var(--tx); counter-increment:dnsw; }
+  .dnsw-ord-n::before { content:counter(dnsw) '.'; color:var(--tx); font-variant-numeric:tabular-nums; }
+  .dnsw-ord button { margin-inline-start:auto; }
+  .dnsw-ord:first-child button { visibility:hidden; }
   .dnsw-sl { display:grid; grid-template-columns:minmax(0, 1fr) minmax(90px, 1.4fr) 44px; align-items:center; gap:10px; font-size:var(--fs-small); }
   .dnsw-sl label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--tx); }
   .dnsw-sl input { width:100%; accent-color:var(--ac); }

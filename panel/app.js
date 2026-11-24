@@ -11557,11 +11557,14 @@ const RT_STATE = { healthy: ['ok', 'Healthy'], degraded: ['warn', 'Degraded'], d
 // is kept when the card is redrawn.
 function rtRender(box, tunnels, cfg, auto) {
   const name = box.id;
-  let sel = auto && cfg.route !== 'direct' ? 'auto' : 'direct';
+  // auto: true for Telegram, 'cf' for Cloudflare (its direct choice is stored
+  // as direct_only: older versions saved "direct" when nothing was chosen)
+  const cf = auto === 'cf', direct = cf ? 'direct_only' : 'direct';
+  let sel = auto && cfg.route !== direct ? 'auto' : direct;
   if (cfg.route === 'tunnel') sel = cfg.tunnel_id != null ? 't:' + cfg.tunnel_id : (cfg.tunnel_port ? 'p:' + cfg.tunnel_port : sel);
   if (box.dataset.touched === '1') { const cur = box.querySelector('input:checked'); if (cur) sel = cur.value; }
-  const rows = auto ? [{ v: 'auto', name: tr('', 'Automatic'), sub: tr('', 'Directly, and through a tunnel when Telegram is blocked here'), state: '' }] : [];
-  rows.push({ v: 'direct', name: tr('', auto ? 'Direct only' : 'Direct'), sub: tr('', 'Straight out from this server'), state: '' });
+  const rows = auto ? [{ v: 'auto', name: tr('', 'Automatic'), sub: tr('', cf ? 'Directly, and through a tunnel when Cloudflare is blocked here' : 'Directly, and through a tunnel when Telegram is blocked here'), state: '' }] : [];
+  rows.push({ v: direct, name: tr('', auto ? 'Direct only' : 'Direct'), sub: tr('', 'Straight out from this server'), state: '' });
   tunnels.forEach(t => rows.push({ v: 't:' + t.id, name: t.name, sub: t.remote || '', state: t.state }));
   if (cfg.route === 'tunnel' && cfg.tunnel_id == null && cfg.tunnel_port) rows.push({ v: 'p:' + cfg.tunnel_port, name: tr('', 'Port') + ' ' + cfg.tunnel_port, sub: tr('', 'A SOCKS5 port saved by an older version'), state: '' });
   if (sel.startsWith('t:') && !tunnels.some(t => 't:' + t.id === sel)) rows.push({ v: sel, name: tr('', 'Tunnel') + ' ' + sel.slice(2), sub: tr('', 'No longer on this server'), state: 'down' });
@@ -11621,8 +11624,9 @@ function dnswRole(dns) { return dns.role || (dns.enabled ? (dns.master ? 'contro
 
 // What each hub looks like in the picture.
 function dnswHubs(dns) {
-  const recs = dns.records || [], on = !!dns.enabled, role = dnswRole(dns), pct = {};
-  (dns.shares || []).forEach(s => { pct[s.ip] = s.percent; });
+  const recs = dns.records || [], on = !!dns.enabled, role = dnswRole(dns), pct = {}, act = {}, fo = dns.mode === 'failover';
+  (dns.shares || []).forEach(s => { pct[s.ip] = s.percent; if (s.actual != null) act[s.ip] = s.actual; });
+  const other = on && dns.writer && (dns.members || []).some(m => m.self && m.reach_err) && !dns.leader;
   return (dns.members || []).map(m => {
     const inRec = !!m.ip && recs.indexOf(m.ip) >= 0;
     let st, text;
@@ -11630,6 +11634,7 @@ function dnswHubs(dns) {
     else if (!m.up) { st = 'bad'; text = inRec ? 'Unreachable, being taken out' : 'Unreachable, taken out'; }
     else if (!m.healthy) { st = 'bad'; text = inRec ? 'Not working, being taken out' : 'Not working, taken out'; }
     else if (inRec) { st = 'ok'; text = 'Gets users'; }
+    else if (fo) { st = 'wait'; text = 'On standby'; }
     else { st = 'wait'; text = dns.leader && (dns.shares || []).length > 1 && (dns.want || []).indexOf(m.ip) >= 0 ? 'Waiting for its turn' : 'Being added'; }
     const notes = [];
     const ctl = (m.self && role === 'controller') || (!m.self && role === 'follower' && m.id === dns.managed_by);
@@ -11639,10 +11644,12 @@ function dnswHubs(dns) {
       else if (m.old) notes.push(['err', 'Needs a panel update']);
       else if (m.follow_err) notes.push(['err', m.follow_err, true]);
       else notes.push(['wait', 'Getting the settings…']);
-      if (m.reach_err) notes.push(['warn', 'Cannot reach Cloudflare: it could not take over']);
+      if (m.reach_err || m.no_reach) notes.push(['warn', 'Cannot reach Cloudflare: it could not take over']);
     }
-    if (on && m.self && dns.leader) notes.push(['dim', 'Writes the domain now']);
-    return { m, st, text, pct: on && st === 'ok' && pct[m.ip] != null ? pct[m.ip] : null, notes, missing: m.missing_ports || [] };
+    if (on && m.self && m.reach_err) notes.push(['warn', other ? 'Cannot reach Cloudflare now: another server writes the domain' : 'Cannot reach Cloudflare now']);
+    if (on && (m.id === dns.writer || (m.self && dns.leader))) notes.push(['dim', 'Writes the domain now']);
+    if (on && (dns.stuck || {})[m.id]) notes.push(['warn', 'Gets almost no traffic though the domain points to it: check that users can reach its ports']);
+    return { m, st, text, pct: on && !fo && m.up && m.healthy && pct[m.ip] != null ? pct[m.ip] : null, act: on && act[m.ip] != null ? act[m.ip] : null, notes, missing: m.missing_ports || [] };
   });
 }
 
@@ -11651,6 +11658,11 @@ function dnswHeadline(dns, hubs) {
   if (dns.error) return ['err', tr('', 'The domain could not be updated:') + ' ' + dns.error];
   if (role === 'off') return ['off', tr('', 'Off. Users reach each server by its own IP.')];
   if (!(dns.records || []).length) return ['wait', tr('', 'Starting: the domain is set in about 30 seconds.')];
+  if (dns.mode === 'failover') {
+    const bad = hubs.some(h => h.st === 'bad');
+    return [bad ? 'warn' : 'ok', tr('', bad ? 'A server is not working: users go to the next one that works.' : 'Working. All users go to the first server; the others are on standby.')];
+  }
+  if (dns.balancing) return ['ok', tr('', 'Working. New users are being sent more to the server that is below its share.')];
   const ok = hubs.filter(h => h.st === 'ok').length, bad = hubs.filter(h => h.st === 'bad').length;
   if (bad) return ['warn', tr('', 'A server is not working: its users go to the working ones.')];
   if (ok > 1) return ['ok', tr('', 'Working. Users are shared between') + ' ' + ok + ' ' + tr('', 'servers.')];
@@ -11668,6 +11680,7 @@ function dnswPicture(dns) {
       ${h.m.ip ? `<div class="dnsw-hub-ip u-mono">${esc(h.m.ip)}</div>` : ''}
       <div class="dnsw-hub-state"><span class="dnsw-dot"></span>${esc(tr('', h.text))}</div>
       ${h.pct != null ? `<div class="dnsw-share" role="img" aria-label="${h.pct}%"><span style="width:${Math.max(2, h.pct)}%"></span></div><div class="dnsw-pct"><b>${h.pct}%</b> ${esc(tr('', 'of users'))}</div>` : ''}
+      ${h.act != null ? `<div class="dnsw-pct" title="${esc(tr('', 'The share of the traffic this server really carried in the last minutes'))}">${esc(tr('', 'Carries now'))} <b>${h.act}%</b></div>` : ''}
       ${notes}</div>`;
   };
   return `<div class="dnsw-head is-${cls}" role="status"><span class="dnsw-dot"></span><b>${esc(head)}</b></div>
@@ -11678,6 +11691,7 @@ function dnswPicture(dns) {
       <div class="dnsw-arrow">${DNSW_ICON.arrow}</div>
       <div class="dnsw-hubs">${hubs.map(card).join('') || `<div class="ent-help u-m-0">${esc(tr('', 'No Iran server yet.'))}</div>`}</div>
     </div>
+    ${on && (dns.extra || []).length ? `<div class="cl-alert">${esc(tr('', 'The domain also has addresses that are no server of this cluster. Users go there too, so the shares cannot be right. Remove them in Cloudflare if they are not yours:'))} <span class="u-mono" dir="ltr">${dns.extra.map(esc).join(', ')}</span></div>` : ''}
     ${on && dns.last_run ? `<div class="ent-help u-m-0">${esc(tr('', 'Last check') + ': ' + dns.last_run)}</div>` : ''}`;
 }
 
@@ -11715,7 +11729,7 @@ function dnswRoute(p, dns) {
     <div class="rt-pick" id="${p}Route" role="radiogroup" aria-labelledby="${p}RouteL"></div>
     <div class="u-flex-center-wrap8"><button type="button" class="hashem-btn hashem-btn-secondary u-btn-xs" data-act="probe">${esc(tr('', 'Check connection'))}</button>
       <span class="ent-help u-m-0" data-probe aria-live="polite"></span></div>
-    <div class="ent-help u-m-0">${esc(tr('', 'Keep Direct unless this server cannot reach Cloudflare. With a tunnel, the call goes out from that tunnel’s foreign server.'))}</div></div>`;
+    <div class="ent-help u-m-0">${esc(tr('', 'Automatic is right for almost everyone. With a tunnel, the call goes out from that tunnel’s foreign server.'))}</div></div>`;
 }
 
 function dnswShares(p, dns) {
@@ -11723,12 +11737,23 @@ function dnswShares(p, dns) {
   // the sliders start in the middle for equal shares (weights are relative)
   const top = Math.max(1, ...ms.map(m => m.weight || 1));
   const pos = m => Math.min(100, Math.max(1, Math.round(50 * (m.weight || 1) / top)));
+  const fo = dns.mode === 'failover', byId = {};
+  ms.forEach(m => { byId[m.id] = m; });
+  const order = (dns.order || []).filter(id => byId[id]);
   return `<div class="dnsw-panel hidden" data-panel="shares">
+    <div class="fg"><label for="${p}Mode">${esc(tr('', 'How users are shared'))}</label><select class="hashem-input" id="${p}Mode" data-f="mode">
+      <option value="balance"${fo ? '' : ' selected'}>${esc(tr('', 'Balance: every server gets its share'))}</option>
+      <option value="failover"${fo ? ' selected' : ''}>${esc(tr('', 'Failover: all on the first server, the next takes over'))}</option></select></div>
+    <div data-mode="failover" class="${fo ? '' : 'hidden'}"><div class="dnsw-order" data-order>${order.map(id => `<div class="dnsw-ord" data-id="${esc(id)}"><span class="dnsw-ord-n"></span>${bdi(clHubLbl(byId[id].name, byId[id].ip) || id)}
+      <button type="button" class="hashem-btn hashem-btn-ghost u-btn-xs" data-act="up" aria-label="${esc(tr('', 'Move up'))}">↑</button></div>`).join('')}</div>
+      <div class="ent-help u-m-0">${esc(tr('', 'Users move to the next server that works, and back to an earlier one when it has worked for a minute. Phones follow after the TTL.'))}</div>
+      <div class="u-flex u-gap-8 u-wrap"><button type="button" class="hashem-btn hashem-btn-primary" data-act="save-order">${esc(tr('', 'Save'))}</button></div></div>
+    <div data-mode="balance" class="${fo ? 'hidden' : ''}">
     <div class="dnsw-sliders">${ms.map(m => `<div class="dnsw-sl"><label for="${p}W${esc(m.id)}">${bdi(clHubLbl(m.name, m.ip) || m.id)}</label>
       <input type="range" min="1" max="100" id="${p}W${esc(m.id)}" data-w="${esc(m.id)}" value="${pos(m)}"><b data-pct="${esc(m.id)}"></b></div>`).join('')}</div>
-    <div class="ent-help u-m-0">${esc(tr('', 'Shares are approximate: a DNS name cannot split users exactly. With different shares the domain points to one server at a time, in turns of about the TTL.'))}</div>
+    <div class="ent-help u-m-0">${esc(tr('', 'The panel measures the traffic each server really carries and points the domain more to the one below its share until they match. Users already connected stay where they are, so after a change it takes a few hours.'))}</div>
     <div class="u-flex u-gap-8 u-wrap"><button type="button" class="hashem-btn hashem-btn-primary" data-act="save-shares">${esc(tr('', 'Save shares'))}</button>
-      <button type="button" class="hashem-btn hashem-btn-ghost" data-act="equal">${esc(tr('', 'Make them equal'))}</button></div></div>`;
+      <button type="button" class="hashem-btn hashem-btn-ghost" data-act="equal">${esc(tr('', 'Make them equal'))}</button></div></div></div>`;
 }
 
 function dnswBody(p, dns) {
@@ -11744,7 +11769,7 @@ function dnswBody(p, dns) {
     return (role === 'solo' ? `<div class="cl-alert">${esc(tr('', 'On only on this server (set up by an older version): the other servers do not get its settings.'))}</div>` : '')
       + `<div class="dnsw-actions">
         ${role === 'solo' ? `<button type="button" class="hashem-btn hashem-btn-primary" data-act="claim">${esc(tr('', 'Control all servers from here'))}</button>` : ''}
-        ${n > 1 ? `<button type="button" class="hashem-btn hashem-btn-secondary" data-act="toggle" data-to="shares">${esc(tr('', 'Change shares'))}</button>` : ''}
+        ${n > 1 ? `<button type="button" class="hashem-btn hashem-btn-secondary" data-act="toggle" data-to="shares">${esc(tr('', 'Balance or failover'))}</button>` : ''}
         <button type="button" class="hashem-btn hashem-btn-secondary" data-act="toggle" data-to="settings">${esc(tr('', 'Settings'))}</button>
         <button type="button" class="hashem-btn hashem-btn-ghost" data-act="off">${esc(tr('', 'Turn off'))}</button></div>
       ${n > 1 ? dnswShares(p, dns) : ''}
@@ -11763,13 +11788,13 @@ function dnsWRender(root, dns) {
   if (!root) return;
   root._dns = dns;
   const p = root.id + '-';
-  const sig = dnswRole(dns) + '|' + (dns.members || []).map(m => m.id).join(',');
+  const sig = dnswRole(dns) + '|' + (dns.mode || '') + '|' + (dns.order || []).join(',') + '|' + (dns.members || []).map(m => m.id).join(',');
   if (root.dataset.sig !== sig) {
     root.dataset.sig = sig;
     root.innerHTML = `<div class="dnsw-live" data-live></div><div class="dnsw-body" data-body>${dnswBody(p, dns)}</div>`;
     if (!root._wired) { root._wired = true; dnswWire(root); }
     const rp = root.querySelector('.rt-pick');
-    if (rp) rtRender(rp, dns.tunnels || [], { route: dns.route, tunnel_id: dns.tunnel_id, tunnel_port: dns.tunnel_port });
+    if (rp) rtRender(rp, dns.tunnels || [], { route: dns.route, tunnel_id: dns.tunnel_id, tunnel_port: dns.tunnel_port }, 'cf');
     dnswPct(root);
   }
   root.querySelector('[data-live]').innerHTML = dnswPicture(dns);
@@ -11835,6 +11860,7 @@ function dnswWire(root) {
     if (e.target.matches('input[data-w]')) dnswPct(root);
   });
   root.addEventListener('change', e => {
+    if (e.target.matches('[data-f="mode"]')) root.querySelectorAll('[data-mode]').forEach(x => x.classList.toggle('hidden', x.dataset.mode !== e.target.value));
     if (e.target.matches('[data-f="provider"]')) {
       const hook = e.target.value === 'webhook';
       root.querySelectorAll('[data-cf]').forEach(x => x.classList.toggle('hidden', hook));
@@ -11861,10 +11887,22 @@ function dnswWire(root) {
         dnswPct(root);
         return;
       }
+      if (act === 'up') {
+        const row = b.closest('.dnsw-ord');
+        if (row.previousElementSibling) row.parentNode.insertBefore(row, row.previousElementSibling);
+        b.focus();
+        return;
+      }
+      if (act === 'save-order') {
+        await dnswSend(root, b, { mode: 'failover', order: [...root.querySelectorAll('.dnsw-ord')].map(x => x.dataset.id) }, 'Saving…');
+        toastOk(tr('', 'Failover is on'), tr('', 'The other servers get the settings in a few seconds.'));
+        dnswReload();
+        return;
+      }
       if (act === 'save-shares') {
         const hw = {};
         root.querySelectorAll('input[data-w]').forEach(i => { hw[i.dataset.w] = Math.min(100, Math.max(1, Math.round(Number(i.value)) || 1)); });
-        await dnswSend(root, b, { hub_weights: hw }, 'Saving…');
+        await dnswSend(root, b, { mode: 'balance', hub_weights: hw }, 'Saving…');
         toastOk(tr('', 'Shares saved'), tr('', 'The other servers get them in a few seconds.'));
         dnswReload();
         return;

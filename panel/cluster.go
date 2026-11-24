@@ -1824,7 +1824,7 @@ func cliCluster(args []string) int {
 			fmt.Printf("  - %s (%s) %s\n", h.Name, h.ID, h.PublicIP)
 		}
 		if cfg.DNS.Enabled {
-			fmt.Printf("DNS failover: %s on %s\n", cfg.DNS.Name, cfg.DNS.Provider)
+			fmt.Printf("DNS failover: %s on %s, mode %s\n", cfg.DNS.Name, cfg.DNS.Provider, dnsMode(cfg.DNS))
 		}
 		fmt.Println("Live state:   the panel's Cluster tab, or: curl the panel's /api/cluster/status")
 		return 0
