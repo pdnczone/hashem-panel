@@ -40,6 +40,12 @@ func TestRemoveFirstTunnelKeepsOtherTunnels(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	oldFrp := frpDir
+	frpDir = dir // the first tunnel from Setup is there
+	t.Cleanup(func() { frpDir = oldFrp })
+	if err := os.WriteFile(filepath.Join(dir, "frps.toml"), []byte("bindPort = 7000\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	second := `{"id":2,"gre_if":"gre-t2","frps_svc":"frps-2"}`
 	for _, c := range []struct{ name, peers, want string }{
 		{"no other tunnel", "", "remove-tunnel --force"},

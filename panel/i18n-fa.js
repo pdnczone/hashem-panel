@@ -1649,9 +1649,7 @@ window.FA_TEXT = {
 "iPerf3 action failed": "عملیات iPerf3 ناموفق بود",
 "Dial": "اتصال",
 "not set up": "راه‌اندازی نشده",
-"First tunnel": "تانل اول",
 "Other IPs": "IPهای دیگر",
-"Main tunnel": "تونل اصلی",
 "Enter a valid port (e.g. 8080), range (10000-10050), or mapping (2083=8443).": "یک پورت معتبر (مثلاً 8080)، بازه (10000-10050) یا نگاشت (2083=8443) وارد کنید.",
 "Enter a port (8080), a range (10000-10050) or a mapping (2083=8443), with an optional IP: before either side.": "یک پورت (8080)، بازه (10000-10050) یا نگاشت (2083=8443) وارد کنید؛ پیش از هر طرف می‌توانید IP: هم بگذارید.",
 "FRP forwards a port to the same port: enter 443 or a range like 1051-1060. Mappings and IP: need Backhaul.": "FRP هر پورت را به همان پورت سرور مقابل می‌فرستد: 443 یا بازه‌ای مثل 1051-1060 وارد کنید. نگاشت و IP: فقط با Backhaul کار می‌کنند.",
@@ -2245,7 +2243,6 @@ window.FA_TEXT = {
 "More foreign servers can be added from Setup → Add another foreign server.": "سرورهای خارج بیشتر را می‌شود از راه‌اندازی ← افزودن سرور خارج دیگر اضافه کرد.",
 "The tunnel on this server is deleted: its GRE interface, tunnel service and their configs. The other server keeps its side until you remove it there. The panel stays.": "تونل این سرور حذف می‌شود: اینترفیس GRE، سرویس تونل و تنظیماتشان. سرور مقابل سمت خودش را نگه می‌دارد تا آنجا هم حذفش کنید. پنل باقی می‌ماند.",
 "Tunnel removed": "تونل حذف شد",
-"The first tunnel on this server is deleted: its GRE interface, tunnel service and their configs. The other tunnels keep running; remove each from its own card. The panel stays.": "تونل اول این سرور حذف می‌شود: اینترفیس GRE، سرویس تونل و تنظیماتشان. بقیه‌ی تونل‌ها کار می‌کنند؛ هر کدام را از کارت خودش حذف کنید. پنل باقی می‌ماند.",
 "Its GRE interface and tunnel service go away; other tunnels keep running.": "اینترفیس GRE و سرویس تونلش حذف می‌شوند؛ بقیه‌ی تونل‌ها کار می‌کنند.",
 "Applies FQ + BBR, larger TCP buffers, GRE MTU 1380 and MSS clamp 1340. The current settings are saved first, so Restore can bring them back. The tunnel keeps running.": "FQ و BBR، بافرهای بزرگ‌تر TCP، MTU برابر 1380 برای GRE و MSS clamp برابر 1340 اعمال می‌شود. تنظیمات فعلی اول ذخیره می‌شود تا «بازگردانی» بتواند برشان گرداند. تونل در حال کار می‌ماند.",
 "Optimize Network": "بهینه‌سازی شبکه",
@@ -2649,7 +2646,6 @@ window.FA_TEXT = {
 "Draining": "در حال تخلیه",
 "Not serving this port": "این پورت را سرویس نمی‌دهد",
 "Peer id now another server": "شناسه‌ی همتا حالا مال سرور دیگری است",
-"main tunnel": "تونل اصلی",
 "peer": "همتا",
 "Weight": "وزن",
 "Priority": "اولویت",
@@ -2848,7 +2844,7 @@ window.FA_TEXT = {
 "Carriers": "حامل‌ها",
 "How each tunnel travels. When a network starts blocking or slowing one, swap it: both servers switch, and if the new carrier does not connect they go back on their own.": "هر تونل از چه راهی می‌رود. اگر شبکه‌ای یکی را مسدود یا کند کرد، حاملش را عوض کنید: هر دو سرور عوض می‌شوند و اگر حامل تازه وصل نشد، خودشان به حامل قبلی برمی‌گردند.",
 "GRE wrap": "پوشش GRE",
-"How the main tunnel's GRE packets travel between the two servers. Direct GRE is the fastest. WSS wraps them in TLS on a web port, for networks that block or slow down GRE (protocol 47). 6to4 and 4in6 carry them over IPv6.": "بسته‌های GRE تونل اصلی چطور بین دو سرور جابه‌جا شوند. GRE مستقیم سریع‌ترین است. WSS آن‌ها را در TLS روی یک پورت وب می‌پیچد، برای شبکه‌هایی که GRE (پروتکل ۴۷) را مسدود یا کند می‌کنند. 6to4 و 4in6 آن‌ها را از روی IPv6 می‌برند.",
+"How the GRE packets of the tunnel made in Setup travel between the two servers. Direct GRE is the fastest. WSS wraps them in TLS on a web port, for networks that block or slow down GRE (protocol 47). 6to4 and 4in6 carry them over IPv6.": "بسته‌های GRE تونلی که در راه‌اندازی ساخته شده چطور بین دو سرور جابه‌جا شوند. GRE مستقیم سریع‌ترین است. WSS آن‌ها را در TLS روی یک پورت وب می‌پیچد، برای شبکه‌هایی که GRE (پروتکل ۴۷) را مسدود یا کند می‌کنند. 6to4 و 4in6 آن‌ها را از روی IPv6 می‌برند.",
 "Active wrap": "پوشش فعال",
 "WSS wrap": "پوشش WSS",
 "Switch Wrap": "تغییر پوشش",
@@ -3876,5 +3872,6 @@ window.FA_TEXT = {
   "Alerts go to {0} chats through the bot {1}.": "هشدارها با ربات {1} به {0} چت می‌روند.",
   "Sending a test alert…": "در حال فرستادن هشدار آزمایشی…",
   "Direct only": "فقط مستقیم",
-  "Directly, and through a tunnel when Telegram is blocked here": "مستقیم؛ و اگر تلگرام اینجا بسته باشد، از راه تونل"
+  "Directly, and through a tunnel when Telegram is blocked here": "مستقیم؛ و اگر تلگرام اینجا بسته باشد، از راه تونل",
+  "This server already has tunnels. To connect one more foreign server, use the button below.": "این سرور از قبل تونل دارد. برای وصل کردن یک سرور خارج دیگر، دکمه‌ی پایین را بزنید."
 };

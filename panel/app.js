@@ -1264,6 +1264,15 @@ function latBadge(ms) {
 function dot(ok) { return `<span class="dot ${ok ? 'up' : 'down'}"></span>`; }
 // Shared detail-card icons + builder (Dashboard AND peer cards use these;
 // keep global so renderPeers works even when refreshDash never ran).
+// The tunnel made in Setup has no record of its own. It goes by its name, or
+// by the other server's address: it is one tunnel among the others.
+function firstName(name, ip) { return name || tr('', 'Tunnel') + (ip ? ' · ' + ip : ''); }
+function linkIdLabel(id) { return tr('', 'tunnel') + ' ' + id; }
+// hubLinks are the other Iran hubs a foreign server serves, in the shape of a peer.
+function hubLinks(hubs) {
+  return (hubs || []).map(h => Object.assign({}, h, { id: 'hub-' + h.id, name: h.name || 'hub-' + h.id, remote_pub: h.iran_pub,
+    frps_svc: h.svc, no_gre: !h.gre_if || h.gre_if === 'none', ping_ok: false }));
+}
 const ICO_SRV = '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><circle cx="7" cy="7.5" r="1" fill="currentColor"/><circle cx="7" cy="16.5" r="1" fill="currentColor"/></svg>';
 const ICO_GRE = '<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>';
 const ICO_FRP = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>';
@@ -1330,12 +1339,13 @@ async function removePeer(peerId, name) {
   const btns = document.querySelectorAll(`[data-peer-remove="${peerId}"]`);
   btns.forEach(b => { b.disabled = true; b.innerHTML = '<span class="ent-spinner"></span> Removing…'; });
   try {
-    // without peer_id the panel removes the first tunnel alone when others exist
+    // without peer_id it is the tunnel made in Setup; the others stay
     await api('/api/action', peerId === 'main' ? {action: 'remove-tunnel'} : {action: 'remove-tunnel', peer_id: peerId});
     // only this server's end goes: the other server keeps its own (the
     // Nodes map removes both ends)
     toastOk(`tunnel '${name}' removed`, tr('', 'Only this server\'s end. Remove it on the other server too, or remove tunnels from the Nodes map, which removes both ends.'));
     refresh();
+    loadSetupDefaults();
   } catch(e) { toastErr('remove failed', e.message); refresh(); }
 }
 async function showPeerToken(peerId, name) {
@@ -1512,11 +1522,12 @@ function renderPeers(peers) {
   const hasMain = hasBaseTunnel(L);
   const isForeign = /foreign/i.test(L.role || '') || L.frp_svc === 'frpc' || L.frp_svc === 'backhaul-client';
   const lbl = $('peerCardsLabel');
-  if (lbl) lbl.classList.toggle('hidden', !(peers && peers.length) && !bagherCardHtml);
+  const hubCards = hubCardsHtml(tunHubCache || []);
+  if (lbl) lbl.classList.toggle('hidden', !(peers && peers.length) && !bagherCardHtml && !hubCards);
   renderCarriers();
   if (!peers || !peers.length) {
-    if (bagherCardHtml) {
-      box.innerHTML = bagherCardHtml;
+    if (bagherCardHtml || hubCards) {
+      box.innerHTML = bagherCardHtml + hubCards;
     } else if (!hasMain) {
       // Nothing on this server yet: one clear next step instead of empty cards.
       box.innerHTML = '<div class="u-col-full">' + stateEmpty({ title: tr('', 'No tunnel on this server yet'), msg: tr('', 'Set one up from the Setup tab. It takes about a minute on each server.'), actionKey: 'setup', actionLabel: tr('onb_go', 'Open Setup'), icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg>' }) + '</div>';
@@ -1607,6 +1618,41 @@ function renderPeers(peers) {
     };
   });
 }
+// A foreign server's other Iran hubs, one card each, as the tunnel to its
+// first hub has.
+function hubCardsHtml(hubs) {
+  const row = (k, v) => `<div class="det-row"><span class="det-k">${esc(tr('', k))}</span><span class="det-v mono">${esc(v || '—')}</span></div>`;
+  return hubs.map(h => {
+    const v = vizState(h) || (h.frp_up ? 'ok' : 'down'), bh = /backhaul/.test(h.engine || '');
+    const p = linkPing(h), ports = compactPorts(h.ports);
+    return `<div class="tunnel-card peer-card u-peer-card-wide" id="peer-card-${esc(h.id)}">
+      <div class="tc-header u-flex-wrap-gap8">
+        <div class="u-flex-center-gap10">
+          <span class="status-indicator ${h.frp_up ? 'active' : 'offline'}"><span class="dot"></span></span>
+          <b class="u-fs-16-tx" data-no-i18n>${esc(h.name)} · ${esc(h.remote_pub || '')}</b>
+          ${h.no_gre && !bh ? '<span class="badge dim" data-no-i18n>FRP</span>' : engineBadge(h.engine || 'frp')}
+          <span class="badge ${v === 'ok' ? 'ok' : v === 'warn' ? 'warn' : 'err'}"><span class="dot"></span>${esc(tr('', v === 'ok' ? 'active' : v === 'warn' ? 'degraded' : 'down'))}</span>
+        </div>
+      </div>
+      ${tunViz({ state: v, here: tr('', 'This server'), hereSub: tr('', 'Foreign'), there: h.name, thereSub: h.remote_pub || '',
+        tags: [[bh ? 'Backhaul' : 'FRP', 'eng'], [h.no_gre ? '' : 'GRE', 'gre']], gre: !h.no_gre, lat: p.ok ? p.txt : null,
+        rate: linkRate('p' + h.id, h.rx, h.tx, _statusCountersAt), ports })}
+      <div class="det-grid">
+        <div class="det-card">
+          <div class="det-card-head">${ICO_SRV} <span>${esc(tr('', 'Iran Server'))}</span></div>
+          ${row('Iran IP', h.remote_pub)}${row('Control Port', h.port ? String(h.port) : '')}${row('Forwarded', ports.join(', '))}
+        </div>
+        <div class="det-card">
+          <div class="det-card-head">${bh ? '<svg class="i" aria-hidden="true"><use href="#i-bolt"/></svg>' : ICO_FRP} <span>${esc(tr('', bh ? 'Backhaul & Traffic' : 'FRP & Traffic'))}</span></div>
+          ${row('Service', h.frps_svc)}${h.no_gre ? '' : row('Interface', h.gre_if)}${row('Traffic', h.rx != null ? '↓ ' + fmtBytes(h.rx) + ' · ↑ ' + fmtBytes(h.tx) : 'N/A')}
+        </div>
+      </div>
+      <div class="peer-acts u-peer-acts-bar">
+        <button class="hashem-btn hashem-btn-danger u-btn-30" onclick="clLeaveHub(${parseInt(String(h.id).slice(4), 10)},${jsArg(h.name)})">${esc(tr('', 'Remove'))}</button>
+      </div>
+    </div>`;
+  }).join('');
+}
 // Two-step remove (inline confirm, no modal): 1st click arms 5s + Undo,
 // 2nd click while armed deletes. Same from Tunnel tab or Dashboard summary.
 function peerRemoveClick(peerId, name) {
@@ -1641,20 +1687,22 @@ function linkStrip(s) {
     el.title = '';
     return;
   }
+  const hubs = hubLinks(s.hubs);
   const iran = /iran/i.test(L.role || '') || L.frp_svc === 'frps' || peers.length > 0;
   const here = iran ? tr('x002', 'Iran') : tr('x003', 'Foreign');
-  // the main tunnel is a server too: it sits beside the peers, not among them
-  const nSrv = peers.length + (peers.length && hasBaseTunnel(L) ? 1 : 0);
+  // the tunnel made in Setup is a server too: it sits beside the peers, not among them
+  const others = peers.concat(hubs);
+  const nSrv = others.length + (others.length && hasBaseTunnel(L) ? 1 : 0);
   const there = nSrv > 1 ? nSrv + ' ' + tr('ls_servers', 'servers')
-    : (peers[0] && (peers[0].name || peers[0].remote_pub)) || L.remote_pub || L.gre_peer || (iran ? tr('x003', 'Foreign') : tr('x002', 'Iran'));
+    : (hubs[0] && (hubs[0].name || hubs[0].remote_pub)) || (peers[0] && (peers[0].name || peers[0].remote_pub)) || L.remote_pub || L.gre_peer || (iran ? tr('x003', 'Foreign') : tr('x002', 'Iran'));
   // With several foreign servers the engine and latency would be the first
   // tunnel's alone: the Dashboard shows each server's, so leave them out here.
   const eng = nSrv > 1 ? '' : (LS_ENGINE[L.engine || L.tunnel_engine] || '');
-  const up = !!(L.frp_up || (L.gre && L.gre.exists) || peers.some(p => p.frp_up || p.gre_up));
+  const up = !!(L.frp_up || (L.gre && L.gre.exists) || others.some(p => p.frp_up || p.gre_up));
   // a live session is healthy even unpinged: the server pings only links
   // without one (snapshot.go), so ping_ok alone would show a working tunnel weak
   const good = o => o.ping_ok || o.health_state === 'healthy';
-  const pinged = good(L) || peers.some(good);
+  const pinged = good(L) || others.some(good);
   const lat = L.ping_ok && parseFloat(L.ping_ms) > 0 ? parseFloat(L.ping_ms)
     : (L.health_state === 'healthy' && L.latency_ms > 0 ? L.latency_ms : 0);
   const ms = lat && nSrv <= 1 ? Math.round(lat) + ' ms' : '';
@@ -1671,13 +1719,11 @@ function linkStrip(s) {
     (ms ? '<span class="ls-chip ms' + (slow ? ' slow' : '') + '">' + bolt + '<bdi>' + esc(ms) + '</bdi></span>' : '');
   el.title = stateTxt;
 }
-// The base tunnel exists. A peer's backhaul-server-N alone is not one: the
-// status names that unit when no base unit runs, for the role of a hub that
-// has only peers, and the first card then came back after its removal.
+// The tunnel made in Setup exists and has no card of its own among the peers
+// (base_peer: it is recorded as that peer).
 function hasBaseTunnel(st) {
-  if (!st) return false;
-  const peerUnit = /^backhaul-server-\d+$/.test(st.frp_svc || '');
-  return !!((st.gre && st.gre.exists) || (st.proxies || []).length || (!peerUnit && (st.frp_up || st.frp_svc)));
+  if (!st || st.base_peer) return false;
+  return !!((st.gre && st.gre.exists) || (st.proxies || []).length || st.frp_up || st.frp_svc);
 }
 // Engine of the base tunnel: recorded, else derived from the running unit.
 function tunEngine(st) {
@@ -1700,6 +1746,8 @@ function greMate(cidr) {
 function renderTunnel(st) {
   const gre = st.gre || {};
   const hasMain = hasBaseTunnel(st);
+  const others = (tunPeerCache || []).length + (tunHubCache || []).length;
+  const anyTunnel = hasMain || others > 0;
   const up = !!(gre.exists || st.frp_up);
   const eng = tunEngine(st);
   const usesGre = eng === 'frp' || eng === 'gre-backhaul' || !!gre.exists;
@@ -1707,15 +1755,16 @@ function renderTunnel(st) {
   const bhSvc = (st.frp_svc || '').startsWith('backhaul');
   const d = $('tunnelDot');
   if (d) {
-    d.className = 'status-indicator ' + (!hasMain ? '' : (up ? 'active' : 'offline'));
-    $('tunnelDotTxt').textContent = !hasMain ? tr('', 'Not set up') : tr('', up ? 'Up' : 'Down');
+    const on = up || [...(tunPeerCache || []), ...(tunHubCache || [])].some(p => p.gre_up || p.frp_up);
+    d.className = 'status-indicator ' + (!anyTunnel ? '' : (on ? 'active' : 'offline'));
+    $('tunnelDotTxt').textContent = !anyTunnel ? tr('', 'Not set up') : tr('', on ? 'Up' : 'Down');
   }
   const svcBadge = st.frp_up
     ? `<span class="badge ok"><span class="dot"></span><bdi data-no-i18n>${esc(st.frp_svc || 'frp')}</bdi></span>`
     : `<span class="badge err"><span class="dot"></span><bdi data-no-i18n>${esc(st.frp_svc || 'service')}</bdi> · ${esc(tr('', 'stopped'))}</span>`;
   const ports = compactPorts(tunnelPortEntries(st)).join(', ') || '—';
   // the user's name for the other server when there is one
-  const title = st.name ? st.name + (st.remote_pub ? ' · ' + st.remote_pub : '') : tr('', 'Tunnel') + (st.remote_pub ? ' · ' + st.remote_pub : '');
+  const title = (st.name || tr('', 'Tunnel')) + (st.remote_pub ? ' · ' + st.remote_pub : '');
   let mainRate = linkRate('main', st.rx, st.tx, _statusCountersAt);
   const dashT = window._lastDash && window._lastDash.traffic;
   if (!mainRate && st.rx == null && !(tunPeerCache || []).length && dashT && dashT.speed_down != null) mainRate = { dn: dashT.speed_down, up: dashT.speed_up };
@@ -1802,9 +1851,11 @@ function renderTunnel(st) {
 
   // Server-wide actions only once a tunnel exists; Carrier only where GRE runs.
   const acts = $('tunnelActs');
-  if (acts) acts.classList.toggle('hidden', !hasMain);
+  if (acts) acts.classList.toggle('hidden', !anyTunnel);
+  // With several tunnels each is removed from its own card.
+  if ($('removeTunnelBtn')) $('removeTunnelBtn').classList.toggle('hidden', !hasMain || others > 0);
   const hint = $('tuneHint');
-  if (hint) hint.classList.toggle('hidden', !hasMain);
+  if (hint) hint.classList.toggle('hidden', !anyTunnel);
   const cyc = $('tunnelCarrierCycleBtn');
   if (cyc) cyc.classList.toggle('hidden', !usesGre);
   const rb = $('restoreBtn');
@@ -1815,6 +1866,7 @@ function renderTunnel(st) {
 }
 // shared cache: refresh() fills it from /api/status before renderTunChips runs
 let tunPeerCache = null;
+let tunHubCache = null; // a foreign server's other Iran hubs, same poll
 // Port lists. A tunnel's ports come as numbers (FRP forwards each port on
 // its own) or as the entries of a Backhaul config ("1051-1060",
 // "2083=8443", "1.2.3.4:443"). compactPorts shows them short: numbers that
@@ -1880,19 +1932,19 @@ function renderTunChips(st) {
     // like the peers: its name and traffic (the service and port are on its card)
     const traffic = (st.rx != null && st.tx != null) ? ('↓ ' + fmtBytes(st.rx) + ' · ↑ ' + fmtBytes(st.tx)) : null;
     chips.push({
-      key: 'base',
-      name: st.name || tr('', 'Tunnel'),
+      key: 'main',
+      name: firstName(st.name, st.remote_pub),
       up: chipState(st).v !== 'down',
       ping: chipState(st).txt,
       sub: traffic || ((st.frp_svc || 'frp') + ' :' + (st.frp_port || st.bind_port || '?')),
     });
   }
-  (tunPeerCache || []).forEach((p, i) => {
+  [...(tunPeerCache || []), ...(tunHubCache || [])].forEach((p, i) => {
     const cs = chipState(p);
     const traffic = (p.rx != null && p.tx != null)
       ? ('↓ ' + fmtBytes(p.rx) + ' · ↑ ' + fmtBytes(p.tx)) : null;
     chips.push({
-      key: 'peer-' + (p.id ?? i),
+      key: String(p.id ?? i),
       name: p.name || ('peer-' + (p.id ?? (i + 1))),
       up: cs.v !== 'down',
       ping: cs.txt,
@@ -1905,10 +1957,7 @@ function renderTunChips(st) {
     `<button class="tun-chip" data-chip="${esc(c.key)}"><span class="ent-st ${c.up ? 'on' : 'off'}"><i></i></span><span>${esc(c.name)}</span><span class="qs-hint">${esc(c.ping)} · ${esc(c.sub)}</span></button>`
   ).join('');
   box.querySelectorAll('[data-chip]').forEach(b => b.onclick = () => {
-    const key = b.dataset.chip;
-    const cards = document.querySelectorAll('#peerCards .peer-card');
-    const idx = key === 'base' ? -1 : chips.findIndex(c => c.key === key) - (chips.length - (tunPeerCache || []).length);
-    const target = key === 'base' ? $('tunnelStatusCard') : (cards[idx] || $('peerCards'));
+    const target = $('peer-card-' + b.dataset.chip) || $('peerCards');
     if (target && target.scrollIntoView) target.scrollIntoView({behavior: 'smooth', block: 'start'});
   });
 }
@@ -1919,6 +1968,7 @@ async function refresh() {
     _statusCountersAt = s.counters_at || null;
     // peers first: renderTunChips (called inside renderTunnel) reads the cache
     tunPeerCache = s.peers || null;
+    tunHubCache = hubLinks(s.hubs);
     renderTunnel(s.local);
     renderPeers(s.peers);
     updatePeerHints(s);
@@ -2613,6 +2663,8 @@ async function refreshDash() {
     if (d && 'display_tz' in d && (d.display_tz || '') !== DISPLAY_TZ) { DISPLAY_TZ = d.display_tz || ''; }
     if (!d || typeof d !== 'object') return;
     window._lastDash = d;
+    // a foreign server's other Iran hubs count and draw as its first one does
+    d.peers = (d.peers || []).concat(hubLinks(d.hubs));
     const on = !!d.online;
     const peers = d.peers || [];
     const nPeers = d.peer_count || peers.length;
@@ -2631,10 +2683,9 @@ async function refreshDash() {
     const role = String(d.role || '').toLowerCase();
     const iran = /iran|master/.test(role), foreign = /foreign/.test(role);
     const engine = engLabel(d.active_engine);
-    // The main tunnel is one more server next to the peers (the map draws it
-    // too), so "3 servers" must count it: peers alone said 2 for a hub with
-    // the main tunnel and two peers.
-    const hasMain = multi && !!(g.exists || f.up || f.svc);
+    // The tunnel made in Setup is one more server next to the peers (the map
+    // draws it too), so "3 servers" must count it, unless it is a peer itself.
+    const hasMain = multi && !d.base_peer && !!(g.exists || f.up || f.svc);
     const nSrv = nPeers + (hasMain ? 1 : 0);
     const upPeers = peers.filter(p => p.gre_up || p.frp_up).length + (hasMain && (g.exists || f.up) ? 1 : 0);
 
@@ -2651,8 +2702,8 @@ async function refreshDash() {
     set('heroLocalIp', d.local_pub || '—');
     let remName, remIp;
     if (unset) { remName = 'Not linked yet'; remIp = '—'; }
-    else if (multi && nSrv > 1) { remName = nSrv + ' ' + tr('', 'foreign servers'); remIp = upPeers + ' / ' + nSrv + ' ' + tr('', 'up'); }
-    else if (multi) { remName = peers[0].name || 'Foreign server'; remIp = peers[0].remote_pub || '—'; }
+    else if (multi && nSrv > 1) { remName = nSrv + ' ' + tr('', foreign ? 'Iran servers' : 'foreign servers'); remIp = upPeers + ' / ' + nSrv + ' ' + tr('', 'up'); }
+    else if (multi) { remName = peers[0].name || (foreign ? 'Iran server' : 'Foreign server'); remIp = peers[0].remote_pub || '—'; }
     else {
       remName = d.main_name || (bagherUp && !(d.gre || {}).exists && bObj.name) || (iran ? 'Foreign server' : foreign ? 'Iran server' : 'Other server');
       remIp = d.remote_pub || g.peer || (bagherUp ? bObj.remote_host : '') || '—';
@@ -2698,7 +2749,7 @@ async function refreshDash() {
       });
     }
     // With several servers the big number is the average of their pings (the
-    // best one hid a slow server); each server counts once, the main tunnel too.
+    // best one hid a slow server); each server counts once.
     let ms = null, pingN = 0;
     const lat1 = o => (o.ping_ok && o.ping_ms) ? parseFloat(o.ping_ms) : (o.health_state === 'healthy' && o.latency_ms >= 0 ? o.latency_ms : null);
     const avgOf = vals => { const v = vals.filter(x => x != null && isFinite(x)); pingN = v.length; return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
@@ -2963,12 +3014,12 @@ async function refreshDash() {
     // apart: the 6to4 and 4in6 carriers use them, Edit Tunnel does not.
     const moreIPs = (d.public_ips || []).filter(ip => ip && ip !== d.local_pub);
     const ipv6 = (d.public_ipv6 || []).filter(Boolean);
-    // on a hub with more tunnels, these cards describe the first one only
+    // with several tunnels, these cards describe one of them: say which
     { const sc = $('detScope');
       if (sc) {
-        const scoped = iran && !unset && peers.length > 0;
-        sc.hidden = !scoped;
-        sc.textContent = scoped ? tr('', 'First tunnel') + ' · ' + (d.main_name || otherIP || '—') : '';
+        const own = d.base_peer ? peers.find(p => p.id === d.base_peer) : hasMain ? { name: d.main_name } : null;
+        sc.hidden = unset || !own;
+        sc.textContent = own ? firstName(own.name, otherIP) : '';
       } }
     const serverCard = detCard(ICO_SRV, tr('card_server_title', 'Server & Role'),
       detRow(tr('', 'Role'), roleCell)
@@ -3151,17 +3202,17 @@ function pingBadge(o) {
   return '<span class="badge ' + (p.ok ? 'ok' : 'err') + '"' + (tip ? ' title="' + tip + '"' : '') + '><span class="dot"></span>' + esc(p.ok ? p.txt : 'no answer') + '</span>' + p.chip;
 }
 function fleetMs(n) { return n.ping_ms >= 0 ? n.ping_ms : (n.latency_ms >= 0 ? n.latency_ms : -1); }
-// dashMainRow is the first tunnel of an Iran server as a row of the
+// dashMainRow is the tunnel made in Setup as a row of the
 // dashboard's Tunnels list (the same object shape as a peer), or null when
 // there is none. The list showed only the tunnels added after it, so a hub
 // with three foreign servers listed two.
 function dashMainRow(d) {
   const st = window._lastLocal || {}, g = d.gre || {}, f = d.frp || {};
-  if (!(g.exists || f.up || f.svc)) return null;
+  if (d.base_peer || !(g.exists || f.up || f.svc)) return null;
   const h = st.health_state ? st : d;
   const eng = String(d.active_engine || '').toLowerCase();
   return {
-    id: 'main', name: d.main_name || tr('', 'Main tunnel'), remote_pub: d.remote_pub || g.peer || '',
+    id: 'main', name: firstName(d.main_name, d.remote_pub), remote_pub: d.remote_pub || g.peer || '',
     engine: /backhaul/.test(eng) || /^backhaul/.test(f.svc || '') ? (g.exists ? 'gre-backhaul' : 'backhaul') : 'frp',
     ports: compactPorts(tunnelPortEntries({ engine: d.active_engine, svc: f.svc, proxies: f.proxies, proxy_ports: f.proxy_ports })), gre_up: !!g.exists, frp_up: !!f.up, rx: st.rx, tx: st.tx,
     ping_ok: h.ping_ok, ping_ms: h.ping_ms, health_state: h.health_state, latency_ms: h.latency_ms,
@@ -3172,8 +3223,8 @@ function dashMainRow(d) {
 function renderDashPeers(peers, main) {
   const card = $('dashPeersCard'), list = $('dashPeersList');
   if (!card || !list) return;
-  // the first tunnel only joins a list that has peers: alone, the hero map
-  // and the Details card already say everything about it
+  // a single tunnel needs no list: the hero map and the Details card already
+  // say everything about it
   if (main && peers.length) peers = [main, ...peers];
   card.hidden = !peers.length;
   if (!peers.length) { list.innerHTML = ''; return; }
@@ -3186,7 +3237,7 @@ function renderDashPeers(peers, main) {
     const traffic = (p.rx != null || p.tx != null) ? fmtBytes((p.rx || 0) + (p.tx || 0)) : '—';
     return '<div class="pt-row" role="row" tabindex="0" data-goto-peer="' + p.id + '"' + (tip ? ' title="' + tip + '"' : '') + '>'
       + '<span class="pt-name" role="cell"><i class="pt-dot' + (up ? ' on' : '') + '"></i><b data-no-i18n>' + esc(p.name || ('peer-' + p.id)) + '</b></span>'
-      + '<span role="cell">' + k('Foreign server') + '<span class="pt-mono">' + esc(p.remote_pub || '—') + '</span></span>'
+      + '<span role="cell">' + k(String(p.id).startsWith('hub-') ? 'Iran server' : 'Foreign server') + '<span class="pt-mono">' + esc(p.remote_pub || '—') + '</span></span>'
       + '<span role="cell">' + k('Engine') + esc(engLabel(p.engine) || 'FRP') + '</span>'
       + '<span role="cell">' + k('Ports') + '<span class="pt-mono">' + esc(compactPorts(p.raw_ports || p.ports).join(', ') || '—') + '</span></span>'
       + '<span role="cell">' + k('Ping') + '<span class="badge ' + (pg.ok ? 'ok' : 'err') + '"><span class="dot"></span>' + esc(pg.ok ? pg.txt : tr('', 'No answer')) + '</span>' + pg.chip + '</span>'
@@ -3194,7 +3245,7 @@ function renderDashPeers(peers, main) {
       + '</div>';
   }).join('');
   list.querySelectorAll('[data-goto-peer]').forEach(r => {
-    r.onclick = () => gotoPeerCard(r.dataset.gotoPeer === 'main' ? 'main' : parseInt(r.dataset.gotoPeer, 10));
+    r.onclick = () => gotoPeerCard(r.dataset.gotoPeer);
     r.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); r.click(); } };
   });
 }
@@ -3209,7 +3260,7 @@ function dashLinks(d, bObj, iran, foreign) {
   const L = [], st = window._lastLocal || {}, peers = d.peers || [], g = d.gre || {}, f = d.frp || {};
   const eng = String(d.active_engine || '').toLowerCase();
   const msOf = o => { const p = linkPing(o); return p.ok ? p.txt : ''; };
-  if (g.exists || f.up || f.svc) {
+  if (!d.base_peer && (g.exists || f.up || f.svc)) {
     const up = !!(g.exists || f.up);
     // the dashboard's own counters (every 5 s, with the peers'): the 15 s
     // status poll left this speed behind Live traffic and stuck in between
@@ -3217,7 +3268,7 @@ function dashLinks(d, bObj, iran, foreign) {
       : linkRate('main', st.rx, st.tx, _statusCountersAt);
     const t = d.traffic || {};
     if (!rate && d.main_rx == null && st.rx == null && !peers.length && t.speed_down != null) rate = { dn: t.speed_down, up: t.speed_up };
-    L.push({ key: 'main', name: d.main_name || tr('', peers.length ? 'Main tunnel' : (foreign ? 'Iran server' : 'Foreign server')),
+    L.push({ key: 'main', name: peers.length ? firstName(d.main_name, '') : d.main_name || tr('', foreign ? 'Iran server' : 'Foreign server'),
       ip: d.remote_pub || g.peer || '', state: vizState(st) || (up ? 'ok' : 'down'),
       eng: /backhaul/.test(eng) || /^backhaul/.test(f.svc || '') ? 'Backhaul' : 'FRP', gre: !!g.exists,
       lat: msOf(st.health_state ? st : d), rate });
@@ -3311,6 +3362,7 @@ function gotoPeerCard(peerId) {
 }
 // ---- setup form (unified Setup tab: step 1 role, steps 2-3 per role, + add-peer card) ----
 let setupExists = false;
+let setupOthers = 0; // tunnels next to the one made in Setup
 let setupUnlocked = false;
 function setRole(role) {
   $('sRole').value = role;
@@ -3334,13 +3386,14 @@ $('roleForeign').onclick = () => setRole('foreign');
 function renderSetupLock() {
   const iran = $('sRole').value !== 'foreign';
   const bagher = $('sEngine') && $('sEngine').value === 'bagher';
-  const locked = iran && !bagher && setupExists && !setupUnlocked;
+  const onlyOthers = !setupExists && setupOthers > 0;
+  const locked = iran && !bagher && (onlyOthers || (setupExists && !setupUnlocked));
   const fs = $('iranFields');
   if (fs) fs.disabled = locked;
   const lw = $('setupLockWarn');
   if (lw) {
     if (locked) {
-      lw.textContent = tr('', 'A tunnel already exists on this server, so the form is locked to stop it being replaced by accident. A new setup makes a new token and the foreign servers linked now disconnect. To connect one more foreign server, use Add Another Server instead.');
+      lw.textContent = onlyOthers ? tr('', 'This server already has tunnels. To connect one more foreign server, use the button below.') : tr('', 'A tunnel already exists on this server, so the form is locked to stop it being replaced by accident. A new setup makes a new token and the foreign servers linked now disconnect. To connect one more foreign server, use Add Another Server instead.');
       lw.classList.remove('hidden');
     } else lw.classList.add('hidden');
   }
@@ -3351,7 +3404,10 @@ function renderSetupLock() {
     show('setupBtn', true); show('setupUnlockBtn', false); show('setupAddBtn', false); show('setupRelockBtn', false);
     return;
   }
-  if (!setupExists) {
+  $('setupAddBtn').textContent = tr('', onlyOthers ? 'Add another foreign server' : 'Add Another Server Instead');
+  if (onlyOthers) {
+    show('setupBtn', false); show('setupUnlockBtn', false); show('setupAddBtn', true); show('setupRelockBtn', false);
+  } else if (!setupExists) {
     $('setupBtn').textContent = tr('', 'Apply Setup');
     show('setupBtn', true); show('setupUnlockBtn', false); show('setupAddBtn', false); show('setupRelockBtn', false);
   } else if (locked) {
@@ -3423,9 +3479,10 @@ async function loadSetupDefaults() {
     const d = await api('/api/setup');
     setupDefaults = d;
     setupExists = !!d.exists;
+    setupOthers = d.others || 0;
+    window._currentIranBundle = d.bundle || '';
     setupUnlocked = false;
     if (d.bundle) {
-      window._currentIranBundle = d.bundle;
       // Keep bundle cached for on-demand actions; do not auto-display box on initial view
     }
     if (!$('sLocalPub').value) $('sLocalPub').value = d.local_public || '';
@@ -4147,11 +4204,8 @@ $('refreshBtn').onclick = async () => {
   try { await refresh(); } finally { b.classList.remove('spin'); }
 };
 $('removeTunnelBtn').onclick = async () => {
-  // peers other than the first tunnel itself (peer 1 on the legacy names)
-  const others = (tunPeerCache || []).filter(p => !p.legacy && p.gre_if !== 'gre-tunnel').length;
-  if (!await entConfirm(tr('', 'Remove Tunnel?'), others
-    ? tr('', 'The first tunnel on this server is deleted: its GRE interface, tunnel service and their configs. The other tunnels keep running; remove each from its own card. The panel stays.')
-    : tr('', 'The tunnel on this server is deleted: its GRE interface, tunnel service and their configs. The other server keeps its side until you remove it there. The panel stays.'), tr('', 'Remove Tunnel'))) return;
+  if (!await entConfirm(tr('', 'Remove Tunnel?'),
+    tr('', 'The tunnel on this server is deleted: its GRE interface, tunnel service and their configs. The other server keeps its side until you remove it there. The panel stays.'), tr('', 'Remove Tunnel'))) return;
   const b = $('removeTunnelBtn');
   b.disabled = true;
   try {
@@ -4159,6 +4213,7 @@ $('removeTunnelBtn').onclick = async () => {
     showActOut(tr('', 'Remove Tunnel'), r.output || 'tunnel removed');
     toastOk(tr('', 'Tunnel removed'));
     refresh();
+    loadSetupDefaults();
   } catch(e) { toastErr('tunnel remove failed', e.message); }
   b.disabled = false;
 };
@@ -5901,9 +5956,8 @@ function renderCarriers() {
   const hasMain = hasBaseTunnel(L);
   const iran = swIsIran(L) || peers.length > 0;
   const rows = [];
-  // The base tunnel has its own row unless a peer record already stands for it.
-  if (hasMain && L.carrier_id && !peers.some(p => p.legacy)) {
-    rows.push({ id: 0, name: tr('', iran ? 'Main tunnel' : 'Tunnel to Iran'), ip: L.remote_pub || '', state: vizState(L) || (L.frp_up ? 'ok' : 'down'), carrier: L.carrier_id });
+  if (hasMain && L.carrier_id) {
+    rows.push({ id: 0, name: L.name || tr('', iran ? 'Tunnel' : 'Tunnel to Iran'), ip: L.remote_pub || '', state: vizState(L) || (L.frp_up ? 'ok' : 'down'), carrier: L.carrier_id });
   }
   peers.forEach(p => rows.push({ id: p.id, name: p.name || ('peer-' + p.id), ip: p.remote_pub || '', state: vizState(p) || ((p.frp_up || p.gre_up) ? 'ok' : 'down'), carrier: tunnelCarrierId(p) }));
   card.classList.toggle('hidden', !rows.length);
@@ -5952,7 +6006,7 @@ async function openSwap(id) {
     return;
   }
   _sw.info = r;
-  $('swapTitle').textContent = tr('', 'Swap carrier') + ' — ' + (r.tunnel.main ? tr('', 'Main tunnel') : r.tunnel.name);
+  $('swapTitle').textContent = tr('', 'Swap carrier') + ' — ' + r.tunnel.name;
   if (r.job && r.job.state === 'running') {
     _sw.job = r.job;
     renderSwapProgress();
@@ -6115,7 +6169,7 @@ function pollSwap(id) {
     clearInterval(_swTimer);
     _swTimer = null;
     renderCarriers();
-    const name = r.tunnel ? (r.tunnel.main ? tr('', 'Main tunnel') : r.tunnel.name) : '';
+    const name = r.tunnel ? r.tunnel.name : '';
     if (j.state === 'ok') toastOk(tr('', 'Carrier swapped'), name + ' · ' + carrierText(j.to));
     else if (j.state === 'reverted') toastWarn(tr('', 'Swap undone'), docTpl('{0} did not connect, so both servers went back to {1}.', [carrierText(j.to), carrierText(j.from)]));
     else if (j.state === 'manual') toastWarn(tr('', 'Switched here only'), tr('', 'Paste the new bundle into Setup on the foreign server.'));
@@ -8196,7 +8250,7 @@ const fmtMbit = bps => {
   return (m >= 100 ? Math.round(m) : m.toFixed(m >= 10 ? 1 : 2)) + ' Mbit/s';
 };
 function limLinkName(k) {
-  if (k === 'main') return tr('', 'Main tunnel');
+  if (k === 'main') { const L = window._lastLocal || {}; return firstName(L.name, L.remote_pub); }
   const m = /^(peer|bagher|xray)-(\d+)$/.exec(k);
   if (!m) return k;
   return { peer: tr('', 'Peer'), bagher: 'Bagher', xray: 'Xray' }[m[1]] + ' ' + m[2];
@@ -8593,7 +8647,7 @@ function renderDocPorts() {
     g.ports.push(p);
   });
   const eng = e => DOC_ENGINE[e] || LS_ENGINE[e] || (e === "xray" ? "Xray" : e || "");
-  box.innerHTML = groups.map(g => '<div class="doc-pgroup"><div class="doc-pgroup-head"><span data-no-i18n>' + esc(g.kind === 'tunnel' && g.name === 'Tunnel' ? tr('', 'Main tunnel') : g.name) + '</span><small>' +
+  box.innerHTML = groups.map(g => '<div class="doc-pgroup"><div class="doc-pgroup-head"><span data-no-i18n>' + esc(g.kind === 'tunnel' && g.name === 'Tunnel' ? tr('', 'Tunnel') : g.name) + '</span><small>' +
     esc(tr('', g.kind === 'customer' ? 'Customer' : 'Tunnel')) + (g.engine ? ' · ' + esc(eng(g.engine)) : '') + '</small></div>' +
     g.ports.map(p => {
       const r = docPortResults[p.key];
@@ -9309,7 +9363,7 @@ function navBadge(tab, n, kind, titleKey) {
   });
 }
 function uiObserve(s) {
-  const peers = (s && s.peers) || [], L = (s && s.local) || {};
+  const peers = ((s && s.peers) || []).concat(hubLinks(s && s.hubs)), L = (s && s.local) || {};
   let bad = peers.filter(p => p.health_state ? p.health_state !== 'healthy' : !(p.gre_up && p.frp_up && p.ping_ok)).length;
   const anyDown = peers.some(p => !p.gre_up && !p.frp_up);
   if (!peers.length && L.gre && L.gre.exists && !L.frp_up) bad = 1;
@@ -9514,7 +9568,7 @@ function openEditPeer(peerId) {
     $('editPortsNew').placeholder = editPortsBackhaul() ? 'e.g. 8080, 10000-10050, 2083=8443' : 'e.g. 443, 1051-1060';
   }
 
-  $('editPortsTitle').textContent = 'Edit Tunnel \u2014 ' + (name || tr('', 'Main tunnel'));
+  $('editPortsTitle').textContent = 'Edit Tunnel \u2014 ' + firstName(name, p.remote_pub);
   $('editPortsSub').textContent   = tr('', 'Rename the tunnel or change its foreign IP and forwarded ports. To change how it travels, use Swap carrier.');
   
   if ($('editPeerName'))   $('editPeerName').value = name;
@@ -11078,7 +11132,7 @@ function clPoolCard(p, links) {
     const share = s.share ? Math.round(s.share * 100) + '%' : '—';
     const conns = (s.conns == null || s.conns < 0) ? '—' : String(s.conns) + (m.max_conn ? ' / ' + m.max_conn : '');
     return `<tr>
-      <td><span class="cl-sw cl-c${color(L)}"></span><b>${esc(s.name || ('link ' + L))}</b>${tags}<div class="u-hint-12">${esc(L === 0 ? tr('', 'main tunnel') : tr('', 'peer') + ' ' + L)}${m.port ? ' · ' + tr('', 'port') + ' ' + m.port : ''}</div></td>
+      <td><span class="cl-sw cl-c${color(L)}"></span><b>${esc(s.name || ('link ' + L))}</b>${tags}<div class="u-hint-12">${esc(linkIdLabel(L))}${m.port ? ' · ' + tr('', 'port') + ' ' + m.port : ''}</div></td>
       <td class="cl-wrap">${health}</td>
       <td class="num">${conns}</td>
       <td class="num">${clMs(s.latency_ms)}</td>
@@ -11310,7 +11364,7 @@ function clRenderLinks(links) {
     const ports = l.bound
       ? `<span class="badge info" title="${esc(l.addr)}">${esc(tr('', 'In a pool'))}</span> <span class="u-mono">${esc((l.listen_tcp || []).join(', ') || '—')}</span>`
       : `<span class="u-mono">${esc((l.ports || []).join(', ') || '—')}</span>`;
-    return `<tr><td><b>${esc(l.name)}</b><div class="u-hint-12">${esc(l.id === 0 ? tr('', 'main tunnel') : tr('', 'peer') + ' ' + l.id)} · ${esc(l.engine)}</div></td>
+    return `<tr><td><b>${esc(l.name)}</b><div class="u-hint-12">${esc(linkIdLabel(l.id))} · ${esc(l.engine)}</div></td>
       <td class="mono">${esc(l.remote || '—')}</td><td class="cl-wrap">${health}</td><td class="num">${clMs(l.latency_ms)}</td><td>${ports}</td></tr>`;
   }).join('') : `<tr><td colspan="5"><div class="ent-empty">${esc(tr('', 'No tunnels on this server yet. Pools are made of the tunnels to your foreign servers (Setup).'))}</div></td></tr>`;
 }
@@ -11890,6 +11944,7 @@ async function clLeaveHub(id, name) {
   if (!await entConfirm(tr('', 'Leave Hub'), tr('', 'Stop serving') + ' ' + name + '? ' + tr('', 'Its client, config and GRE interface are removed from this server.'), tr('', 'Leave'))) return;
   try { await api('/api/cluster/leave-hub', { id }); toastOk(tr('', 'Left the hub')); }
   catch (e) { toastErr(tr('', 'Cannot leave the hub'), e.message || String(e)); }
+  refresh();
   loadClusterStatus();
 }
 
@@ -12429,7 +12484,7 @@ function clInsForm(key, d) {
     const l = (d.links || []).find(x => String(x.id) === a);
     const pools = (d.pools || []).filter(p => (p.members || []).some(m => m.link === l.id));
     const others = (d.pools || []).filter(p => !(p.members || []).some(m => m.link === l.id));
-    return clInsHead(l.name, (l.id === 0 ? tr('', 'main tunnel') : tr('', 'peer') + ' ' + l.id) + ' · ' + l.engine) + `
+    return clInsHead(l.name, linkIdLabel(l.id) + ' · ' + l.engine) + `
       <div class="cl-ins-sec">
         <span class="ent-label">${esc(tr('', 'Pools'))}</span>
         ${pools.map(p => { const s = (p.member_status || []).find(x => x.link === l.id) || {};

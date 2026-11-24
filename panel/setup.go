@@ -299,6 +299,7 @@ func handleSetupGet(w http.ResponseWriter, r *http.Request) {
 		"frp_port":      randomFrpPort(),
 		"role_guess":    st.Role,
 		"exists":        tunnelExists(),
+		"others":        len(loadPeers()) + len(readJoinedHubs()), // tunnels next to the first one
 	}
 	if bStr, tok := currentIranBundle(); bStr != "" {
 		resp["bundle"] = bStr
@@ -685,6 +686,49 @@ func handleSetupPost(w http.ResponseWriter, r *http.Request) {
 		} else if clash != "" {
 			writeAPIError(w, r, "E-PEER-02", "port "+clash+" is already served by another tunnel — pick a different port")
 			return
+		}
+	}
+
+	// Setup makes the first tunnel next to the others there are (the first one
+	// was removed, or is being replaced): the same checks as for one more
+	if len(loadPeers()) > 0 && body.Role == "iran" {
+		base := mainTunnelID
+		if p := basePeer(loadPeers()); p != nil {
+			base = p.ID
+		}
+		if clash := peerDuplicateIPClash(body.RemotePub, base); clash != "" {
+			writeAPIError(w, r, "E-PEER-08", "Foreign IP is already used by tunnel '"+clash+"' — you cannot add multiple tunnels to the exact same server")
+			return
+		}
+		if clash := peerPortClash(ports, base); clash != "" {
+			writeAPIError(w, r, "E-PEER-02", "port "+clash+" is already served by another tunnel — pick a different port")
+			return
+		}
+		for _, p := range loadPeers() {
+			if p.ID == base {
+				continue
+			}
+			if p.FrpPort == body.FrpPort {
+				writeAPIError(w, r, "E-SETUP-07", fmt.Sprintf("control port %d is tunnel %q's — pick another", body.FrpPort, p.Name))
+				return
+			}
+			if body.Engine != "backhaul" && body.LocalGre != "" && (body.LocalGre == p.LocalGre || body.LocalGre == p.PeerGre) {
+				writeAPIError(w, r, "E-SETUP-05", fmt.Sprintf("GRE address %s is tunnel %q's — pick another pair", body.LocalGre, p.Name))
+				return
+			}
+		}
+	}
+	// the same on a foreign server that serves other Iran hubs; with no first
+	// one this makes one more hub, which is Cluster like joining it
+	if hubs := readJoinedHubs(); len(hubs) > 0 && body.Role == "foreign" {
+		if !hasFirstTunnel(localStatus()) && proRequired(w, r, "cluster", "Serving several Iran hubs") {
+			return
+		}
+		for _, h := range hubs {
+			if h.IranPub == body.RemotePub {
+				writeAPIError(w, r, "E-PEER-08", "this server already serves the Iran hub "+h.IranPub+" ("+h.Name+")")
+				return
+			}
 		}
 	}
 

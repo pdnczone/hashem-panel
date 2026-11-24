@@ -334,19 +334,10 @@ func tgTunnel(c tgBotConfig, usr *tgBotUser, id int) tgScreen {
 			row = append(row, tgBtn{Text: tgT(c, "✏️ تغییر نام", "✏️ Rename"), Data: "tn:" + sid})
 		}
 		keys = append(keys, row)
-		if !tgRemovesMore(id) {
-			keys = append(keys, []tgBtn{{Text: tgT(c, "🗑 حذف تونل", "🗑 Remove tunnel"), Data: "tx:" + sid}})
-		}
+		keys = append(keys, []tgBtn{{Text: tgT(c, "🗑 حذف تونل", "🗑 Remove tunnel"), Data: "tx:" + sid}})
 	}
 	keys = append(keys, []tgBtn{{Text: tgT(c, "🔄 تازه کن", "🔄 Refresh"), Data: "t:" + sid}}, tgBack(c, "tl"))
 	return tgScreen{Text: b.String(), Keys: keys}
-}
-
-// tgRemovesMore: removing the first tunnel of a foreign server takes every
-// other hub's tunnel with it.
-func tgRemovesMore(id int) bool {
-	s := currentSnapshot()
-	return id == mainTunnelID && s.Main == nil && strings.HasPrefix(s.Local.Role, "foreign") && len(readJoinedHubs()) > 0
 }
 
 // tgActionBody is /api/action's body for a tunnel (the first tunnel has no peer_id).
@@ -401,10 +392,6 @@ func tgTunnelAction(c tgBotConfig, usr *tgBotUser, key string, id int) tgScreen 
 		})
 		return tgScreen{Text: tgT(c, "✏️ نام تازه‌ی «", "✏️ Send the new name for \"") + name + tgT(c, "» را بفرستید (یا /cancel).", "\" (or /cancel).")}
 	case "tx":
-		if tgRemovesMore(id) {
-			return tgScreen{Text: tgT(c, "این سرور به چند هاب ایران وصل است؛ حذف تونل اول همه را حذف می‌کند. از پنل حذف کنید.",
-				"This server serves several Iran hubs: removing its first tunnel removes them all. Remove it in the panel."), Keys: back}
-		}
 		return tgConfirm(c, usr, tgT(c, "تونل «", "Remove the tunnel \"")+name+tgT(c, "» حذف شود؟ سرویس‌ها و تنظیماتش پاک می‌شوند و کاربرانش قطع می‌شوند.", "\"? Its services and settings are deleted and its users are cut off."),
 			tgT(c, "در حال حذف تونل…", "Removing the tunnel…"), func(u *tgBotUser) string { return tgRunAction(c, u, "remove-tunnel", id) })
 	}

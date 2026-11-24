@@ -75,7 +75,7 @@ func frpVersionDrift(local, mainPeer string, links map[int]tunnelLink, peers []p
 	}
 	var out []string
 	if mainPeer != "" && mainPeer != local {
-		out = append(out, "main tunnel "+mainPeer)
+		out = append(out, "tunnel "+mainPeer)
 	}
 	for _, p := range peers {
 		if v := links[p.ID].FrpVersion; v != "" && v != local {

@@ -157,8 +157,17 @@ func saveCarrierConfig(cfg carrierConfig) error {
 }
 
 func getPeerGRE() string {
-	if p := findPeer(1); p != nil && p.PeerGre != "" {
+	peers := loadPeers()
+	if p := basePeer(peers); p != nil && p.PeerGre != "" {
 		return p.PeerGre
+	}
+	if inner := currentLocal().Gre.Inner; inner != "" {
+		return grePeerInner(inner)
+	}
+	for _, p := range peers { // no first tunnel: another one's other end
+		if p.PeerGre != "" && !p.NoGre {
+			return p.PeerGre
+		}
 	}
 	data, err := os.ReadFile(filepath.Join(configDir, "setup.json"))
 	if err == nil {
@@ -198,7 +207,7 @@ func handleCarrierGet(w http.ResponseWriter, r *http.Request) {
 	cfg := loadCarrierConfig()
 	// Without a GRE interface there is nothing to ping: say so instead of
 	// reporting packet loss to the 10.10.10.1 fallback.
-	greExists := fileExists(filepath.Join(sysClassNet, "gre-tunnel"))
+	greExists := len(greInterfaces()) > 0
 	st, rtt, statusText := "no_tunnel", "", "No tunnel"
 	if greExists {
 		st, rtt = getCarrierPingStatus()

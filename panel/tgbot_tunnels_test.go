@@ -51,12 +51,14 @@ func TestTGBotForeignServerShowsItsTunnels(t *testing.T) {
 	if !strings.Contains(d.Text, "203.0.113.9") {
 		t.Fatalf("details: %s", d.Text)
 	}
+	removable := false
 	for _, row := range d.Keys {
 		for _, k := range row {
-			if strings.HasPrefix(k.Data, "tx:") {
-				t.Fatal("removing the first tunnel here removes the other hubs too: not from the bot")
-			}
+			removable = removable || strings.HasPrefix(k.Data, "tx:")
 		}
+	}
+	if !removable {
+		t.Fatal("no Remove: it removes this tunnel alone, the other hubs stay")
 	}
 	tgOnButton(c, usr, 42, "tr:0")
 	if strings.Join(f.actions, ",") != "restart-engine" {

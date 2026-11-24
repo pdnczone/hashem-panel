@@ -5174,6 +5174,11 @@ release_frps_port() {
     return "$busy"
 }
 
+# hashem_gre_names: the GRE interfaces of the tunnels that are not the first one.
+hashem_gre_names() {
+    ip -o link show 2>/dev/null | awk -F': ' '{sub(/@.*/, "", $2); print $2}' | grep -E '^gre-[th][0-9]+$'
+}
+
 # remove_hashem_tunnel_ifaces deletes only the tunnels hashem made (M19):
 # gre-tunnel, gre-tN and the gre_if names in peers.json, plus FOU ports that
 # carry GRE (ipproto 47) and the WSS bridge port. It used to delete every
@@ -5181,7 +5186,7 @@ release_frps_port() {
 remove_hashem_tunnel_ifaces() {
     command -v ip >/dev/null 2>&1 || return 0
     local gif names
-    names="$TUNNEL_NAME $(ip -o link show 2>/dev/null | awk -F': ' '{sub(/@.*/, "", $2); print $2}' | grep -E '^gre-[th][0-9]+$')"
+    names="$TUNNEL_NAME $(hashem_gre_names)"
     if [[ -f "$PEERS_FILE" ]]; then
         names="$names $(grep -o '"gre_if": *"[^"]*"' "$PEERS_FILE" 2>/dev/null | cut -d'"' -f4)"
     fi
@@ -5338,8 +5343,10 @@ cli_add_peer() {
     grep -q '"id"' "$PEERS_FILE" 2>/dev/null && FIRST_TUN=0
     [[ "$FIRST_TUN" -eq 1 ]] && { backup_configs "pre_setup_iran" >/dev/null 2>&1 || true; ensure_dependencies_smart; }
     install_frp_binaries || return 1
-    if [[ "$ID" -eq 1 ]] && ! tunnel_present; then
-        # first tunnel keeps legacy names (gre-tunnel, frps) — old setups untouched
+    if [[ "$ID" -eq 1 && "$FIRST_TUN" -eq 1 ]]; then
+        # this server's first tunnel keeps the old names (gre-tunnel, frps).
+        # Not one that only gets number 1 because the first was removed: it is
+        # one tunnel among others, under its own names.
         setup_gre_systemd "$LOCAL_PUB" "$REMOTE_PUB" "$LOCAL_GRE" "$PEER_GRE"
         [[ "$POOLED" == 1 ]] && LB_BIND_ADDR=$(lb_addr_for_svc frps)
         peer_write_frps "" "$FRP_PORT" "$TOKEN"
@@ -5560,7 +5567,7 @@ cli_add_backhaul_peer() {
         ENGINE="gre-backhaul"
         is_valid_ip "$LOCAL_GRE" || { echo -e "${RED}[!] Invalid local GRE IP: '$LOCAL_GRE'${NC}"; return 1; }
         is_valid_ip "$PEER_GRE" || { echo -e "${RED}[!] Invalid peer GRE IP: '$PEER_GRE'${NC}"; return 1; }
-        if [[ "$ID" -eq 1 ]] && ! tunnel_present; then
+        if [[ "$ID" -eq 1 && "$FIRST_TUN" -eq 1 ]]; then
             GRE_IF="$TUNNEL_NAME"
             setup_gre_systemd "$LOCAL_PUB" "$REMOTE_PUB" "$LOCAL_GRE" "$PEER_GRE"
         else
@@ -5965,6 +5972,7 @@ menu_edit_peer() {
 }
 
 setup_foreign_server() {
+    foreign_first_allowed || return 1
     echo -e "\n${YELLOW}====================================================${NC}"
     echo -e "${YELLOW}   STEP 2: CONFIGURING FOREIGN SERVER (GRE + FRPC)  ${NC}"
     echo -e "${YELLOW}====================================================${NC}"
@@ -6032,7 +6040,7 @@ check_status() {
     if ip link show "$TUNNEL_NAME" >/dev/null 2>&1; then
         ip addr show dev "$TUNNEL_NAME"
         echo -e "${GREEN}[OK] Interface ${TUNNEL_NAME} exists and is UP.${NC}"
-    else
+    elif [[ -z "$(hashem_gre_names)" ]]; then
         echo -e "${YELLOW}[*] Interface ${TUNNEL_NAME} not found (may be running in No-GRE Backhaul mode).${NC}"
     fi
 
@@ -6065,8 +6073,34 @@ check_status() {
     elif systemctl is-active --quiet backhaul-client; then
         echo -e "${GREEN}[OK] backhaul-client (Backhaul Client on FOREIGN) is ACTIVE and RUNNING.${NC}"
         systemctl status backhaul-client --no-pager -l
-    else
+    elif [[ "$(peers_other_than 0)" -eq 0 && "$(hubs_joined)" -eq 0 ]]; then
         echo -e "${RED}[!] Neither FRP nor Backhaul service is active.${NC}"
+    fi
+
+    # 4. Every other tunnel: each one on its own, whether or not there is a first
+    if [[ "$(peers_other_than 0)" -gt 0 || "$(hubs_joined)" -gt 0 ]] && command -v python3 >/dev/null 2>&1; then
+        echo -e "\n${CYAN}[4] Tunnels:${NC}"
+        local id name svc gif pub st
+        while IFS='|' read -r id name svc gif pub; do
+            st="${RED}${svc} is not running${NC}"
+            systemctl is-active --quiet "$svc" 2>/dev/null && st="${GREEN}${svc} is running${NC}"
+            if [[ -n "$gif" && "$gif" != "none" ]]; then
+                if ip link show "$gif" >/dev/null 2>&1; then st+=", ${gif} is up"; else st+=", ${RED}${gif} is missing${NC}"; fi
+            fi
+            printf '  %-3s %-16s %-16s ' "$id" "$name" "$pub"
+            echo -e "$st"
+        done < <(python3 - "$PEERS_FILE" "${HUBS_FILE:-${PANEL_CONFIG_DIR}/hubs.json}" <<'PYEOF'
+import json, sys
+for f, key, pub in ((sys.argv[1], "peers", "remote_pub"), (sys.argv[2], "hubs", "iran_pub")):
+    try:
+        recs = json.load(open(f)).get(key, [])
+    except Exception:
+        continue
+    for r in recs:
+        svc = r.get("frps_svc") or r.get("svc") or ("frps-%s" % r.get("id"))
+        print("|".join(str(x or "").replace("|", " ") for x in (r.get("id"), r.get("name"), svc, r.get("gre_if"), r.get(pub))))
+PYEOF
+        )
     fi
 }
 
@@ -6074,7 +6108,7 @@ check_status() {
 restart_all() {
     echo -e "\n${CYAN}[*] Restarting GRE and FRP/Backhaul services (all tunnels)...${NC}"
     local u
-    for u in /etc/systemd/system/gre-t*.service /etc/systemd/system/gre-tunnel.service /etc/systemd/system/frps*.service /etc/systemd/system/frpc.service /etc/systemd/system/backhaul*.service; do
+    for u in /etc/systemd/system/gre-t*.service /etc/systemd/system/gre-h[0-9]*.service /etc/systemd/system/frps*.service /etc/systemd/system/frpc*.service /etc/systemd/system/backhaul*.service; do
         [[ -f "$u" ]] || continue
         systemctl restart "$(basename "$u")" >/dev/null 2>&1 && echo -e "${GREEN}[OK] $(basename "$u") restarted.${NC}"
     done
@@ -6391,7 +6425,13 @@ doctor_health_check() {
             report_item "GRE Interface (${TUNNEL_NAME})" "WARN" "Interface exists but no IPv4 assigned"
         fi
     else
-        report_item "GRE Interface (${TUNNEL_NAME})" "WARN" "Interface not found"
+        local OTHER_GRE
+        OTHER_GRE=$(hashem_gre_names | tr '\n' ' ')
+        if [[ -n "$OTHER_GRE" ]]; then
+            report_item "GRE Interface" "PASS" "UP: ${OTHER_GRE}"
+        elif [[ "$(peers_other_than 0)" -eq 0 && "$(hubs_joined)" -eq 0 ]]; then
+            report_item "GRE Interface (${TUNNEL_NAME})" "WARN" "Interface not found"
+        fi
     fi
     
     # 7. GRE Peer Ping Connectivity
@@ -6811,12 +6851,19 @@ peers_other_than() {
     grep -o '"id": *[0-9]*' "$PEERS_FILE" 2>/dev/null | grep -o '[0-9]*$' | grep -cvx "${1:-0}"
 }
 
+# hubs_joined: how many extra Iran hubs this foreign server serves (join-hub).
+hubs_joined() {
+    [[ -f "${HUBS_FILE:-${PANEL_CONFIG_DIR}/hubs.json}" ]] || { echo 0; return; }
+    grep -o '"id": *[0-9]*' "${HUBS_FILE:-${PANEL_CONFIG_DIR}/hubs.json}" 2>/dev/null | grep -c .
+}
+
 # remove_base_tunnel: the first tunnel only (gre-tunnel, frps/frpc or the base
 # Backhaul unit, and their configs). The other tunnels' units, interfaces and
-# configs stay, and so do the rules every tunnel shares (MSS clamp, pools,
-# limits). With no other tunnel left this is remove_tunnel_force.
+# configs stay (a hub's peers, or the other Iran hubs of a foreign server),
+# and so do the rules every tunnel shares (MSS clamp, pools, limits). With no
+# other tunnel left this is remove_tunnel_force.
 remove_base_tunnel() {
-    if [[ "$(peers_other_than "${1:-0}")" -eq 0 ]]; then
+    if [[ "$(peers_other_than "${1:-0}")" -eq 0 && "$(hubs_joined)" -eq 0 ]]; then
         remove_tunnel_force
         return
     fi
@@ -6825,6 +6872,7 @@ remove_base_tunnel() {
     rm -f "${PANEL_CONFIG_DIR}/first_tunnel.json" 2>/dev/null
     frps_wss_front_remove ""
     backhaul_udp_remove backhaul-server
+    backhaul_udp_remove backhaul-client
     for u in frps frpc backhaul-server backhaul-client backhaul "$TUNNEL_NAME"; do
         systemctl disable --now "${u}.service" >/dev/null 2>&1 || true
         rm -f "$d/${u}.service"
@@ -6834,7 +6882,8 @@ remove_base_tunnel() {
     ip link del "$(gre6_sit_name "$TUNNEL_NAME")" >/dev/null 2>&1 || true
     rm -f "${CONFIG_DIR}/frps.toml" "${CONFIG_DIR}/frpc.toml" \
           "${BACKHAUL_CONFIG_DIR}/config.toml" "${BACKHAUL_CONFIG_DIR}/server.toml" "${BACKHAUL_CONFIG_DIR}/client.toml" \
-          "${PANEL_CONFIG_DIR}/server.toml" "${PANEL_CONFIG_DIR}/client.toml"
+          "${PANEL_CONFIG_DIR}/server.toml" "${PANEL_CONFIG_DIR}/client.toml" \
+          "${CONFIG_DIR}/dial.env" "${CONFIG_DIR}/dial.streak" "${CONFIG_DIR}/dial.hold" # the first tunnel's route
     hashem_ufw_release
     reserve_service_ports
     echo -e "${GREEN}[OK] First tunnel removed. The other tunnels are untouched.${NC}"
@@ -10393,17 +10442,21 @@ ui_status_refresh() {
     UI_STATUS_AT=$now
     UI_ROLE="Not set up"
     if [[ -f "${CONFIG_DIR}/frps.toml" || -f "${CONFIG_DIR}/frps.ini" || -f /etc/backhaul/config.toml || -f /etc/backhaul/server.toml ]] \
-        || [[ -f /etc/systemd/system/hashem-bagher.service ]]; then
+        || [[ -f /etc/systemd/system/hashem-bagher.service ]] || [[ "$(peers_other_than 0)" -gt 0 ]]; then
         UI_ROLE="Iran server"
-    elif [[ -f "${CONFIG_DIR}/frpc.toml" || -f "${CONFIG_DIR}/frpc.ini" || -f /etc/backhaul/client.toml ]]; then
+    elif [[ "$(hubs_joined)" -gt 0 ]] || [[ -f "${CONFIG_DIR}/frpc.toml" || -f "${CONFIG_DIR}/frpc.ini" || -f /etc/backhaul/client.toml ]]; then
         UI_ROLE="Foreign server"
     fi
     UI_TUN="${DIM}none${NC}"
-    if tunnel_present 2>/dev/null; then
+    if tunnel_present 2>/dev/null || [[ "$(peers_other_than 0)" -gt 0 || "$(hubs_joined)" -gt 0 ]]; then
         local up=0 u
         for u in frps frpc backhaul-server backhaul-client gre-tunnel; do
             timeout 3 systemctl is-active --quiet "$u" 2>/dev/null && { up=1; break; }
         done
+        # no first tunnel: any of the others
+        if (( ! up )); then
+            [[ -n "$(timeout 3 systemctl list-units --type=service --state=active --plain --no-legend 'frps-[0-9]*' 'frpc-h[0-9]*' 'backhaul-server-[0-9]*' 'backhaul-client-h[0-9]*' 2>/dev/null)" ]] && up=1
+        fi
         if (( up )); then UI_TUN="${GREEN}up${NC}"; else UI_TUN="${RED}down${NC}"; fi
     fi
     UI_PANEL="${RED}stopped${NC}"
@@ -10651,7 +10704,11 @@ show_iran_bundle() {
     elif [[ -f /etc/backhaul/config.toml || -f /etc/backhaul/server.toml ]]; then
         backhaul_show_bundle
     else
-        echo -e "${YELLOW}No Iran-side tunnel here, so there is no bundle to show.${NC}"
+        if [[ "$(peers_other_than 0)" -gt 0 ]]; then
+            echo -e "${YELLOW}Each tunnel has its own bundle: hashem peer-token --id N${NC}"
+        else
+            echo -e "${YELLOW}No Iran-side tunnel here, so there is no bundle to show.${NC}"
+        fi
     fi
 }
 
@@ -10836,7 +10893,7 @@ menu_cluster() {
                 ui_page "Members"
                 ui_ask a "Pool port"
                 [[ "$a" =~ ^[0-9]+$ ]] || { ui_pause; continue; }
-                ui_ask b "Tunnel id (0 = main tunnel, N = peer N)"
+                ui_ask b "Tunnel id (0 = the tunnel made in Setup, N = peer N)"
                 [[ "$b" =~ ^[0-9]+$ ]] || { ui_pause; continue; }
                 ui_menu m "Member $b of pool $a" "" \
                     "1|Add|The tunnel serves this pool." \
@@ -11408,6 +11465,15 @@ cli_setup_iran() {
     setup_iran_server_noninteractive "$LOCAL_PUB" "$REMOTE_PUB" "$FRP_PORT" "$TOKEN" "$LOCAL_GRE" "$PEER_GRE" "$PORTS" "$FRP_TRANSPORT"
 }
 
+# foreign_first_allowed: Setup on a foreign server that still serves other Iran
+# hubs but no first one any more makes one more hub, as join-hub does.
+foreign_first_allowed() {
+    [[ "$(hubs_joined)" -eq 0 ]] && return 0
+    systemctl is-enabled --quiet frpc 2>/dev/null && return 0
+    systemctl is-enabled --quiet backhaul-client 2>/dev/null && return 0
+    pro_ok cluster "Serving several Iran hubs"
+}
+
 cli_setup_foreign() {
     local LOCAL_PUB="" REMOTE_PUB="" FRP_PORT="" LOCAL_GRE="" PEER_GRE="" TOKEN="" PORTS="" FORCE=0 BUNDLE=""
     local FOREIGN_GRE_DEF="$FOREIGN_GRE_IP" IRAN_GRE_DEF="$IRAN_GRE_IP"
@@ -11436,6 +11502,7 @@ cli_setup_foreign() {
             *) echo -e "${RED}[!] Unknown flag: $1${NC}"; usage_cli; return 1 ;;
         esac
     done
+    foreign_first_allowed || return 1
     if [[ -n "$BUNDLE" ]]; then
         bundle_parse "$BUNDLE" || { echo -e "${RED}[!] Bad --bundle (want hsh1_<IRAN_PUB>_<PORT>_<IRAN_GRE>_<FOREIGN_GRE>_<TOKEN>[_<PORTS>]).${NC}"; return 1; }
         # Backhaul bundles go to their own setup. "$@" is empty here (the
@@ -11555,6 +11622,7 @@ cli_setup_backhaul_foreign() {
             *) echo -e "${RED}[!] Unknown flag: $1${NC}"; return 1 ;;
         esac
     done
+    foreign_first_allowed || return 1
     if [[ -n "$BUNDLE" ]]; then
         bundle_parse "$BUNDLE" || { echo -e "${RED}[!] Bad bundle: $BUNDLE${NC}"; return 1; }
         REMOTE_PUB=$B_IRAN_PUB
@@ -11631,6 +11699,7 @@ cli_setup_gre_backhaul_foreign() {
             *) echo -e "${RED}[!] Unknown flag: $1${NC}"; return 1 ;;
         esac
     done
+    foreign_first_allowed || return 1
     if [[ -n "$BUNDLE" ]]; then
         bundle_parse "$BUNDLE" || { echo -e "${RED}[!] Bad bundle: $BUNDLE${NC}"; return 1; }
         TOKEN=$B_TOKEN
@@ -12578,7 +12647,7 @@ cli_join_hub() {
     bundle_parse "$BUNDLE" || { echo -e "${RED}[!] Not a valid bundle (hsh1_, bh1_ or gh1_).${NC}"; return 1; }
     case "$DIAL" in auto|gre|public) ;; *) DIAL=auto ;; esac
     is_valid_ip "$RELAY_IP" || { echo -e "${RED}[!] Invalid --relay-ip '${RELAY_IP}'.${NC}"; return 1; }
-    if ! systemctl is-enabled --quiet frpc 2>/dev/null && ! systemctl is-enabled --quiet backhaul-client 2>/dev/null; then
+    if ! systemctl is-enabled --quiet frpc 2>/dev/null && ! systemctl is-enabled --quiet backhaul-client 2>/dev/null && [[ "$(hubs_joined)" -eq 0 ]]; then
         echo -e "${RED}[!] Set this server up with its first Iran hub first (Setup, or hashem setup-foreign --bundle ...). join-hub adds the second and later hubs.${NC}"
         return 1
     fi
@@ -12678,6 +12747,8 @@ cli_hubs() {
     echo -e "${BOLD}Iran hubs this server serves${NC}"
     if systemctl is-enabled --quiet frpc 2>/dev/null || systemctl is-enabled --quiet backhaul-client 2>/dev/null; then
         echo -e "  1  first hub      ${main:-?}"
+    elif [[ "$(hubs_joined)" -gt 0 ]]; then
+        : # its first hub was removed; the others are listed below
     else
         echo "  (none: this is not a foreign server)"
         return 0

@@ -211,6 +211,7 @@ func timedStep(name string, f func()) {
 // collectHost gathers the per-tick host view with a fixed number of commands.
 func collectHost(recs []peerRecord, prev map[string]devCounters) *hostView {
 	v := &hostView{inner: map[string]string{}, active: map[string]bool{}, flowing: map[string]bool{}}
+	hubs := readJoinedHubs()
 	timedStep("ip_tunnel", func() {
 		if out, err := runCmdTimeout(5*time.Second, "ip", "tunnel", "show"); err == nil {
 			v.tunnelShow, v.tunnelOK = string(out), true
@@ -224,6 +225,9 @@ func collectHost(recs []peerRecord, prev map[string]devCounters) *hostView {
 	})
 	timedStep("systemctl", func() {
 		units := unitsFor(recs)
+		for _, h := range hubs {
+			units = append(units, h.Svc)
+		}
 		out, _ := runCmdTimeoutOut(5*time.Second, "systemctl", append([]string{"is-active"}, units...)...)
 		if m, ok := parseIsActive(units, string(out)); ok {
 			v.active = m
@@ -256,7 +260,11 @@ func collectHost(recs []peerRecord, prev map[string]devCounters) *hostView {
 		// Only the tunnel control sessions are matched, so ask ss for those ports:
 		// unfiltered, ss -i dumps every socket on the host (about 42MB a tick at
 		// 100k connections) and the kernel fills tcp_info for each.
-		filter := ssPortFilter(controlPortsOf(recs, localStatusFrom(v).BindPort))
+		ports := controlPortsOf(recs, localStatusFrom(v).BindPort)
+		for _, h := range hubs {
+			ports = append(ports, h.Port)
+		}
+		filter := ssPortFilter(ports)
 		if filter == "" {
 			return // no tunnel ports: no session can match
 		}
@@ -331,11 +339,7 @@ func mainTunnelFrom(st tunnelStatus, v *hostView) *peerLive {
 	if !strings.HasPrefix(st.Role, "iran") || !baseTunnelConfigured(st) {
 		return nil
 	}
-	name := "Tunnel"
-	if st.RemotePub != "" {
-		name = "Tunnel · " + st.RemotePub
-	}
-	rec := peerRecord{ID: mainTunnelID, Name: name, RemotePub: st.RemotePub, Engine: st.Engine,
+	rec := peerRecord{ID: mainTunnelID, Name: firstTunnelName(st.RemotePub), RemotePub: st.RemotePub, Engine: st.Engine,
 		Transport: st.Transport, FrpPort: st.BindPort, Ports: st.ProxyPorts}
 	l := &peerLive{peerRecord: rec, GreUp: st.Gre.Exists, FrpUp: st.FrpUp, GreInner: st.Gre.Inner}
 	sig := LinkSignals{ServiceActive: st.FrpUp, GreIfUp: st.Gre.Exists}
@@ -387,6 +391,9 @@ type HubSnapshot struct {
 	Local   tunnelStatus
 	Main    *peerLive
 	Peers   []peerLive
+	// Hubs: the Iran hubs a foreign server serves next to its first one, or
+	// without it (cluster_join.go).
+	Hubs    []hubLive
 	Traffic map[string]any
 	// DevData is the raw /proc/net/dev this snapshot was built from (the
 	// traffic ledger sums tunnel interfaces from it).
@@ -523,8 +530,14 @@ func buildSnapshot() *HubSnapshot {
 	s := &HubSnapshot{Local: local, Seq: snapSeq.Add(1)}
 	timedStep("peers", func() {
 		s.Peers = livePeersFrom(v, recs)
-		s.Main = mainTunnelFrom(local, v)
+		if p := basePeer(recs); p != nil {
+			// the first tunnel has a record: it is that peer, not one more tunnel
+			s.Local.BasePeer = p.ID
+		} else {
+			s.Main = mainTunnelFrom(local, v)
+		}
 	})
+	s.Hubs = liveHubsFrom(v, readJoinedHubs())
 	// Debounce: the published state only changes after healthDebounceN
 	// consecutive snapshots agree. First sight of a peer publishes immediately.
 	alive := map[int]bool{}
@@ -541,6 +554,11 @@ func buildSnapshot() *HubSnapshot {
 	snapDeb.prune(alive)
 
 	s.LocalSession, s.LocalRTT = localSessionFrom(local, s.Main, v)
+	for _, p := range s.Peers {
+		if p.ID == s.Local.BasePeer && p.Linked {
+			s.LocalSession = true
+		}
+	}
 
 	timedStep("traffic", func() {
 		s.Traffic = trafficSample(v.devData, v.carrierRx, v.carrierTx, v.carrierOK, v.devAt)
@@ -551,7 +569,11 @@ func buildSnapshot() *HubSnapshot {
 	})
 	s.PublicIP = detectPublicIPCached()
 	s.PublicIPs, s.PublicIPv6 = publicIPs(v.addrShow, s.PublicIP)
-	s.FrpSince = frpSinceCached(local.FrpSvc)
+	since := local.FrpSvc
+	if since == "" && len(recs) > 0 {
+		since = recs[0].FrpsSvc // no first tunnel
+	}
+	s.FrpSince = frpSinceCached(since)
 
 	snapIcmp.setTargets(icmpTargets(s))
 	snapProbe.schedule(time.Now(), probeQueries(s))
@@ -662,6 +684,14 @@ func snapshotTick() bool {
 	autopilotOnSnapshot(snap)
 	watchdogOnSnapshot(snap)
 	return true
+}
+
+// snapshotRebuild replaces the published snapshot now, after a change the next
+// page load must show (a removed tunnel stayed on it until the next tick).
+func snapshotRebuild() {
+	if snapPtr.Load() != nil {
+		snapPtr.Store(buildSnapshot())
+	}
 }
 
 // currentSnapshot returns the latest snapshot. Before the first one exists the

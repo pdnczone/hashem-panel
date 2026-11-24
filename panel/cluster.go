@@ -428,7 +428,7 @@ func lbLinkName(l lbLink) string {
 		return l.Name
 	}
 	if l.ID == mainTunnelID {
-		return xrayOr(linkLabel("main"), "Main tunnel")
+		return firstTunnelName(l.Remote)
 	}
 	return fmt.Sprintf("peer-%d", l.ID)
 }
@@ -1982,7 +1982,7 @@ func cliClusterPool(args []string) int {
 				for _, f := range strings.Split(s, ",") {
 					id, err := strconv.Atoi(strings.TrimSpace(f))
 					if err != nil {
-						fmt.Println("[!] --links takes link ids: 0 is the main tunnel, N is peer N")
+						fmt.Println("[!] --links takes link ids: 0 is the tunnel made in Setup, N is peer N")
 						return 1
 					}
 					p.Members = append(p.Members, LBMember{Link: id, Weight: 1, Priority: len(p.Members)})

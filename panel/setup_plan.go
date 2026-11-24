@@ -185,8 +185,33 @@ func firstTunnelSave(r firstTunnelRec) {
 	_ = writeFile0600(firstTunnelFile(), b)
 }
 
-// firstTunnelForget: the first tunnel was removed.
-func firstTunnelForget() { _ = os.Remove(firstTunnelFile()) }
+// firstTunnelForget: the first tunnel was removed. Its name goes too (the next
+// first tunnel must not come up with it), and what old installs recorded about
+// it in setup.json, all but this server's own address: its token and GRE
+// addresses were handed out as a bundle for a tunnel that is gone.
+func firstTunnelForget() {
+	_ = os.Remove(firstTunnelFile())
+	if linkLabel("main") != "" {
+		_ = setLinkName("main", "")
+	}
+	path := filepath.Join(configDir, "setup.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var m map[string]any
+	if json.Unmarshal(b, &m) != nil {
+		return
+	}
+	for k := range m {
+		if k != "local_public" {
+			delete(m, k)
+		}
+	}
+	if out, err := json.Marshal(m); err == nil {
+		_ = writeFileAtomic(path, out, 0o600)
+	}
+}
 
 // firstTunnel is the first tunnel as the plan sees it.
 type firstTunnel struct {

@@ -116,11 +116,6 @@ func resolveSwapTunnel(id int) (swapTunnel, error) {
 		return swapTunnel{}, errSwapForeign
 	}
 	if id <= 0 {
-		// A hub with only per-peer units shows that peer as its "main" card.
-		if m := perPeerUnitRe.FindStringSubmatch(st.FrpSvc); m != nil {
-			n, _ := strconv.Atoi(m[1])
-			return resolveSwapTunnel(n)
-		}
 		if !isMainUnit(st.FrpSvc) {
 			return swapTunnel{}, fmt.Errorf("no tunnel on this server yet")
 		}
@@ -144,7 +139,10 @@ func resolveSwapTunnel(id int) (swapTunnel, error) {
 }
 
 func mainSwapTunnel(st tunnelStatus, legacy *peerRecord) swapTunnel {
-	t := swapTunnel{ID: 0, Name: xrayOr(linkLabel("main"), "Main tunnel"), Main: true, rec: legacy}
+	t := swapTunnel{ID: 0, Name: firstTunnelName(st.RemotePub), Main: true, rec: legacy}
+	if legacy != nil && legacy.Name != "" {
+		t.Name = legacy.Name
+	}
 	t.Port = st.BindPort
 	if t.Port <= 0 {
 		t.Port = st.FrpPort

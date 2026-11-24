@@ -550,7 +550,7 @@ func TestFrpVersionDrift(t *testing.T) {
 	links := map[int]tunnelLink{2: {FrpVersion: "0.61.1"}, 3: {FrpVersion: "0.71.0"}, 9: {FrpVersion: "0.50.0"}}
 	peers := []peerRecord{{ID: 2, Name: "de-1"}, {ID: 3, Name: "nl-1"}, {ID: 4, Name: "fi-1"}}
 	got := frpVersionDrift("0.71.0", "0.61.1", links, peers)
-	if strings.Join(got, "|") != "main tunnel 0.61.1|de-1 0.61.1" {
+	if strings.Join(got, "|") != "tunnel 0.61.1|de-1 0.61.1" {
 		t.Fatalf("drift = %v", got)
 	}
 	if d := frpVersionDrift("0.71.0", "0.71.0", map[int]tunnelLink{3: {FrpVersion: "0.71.0"}}, peers); len(d) != 0 {

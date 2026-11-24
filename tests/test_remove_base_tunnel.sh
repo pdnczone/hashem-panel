@@ -10,13 +10,13 @@ for c in systemctl ip; do
     printf '#!/bin/sh\necho "%s $*" >> %s/calls.log\n' "$c" "$T" > "$T/bin/$c"; chmod +x "$T/bin/$c"
 done
 export PATH="$T/bin:$PATH" HASHEM_SYSTEMD_DIR="$T/sd"
-for f in cli_remove_peer peer_init peer_require_py peer_get remove_base_tunnel peers_other_than \
+for f in cli_remove_peer peer_init peer_require_py peer_get remove_base_tunnel peers_other_than hubs_joined \
          frps_wss_front_remove backhaul_udp_remove backhaul_udp_unit gre6_sit_name; do
     awk -v f="$f" '$0 ~ "^"f"\\(\\) \\{" {p=1} p {print} p && /^}/ {exit}' "$ROOT/hashem.sh"
 done > "$T/fn.sh"
 # shellcheck disable=SC1091
 source "$T/fn.sh"
-for f in cli_remove_peer remove_base_tunnel peers_other_than; do
+for f in cli_remove_peer remove_base_tunnel peers_other_than hubs_joined; do
     declare -F "$f" >/dev/null || { echo "FAIL: $f not found in hashem.sh"; exit 1; }
 done
 remove_tunnel_force() { echo FORCE >> "$T/calls.log"; rm -f "$PEERS_FILE"; }
@@ -72,5 +72,26 @@ cli_remove_peer --id 1 --force >/dev/null
 check grep -q FORCE "$T/calls.log"
 rm -f "$PEERS_FILE"
 check [ "$(peers_other_than 0)" = 0 ]
+
+# 4. A foreign server's first Iran hub, next to the hubs it joined
+: > "$T/calls.log"
+rm -f "$PEERS_FILE" "$T/sd/"*
+touch "$T/sd/frpc.service" "$T/sd/gre-tunnel.service" "$T/sd/frpc-h2.service" "$T/sd/gre-h2.service" \
+      "$T/frp/frpc.toml" "$T/frp/frpc-h2.toml" "$T/frp/dial.env" "$T/frp/dial.streak" "$T/frp/dial.hold"
+echo '{"hubs": [{"id": 2, "name": "hub-2", "svc": "frpc-h2", "gre_if": "gre-h2"}]}' > "$T/panel/hubs.json"
+check [ "$(hubs_joined)" = 1 ]
+remove_base_tunnel >/dev/null
+check none FORCE
+check none 'frpc-h2|gre-h2'
+check [ ! -e "$T/sd/frpc.service" ]
+check [ ! -e "$T/frp/frpc.toml" ]
+check [ ! -e "$T/frp/dial.env" ]
+check [ ! -e "$T/frp/dial.hold" ]
+check [ -e "$T/sd/frpc-h2.service" ]
+check [ -e "$T/sd/gre-h2.service" ]
+check [ -e "$T/frp/frpc-h2.toml" ]
+check grep -q '"id": 2' "$T/panel/hubs.json"
+rm -f "$T/panel/hubs.json"
+check [ "$(hubs_joined)" = 0 ]
 
 (( fail )) && exit 1; echo "PASS test_remove_base_tunnel"

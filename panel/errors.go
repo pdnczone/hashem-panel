@@ -208,7 +208,7 @@ var errCatalog = map[string]errInfo{
 	"E-CLUSTER-01": {400, "bad cluster request", "Reload the page and try again."},
 	"E-CLUSTER-02": {400, "invalid cluster value", "Check the port (1-65535), protocol (tcp, udp, both), mode, weight (1-100) and priority (0-1000)."},
 	"E-CLUSTER-03": {409, "the port is already used", "Pick a port that is not another pool, the panel port or a tunnel's control port."},
-	"E-CLUSTER-04": {400, "unknown tunnel", "Use a tunnel of this server: 0 is the main tunnel, N is peer N (Tunnel tab)."},
+	"E-CLUSTER-04": {400, "unknown tunnel", "Use a tunnel of this server: 0 is the tunnel made in Setup, N is peer N (Tunnel tab)."},
 	"E-CLUSTER-05": {404, "no such pool or hub", "Reload the Cluster tab: it may have been removed already."},
 	"E-CLUSTER-06": {500, "cannot save cluster.json", "Check that /etc/gre-panel is writable (disk full or read-only?)."},
 	"E-CLUSTER-07": {400, "invalid code or bundle", "Copy the whole code again: hc1_ for an Iran hub, hsh1_/bh1_/gh1_ for a tunnel bundle."},

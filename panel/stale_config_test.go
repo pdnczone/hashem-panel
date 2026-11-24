@@ -133,11 +133,8 @@ func TestStaleConfigDoctorIssue(t *testing.T) {
 func TestPerPeerBackhaulUnitSetsRole(t *testing.T) {
 	staleLab(t)
 	st := localStatusFrom(&hostView{active: map[string]bool{"backhaul-server-3": true, "backhaul-server-2": true}})
-	if st.Role != "iran (backhaul)" || st.FrpSvc != "backhaul-server-2" || !st.FrpUp {
-		t.Fatalf("per-peer backhaul unit must set role, got role=%q svc=%q up=%v", st.Role, st.FrpSvc, st.FrpUp)
-	}
-	if st.Engine != "backhaul" && st.Engine != "gre-backhaul" {
-		t.Errorf("engine should be a backhaul variant, got %q", st.Engine)
+	if st.Role != "iran (backhaul)" || st.FrpSvc != "" || st.FrpUp || hasFirstTunnel(st) {
+		t.Fatalf("per-peer units set the role and make no first tunnel, got role=%q svc=%q up=%v", st.Role, st.FrpSvc, st.FrpUp)
 	}
 }
 

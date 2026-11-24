@@ -17,7 +17,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,7 +40,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	lv.CarrierID = mainCarrierID(snap.Local)
 	lv.Name = linkLabel("main")
 	lv.Rx, lv.Tx = mainCounters(snap)
-	resp := map[string]any{"local": lv, "peers": peers, "peer_count": len(peers), "peer_max": maxPeers(), "snapshot_age_ms": snap.AgeMs(),
+	resp := map[string]any{"local": lv, "peers": peers, "hubs": snap.Hubs, "peer_count": len(peers), "peer_max": maxPeers(), "snapshot_age_ms": snap.AgeMs(),
 		"counters_at": countersAtMs(snap), "server": statusServer(snap)}
 	if c, err := r.Cookie("gre_session"); err == nil && c.Value != "" {
 		resp["csrf_token"] = GenerateCSRFToken(c.Value)
@@ -203,6 +202,9 @@ func handleAction(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, r, "E-ACTION-03", err.Error())
 			return
 		}
+		if body.Action == "remove-tunnel" {
+			snapshotRebuild() // the page must not show it a while longer
+		}
 		writeJSON(w, map[string]string{"status": "ok", "output": out})
 	case "optimize", "restore", "tune-status":
 		// network tuning via the installer (single source of truth).
@@ -260,6 +262,10 @@ func runAction(action string, peerID int) (string, error) {
 				out, err := exec.Command("systemctl", "restart", svc).CombinedOutput()
 				return string(out), err
 			}
+			if relays, _ := otherTunnelUnits(); len(relays) > 0 { // no first tunnel: every tunnel there is
+				out, err := exec.Command("systemctl", append([]string{"restart"}, relays...)...).CombinedOutput()
+				return string(out), err
+			}
 		}
 		svc := peerFrpsSvc(peerID)
 		out, err := exec.Command("systemctl", "restart", svc).CombinedOutput()
@@ -269,6 +275,12 @@ func runAction(action string, peerID int) (string, error) {
 		return string(out), err
 	case "restart-gre":
 		svc := peerGreSvc(peerID)
+		if peerID <= 0 && !unitFileExists("gre-tunnel") {
+			if _, gres := otherTunnelUnits(); len(gres) > 0 {
+				out, err := exec.Command("systemctl", append([]string{"restart"}, gres...)...).CombinedOutput()
+				return string(out), err
+			}
+		}
 		out, err := exec.Command("systemctl", "restart", svc).CombinedOutput()
 		return string(out), err
 	case "ping":
@@ -279,23 +291,27 @@ func runAction(action string, peerID int) (string, error) {
 		out, err := exec.Command("ping", "-c", "3", "-W", "2", target).CombinedOutput()
 		return string(out), err
 	case "remove-tunnel":
-		if peerID > 0 {
+		if p := findPeer(peerID); peerID > 0 && (p == nil || !isBasePeer(*p)) {
 			return removePeerViaInstaller(peerID)
 		}
 		// The first tunnel next to other tunnels: remove it alone. The full
-		// removal stops every frps*, backhaul* and gre-t* and drops peers.json.
-		if peers := loadPeers(); len(peers) > 0 {
+		// removal stops every frps*, backhaul* and gre-t* and drops peers.json;
+		// on a foreign server it also drops the other Iran hubs.
+		peers, hubs := loadPeers(), readJoinedHubs()
+		if peerID > 0 || len(peers) > 0 || len(hubs) > 0 {
+			var out string
+			var err error
 			if p := basePeer(peers); p != nil {
-				out, err := removePeerViaInstaller(p.ID)
-				if err == nil {
-					firstTunnelForget()
-				}
-				return out, err
+				out, err = removePeerViaInstaller(p.ID)
+			} else if !hasFirstTunnel(localStatus()) && !tunnelExists() {
+				return "", fmt.Errorf("this server has no first tunnel; remove a tunnel by its own card")
+			} else {
+				out, err = removeViaInstaller("--base")
 			}
-			out, err := removeViaInstaller("--base")
 			invalidatePeerIfsCache()
 			if err == nil {
 				firstTunnelForget()
+				forgetPeerLink() // it was the link to the first tunnel's other server
 			}
 			return out, err
 		}
@@ -315,15 +331,53 @@ func runAction(action string, peerID int) (string, error) {
 	return "", fmt.Errorf("unknown action")
 }
 
+// otherTunnelUnits are the relay and GRE units of the tunnels that are not the
+// first one: the peers of a hub, or the extra Iran hubs of a foreign server.
+func otherTunnelUnits() (relays, gres []string) {
+	for _, p := range loadPeers() {
+		relays = append(relays, peerFrpsSvc(p.ID))
+		if !p.NoGre && p.GreIf != "none" {
+			gres = append(gres, peerGreSvc(p.ID))
+		}
+	}
+	for _, h := range readJoinedHubs() {
+		relays = append(relays, h.Svc)
+		if h.GreIf != "" && h.GreIf != "none" {
+			gres = append(gres, h.GreIf+".service")
+		}
+	}
+	return relays, gres
+}
+
+// firstTunnelName is what the tunnel made in Setup is called: the admin's name
+// for it, else the other server's address. It is one tunnel among the others.
+func firstTunnelName(remote string) string {
+	if n := linkLabel("main"); n != "" {
+		return n
+	}
+	if remote != "" {
+		return "Tunnel · " + remote
+	}
+	return "Tunnel"
+}
+
+// hasFirstTunnel: st describes a first tunnel that exists on this server, up
+// or down.
+func hasFirstTunnel(st tunnelStatus) bool { return st.FrpSvc != "" || baseTunnelConfigured(st) }
+
 // basePeer is the peer record that is the first tunnel itself (peer 1 on the
 // legacy names, or a peer that took gre-tunnel), or nil.
 func basePeer(peers []peerRecord) *peerRecord {
 	for i, p := range peers {
-		if p.Legacy || p.GreIf == "gre-tunnel" || slices.Contains(baseUnits, p.FrpsSvc) {
+		if isBasePeer(p) {
 			return &peers[i]
 		}
 	}
 	return nil
+}
+
+func isBasePeer(p peerRecord) bool {
+	return p.Legacy || p.GreIf == "gre-tunnel" || slices.Contains(baseUnits, p.FrpsSvc)
 }
 
 // tuneViaInstaller runs `hashem.sh optimize|restore|tune-status` and returns its
@@ -488,10 +542,10 @@ func peerFrpsSvc(peerID int) string {
 	if peerID > 0 {
 		if p := findPeer(peerID); p != nil && p.FrpsSvc != "" {
 			return p.FrpsSvc
+		} else if p != nil && (p.Legacy || p.GreIf == "gre-tunnel") {
+			return "frps"
 		}
-		if peerID > 1 {
-			return fmt.Sprintf("frps-%d", peerID)
-		}
+		return fmt.Sprintf("frps-%d", peerID)
 	}
 	return "frps"
 }
@@ -500,10 +554,10 @@ func peerGreSvc(peerID int) string {
 	if peerID > 0 {
 		if p := findPeer(peerID); p != nil && p.GreIf != "" {
 			return p.GreIf + ".service"
+		} else if p != nil && (p.Legacy || p.FrpsSvc == "frps") {
+			return "gre-tunnel.service"
 		}
-		if peerID > 1 {
-			return fmt.Sprintf("gre-t%d.service", peerID)
-		}
+		return fmt.Sprintf("gre-t%d.service", peerID)
 	}
 	return "gre-tunnel.service"
 }
@@ -514,7 +568,15 @@ func peerPingTarget(peerID int) string {
 			return p.PeerGre
 		}
 	}
-	return localStatus().GrePeer
+	if t := localStatus().GrePeer; t != "" {
+		return t
+	}
+	for _, p := range loadPeers() { // no first tunnel
+		if p.PeerGre != "" {
+			return p.PeerGre
+		}
+	}
+	return ""
 }
 
 // livePeersFrom derives every peer's live state from an already collected host
@@ -661,7 +723,7 @@ func stripANSI(s string) string {
 // Legacy peer 1 is the first tunnel; an installer this old can only remove
 // every tunnel with it, so it is refused until hashem.sh is updated.
 func removePeerDirect(p *peerRecord) (string, error) {
-	if p.Legacy || p.GreIf == "gre-tunnel" || slices.Contains(baseUnits, p.FrpsSvc) {
+	if isBasePeer(*p) {
 		return "", fmt.Errorf("the first tunnel cannot be removed without hashem.sh; run `hashem update`, then remove it again")
 	}
 	greSvc := p.GreIf
@@ -755,6 +817,9 @@ type tunnelStatus struct {
 	ProxyPorts   []int    `json:"proxy_ports"`
 	Ports        []int    `json:"ports,omitempty"`
 	BindPort     int      `json:"bind_port"`
+	// BasePeer: the first tunnel has a record in peers.json under this id, so
+	// it is shown and managed as that peer, not a second time on its own.
+	BasePeer int `json:"base_peer,omitempty"`
 	// TuneBackup: hashem.sh optimize saved the previous settings, so Restore works.
 	TuneBackup bool `json:"tune_backup"`
 }
@@ -814,6 +879,27 @@ func localStatus() tunnelStatus {
 	return localStatusFrom(directView(nil))
 }
 
+// roleOfTunnels is the role of a server without a first tunnel.
+func roleOfTunnels(v *hostView, peers []peerRecord, hubs []joinedHub) string {
+	bh := false
+	for _, p := range peers {
+		if !strings.HasPrefix(peerCarrier(p).Engine, "backhaul") && peerCarrier(p).Engine != "gre-backhaul" {
+			return "iran (server)"
+		}
+		bh = true
+	}
+	for u, on := range v.active {
+		bh = bh || (on && strings.HasPrefix(u, "backhaul-server-"))
+	}
+	switch {
+	case bh:
+		return "iran (backhaul)"
+	case len(hubs) > 0:
+		return "foreign (client)"
+	}
+	return ""
+}
+
 // localStatusFrom derives the base tunnel state from a collected host view plus
 // the config files; it runs no commands itself.
 func localStatusFrom(v *hostView) tunnelStatus {
@@ -869,31 +955,30 @@ func localStatusFrom(v *hostView) tunnelStatus {
 			break
 		}
 	}
-	if st.Role == "" {
-		// per-peer Backhaul units (backhaul-server-N) created for extra peers
-		var per []string
-		for u, on := range v.active {
-			if on && strings.HasPrefix(u, "backhaul-server-") {
-				per = append(per, u)
-			}
-		}
-		if len(per) > 0 {
-			sort.Strings(per) // deterministic: lowest unit name wins
-			st.FrpUp = true
-			st.FrpSvc = per[0]
-			st.Role = "iran (backhaul)"
-		}
-	}
+	peers, hubs := loadPeers(), readJoinedHubs()
 	if st.Role == "" {
 		// fall back to config presence, but only for an engine that is
-		// actually installed; a stale config alone must not claim a role
+		// actually installed; a stale config alone must not claim a role. Nor
+		// may a left-over client config on a server that serves tunnels, or a
+		// server config on one that only dials Iran hubs.
 		for _, c := range staleConfigCandidates() {
+			iran := strings.HasPrefix(c.role, "iran")
+			if (len(peers) > 0 && !iran) || (len(peers) == 0 && len(hubs) > 0 && iran) {
+				continue
+			}
 			if fileExists(c.path) && engineBinaryPresent(c.engine) {
 				st.Role = c.role
 				st.FrpSvc = c.svc
 				break
 			}
 		}
+	}
+	if st.Role == "" {
+		// No first tunnel (it was removed, or every tunnel was added by its
+		// number): the tunnels that are there say what this server is. None of
+		// them becomes the first tunnel; naming a peer's unit here showed that
+		// peer twice, and an FRP peer gave no role at all.
+		st.Role = roleOfTunnels(v, peers, hubs)
 	}
 	// ports & proxies from Backhaul or FRP
 	if strings.HasPrefix(st.FrpSvc, "backhaul") {

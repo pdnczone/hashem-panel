@@ -643,7 +643,6 @@
     border:1px solid var(--ln); border-radius:10px; margin-top:8px; cursor:pointer;
     background:var(--sunk); transition:border-color .15s; }
   .dash-peer-row:hover { border-color:var(--ln2); }
-  /* main tunnel card: gold left accent so it stands apart from peer cards */
   .det-copy { border:1px solid var(--ln); background:var(--s2); color:var(--mu); border-radius:7px;
     font-size:12px; font-weight:700; min-width:28px; min-height:28px; padding:3px 8px; cursor:pointer; transition:all .15s ease; }
   .det-copy:hover { color:var(--tx); border-color:var(--ac); }
@@ -2195,7 +2194,7 @@
           <div class="tc-header">
             <div>
               <p class="tc-title">GRE wrap</p>
-              <div class="qs-hint">How the main tunnel's GRE packets travel between the two servers. Direct GRE is the fastest. WSS wraps them in TLS on a web port, for networks that block or slow down GRE (protocol 47). 6to4 and 4in6 carry them over IPv6.</div>
+              <div class="qs-hint">How the GRE packets of the tunnel made in Setup travel between the two servers. Direct GRE is the fastest. WSS wraps them in TLS on a web port, for networks that block or slow down GRE (protocol 47). 6to4 and 4in6 carry them over IPv6.</div>
             </div>
             <span class="badge info" id="carrierActiveBadge">Direct GRE</span>
           </div>

@@ -402,18 +402,18 @@ func handlePeersPatch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if body.RemotePub == "" && body.Carrier == "" && body.Engine == "" && body.Transport == "" && body.Ports == nil && body.RawPorts == nil {
-			writeJSON(w, map[string]any{"status": "ok", "output": "main tunnel renamed"})
+			writeJSON(w, map[string]any{"status": "ok", "output": "tunnel renamed"})
 			return
 		}
-		excludeID := 0
-		var legacyPeer *peerRecord
-		for _, p := range loadPeers() {
-			if p.Legacy || p.ID == 1 {
-				excludeID = p.ID
-				c := p
-				legacyPeer = &c
-				break
-			}
+		// its record, when it has one: peer 1 is not it when the first tunnel
+		// came from Setup (the second tunnel then has number 1)
+		excludeID := mainTunnelID
+		legacyPeer := basePeer(loadPeers())
+		if legacyPeer != nil {
+			excludeID = legacyPeer.ID
+		} else if !hasFirstTunnel(localStatus()) {
+			writeAPIError(w, r, "E-PEER-05", "this server has no first tunnel")
+			return
 		}
 		if body.Ports != nil {
 			if clash := peerPortClash(*body.Ports, excludeID); clash != "" {
@@ -427,7 +427,7 @@ func handlePeersPatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		bundle := generateMainBundle(body, legacyPeer)
-		resp := map[string]any{"status": "ok", "output": "main tunnel configuration updated"}
+		resp := map[string]any{"status": "ok", "output": "tunnel configuration updated"}
 		if bundle != "" {
 			resp["bundle"] = bundle
 		}
@@ -609,14 +609,7 @@ func editPeerDirect(peer *peerRecord, req peerPatchRequest) (string, error) {
 		return "", fmt.Errorf("write peers.json: %w", err)
 	}
 
-	greIf := peer.GreIf
-	if greIf == "" {
-		if peer.ID > 1 {
-			greIf = fmt.Sprintf("gre-t%d", peer.ID)
-		} else {
-			greIf = "gre-tunnel"
-		}
-	}
+	greIf := strings.TrimSuffix(peerGreSvc(peer.ID), ".service")
 
 	// 2. Reconfigure GRE remote endpoint if remote_pub changed (only if not standalone Backhaul)
 	if !peer.NoGre && peer.Engine != "backhaul" && req.RemotePub != "" && req.RemotePub != peer.RemotePub {
@@ -696,7 +689,7 @@ func editPeerDirect(peer *peerRecord, req peerPatchRequest) (string, error) {
 
 		if peer.Engine == "backhaul" || peer.Engine == "gre-backhaul" {
 			tomlPath := filepath.Join(backhaulDir, fmt.Sprintf("server-%d.toml", peer.ID))
-			if _, err := os.Stat(tomlPath); err != nil && peer.ID <= 1 {
+			if _, err := os.Stat(tomlPath); err != nil && isBasePeer(*peer) {
 				tomlPath = filepath.Join(backhaulDir, "config.toml")
 			}
 			if rawToml, err := os.ReadFile(tomlPath); err == nil {
@@ -705,9 +698,8 @@ func editPeerDirect(peer *peerRecord, req peerPatchRequest) (string, error) {
 			}
 			svc := peer.FrpsSvc
 			if svc == "" {
-				if peer.ID > 1 {
-					svc = fmt.Sprintf("backhaul-server-%d", peer.ID)
-				} else {
+				svc = fmt.Sprintf("backhaul-server-%d", peer.ID)
+				if isBasePeer(*peer) {
 					svc = "backhaul-server"
 				}
 			}
@@ -738,7 +730,7 @@ func editMainTunnelDirect(req peerPatchRequest, legacyPeer *peerRecord) (string,
 	if legacyPeer != nil {
 		peers := loadPeers()
 		for i := range peers {
-			if peers[i].Legacy || peers[i].ID == 1 {
+			if peers[i].ID == legacyPeer.ID {
 				if req.Name != "" {
 					peers[i].Name = req.Name
 				}
@@ -835,7 +827,7 @@ func generatePeerBundle(peer *peerRecord, req peerPatchRequest) string {
 	token := peer.Token
 	if token == "" {
 		tomlPath := filepath.Join(frpDir, fmt.Sprintf("frps-%d.toml", peer.ID))
-		if _, err := os.Stat(tomlPath); err != nil && peer.ID == 1 {
+		if _, err := os.Stat(tomlPath); err != nil && isBasePeer(*peer) {
 			tomlPath = filepath.Join(frpDir, "frps.toml")
 		}
 		if raw, err := os.ReadFile(tomlPath); err == nil {
@@ -850,7 +842,7 @@ func generatePeerBundle(peer *peerRecord, req peerPatchRequest) string {
 		}
 		if token == "" {
 			bhPath := filepath.Join(backhaulDir, fmt.Sprintf("server-%d.toml", peer.ID))
-			if _, err := os.Stat(bhPath); err != nil && peer.ID == 1 {
+			if _, err := os.Stat(bhPath); err != nil && isBasePeer(*peer) {
 				bhPath = filepath.Join(backhaulDir, "config.toml")
 			}
 			if raw, err := os.ReadFile(bhPath); err == nil {
@@ -933,6 +925,17 @@ func generateMainBundle(req peerPatchRequest, legacyPeer *peerRecord) string {
 			rawPorts = legacyPeer.RawPorts
 		}
 	}
+	if legacyPeer == nil {
+		// no record of its own: what it runs with
+		t := mainSwapTunnel(localStatus(), nil)
+		if t.Port > 0 {
+			frpPort = t.Port
+		}
+		if t.LocalGre != "" && t.PeerGre != "" {
+			iranGre, foreignGre = t.LocalGre, t.PeerGre
+		}
+		engine, transport = t.Current.Engine, t.Current.Transport
+	}
 	if len(rawPorts) == 0 && len(ports) > 0 {
 		rawPorts = make([]string, len(ports))
 		for i, p := range ports {
@@ -963,6 +966,7 @@ func generateMainBundle(req peerPatchRequest, legacyPeer *peerRecord) string {
 			}
 		}
 	}
+	frpTrans := ""
 	if iranPub == "" || token == "" {
 		return ""
 	}
@@ -972,11 +976,12 @@ func generateMainBundle(req peerPatchRequest, legacyPeer *peerRecord) string {
 	if engine == "gre-backhaul" {
 		return MakeGreBackhaulBundle(iranPub, frpPort, iranGre, foreignGre, backhaulBundleTransport(transport, backhaulUDPPort("backhaul-server")), token, rawPorts)
 	}
-	frpTrans := ""
 	if req.FRPTransport != "" {
 		frpTrans = req.FRPTransport
 	} else if legacyPeer != nil {
 		frpTrans = legacyPeer.FRPTransport
+	} else {
+		frpTrans = transport
 	}
 	return MakeBundle(iranPub, frpPort, iranGre, foreignGre, token, ports, frpTrans)
 }
@@ -1065,13 +1070,9 @@ func editMainTunnelPortsDirect(newPorts []int) error {
 
 	// 1. If legacy peer exists in peers.json, update it
 	peers := loadPeers()
-	for i := range peers {
-		if peers[i].Legacy || peers[i].ID == 1 {
-			peers[i].Ports = newPorts
-			editedAny = true
-		}
-	}
-	if editedAny {
+	if p := basePeer(peers); p != nil {
+		p.Ports = newPorts
+		editedAny = true
 		_ = writePeers(peers)
 	}
 

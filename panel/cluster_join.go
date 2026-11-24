@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -71,6 +72,54 @@ func readJoinedHubs() []joinedHub {
 	return out
 }
 
+// hubLive is a joined Iran hub as the snapshot sees it.
+type hubLive struct {
+	joinedHub
+	GreUp       bool     `json:"gre_up"`
+	FrpUp       bool     `json:"frp_up"`
+	Rx          *uint64  `json:"rx"`
+	Tx          *uint64  `json:"tx"`
+	HealthState string   `json:"health_state"`
+	Reasons     []string `json:"reasons"`
+	LatencyMs   float64  `json:"latency_ms"`
+	LatencyKind string   `json:"latency_kind"`
+}
+
+func (h joinedHub) noGre() bool { return h.GreIf == "" || h.GreIf == "none" }
+
+// liveHubsFrom derives the joined hubs' state from a collected host view.
+func liveHubsFrom(v *hostView, hubs []joinedHub) []hubLive {
+	var out []hubLive
+	for _, h := range hubs {
+		l := hubLive{joinedHub: h, GreUp: v.inner[h.GreIf] != "", FrpUp: v.active[h.Svc]}
+		if h.noGre() {
+			l.GreUp = l.FrpUp
+		}
+		l.Active = l.FrpUp
+		var found []ssSession
+		for _, c := range v.sessions {
+			if (c.RHost == normHost(h.IranPub) || (h.IranGre != "" && c.RHost == h.IranGre)) && slices.Contains(controlPorts(h.Port), c.RPort) {
+				found = append(found, c)
+			}
+		}
+		l.Session = l.FrpUp && len(found) > 0
+		cr, ct := v.carrierTraffic(h.Svc)
+		if !h.noGre() {
+			gr, gt := v.traffic(h.GreIf)
+			cr, ct = sumCounters(gr, gt, cr, ct)
+		}
+		l.Rx, l.Tx = cr, ct
+		sig := LinkSignals{ServiceActive: l.FrpUp, GreIfUp: l.GreUp, Session: l.Session, TCPRTTms: -1, ICMPms: -1, TrafficFlowing: v.flowing[h.GreIf]}
+		if l.Session {
+			sig.TCPRTTms = minRTT(found)
+		}
+		e := ComputeHealth(sig)
+		l.HealthState, l.Reasons, l.LatencyMs, l.LatencyKind = e.State, e.Reasons, e.LatencyMs, e.LatencyKind
+		out = append(out, l)
+	}
+	return out
+}
+
 var (
 	joinedMu    sync.Mutex
 	joinedCache []joinedHub
@@ -88,7 +137,7 @@ func joinedHubsView() []joinedHub {
 	joinedAt = time.Now()
 	s := lbSnapshot()
 	var out []joinedHub
-	if s != nil && strings.HasPrefix(s.Local.Role, "foreign") {
+	if s != nil && strings.HasPrefix(s.Local.Role, "foreign") && hasFirstTunnel(s.Local) { // the first may be removed
 		out = append(out, joinedHub{ID: 1, Name: "First hub", IranPub: s.Local.RemotePub, Svc: s.Local.FrpSvc,
 			Port: s.Local.BindPort, Active: s.Local.FrpUp, Session: s.LocalSession, First: true})
 	}
@@ -239,5 +288,6 @@ func handleClusterLeaveHub(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, "E-CLUSTER-11", lastLines(out, 6))
 		return
 	}
+	snapshotRebuild()
 	writeJSON(w, map[string]any{"status": "ok"})
 }

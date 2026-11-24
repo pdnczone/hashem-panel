@@ -33,7 +33,7 @@ The panel binary comes from the active [update channel](#updates-downgrade-and-c
 The panel is one page with these tabs:
 
 - **Dashboard** — a banner with one big word (Healthy / Degraded / Down) and one line per tunnel; KPIs; the Fleet Health card with hub latency, the topology graph and per-server cards.
-- **Tunnel** — every tunnel on this server: the main tunnel, the foreign-server peer cards and the Bagher card (start, stop, copy bundle, quick edit, remove); per-tunnel PASS/FAIL checks, the dial-route card, and the GRE carrier (Direct GRE or WSS, its port and SNI).
+- **Tunnel** — every tunnel on this server, one card each: the foreign servers of an Iran hub, the Iran hubs a foreign server serves, and the Bagher card (start, stop, copy bundle, quick edit, remove); per-tunnel PASS/FAIL checks, the dial-route card, and the GRE carrier (Direct GRE or WSS, its port and SNI).
 - **Performance** [PRO] — the settings of the engine this server runs: for FRP, Auto Pool, encryption, compression, TCP multiplexing, PROXY protocol (real client IP for Xray), a bandwidth limit per port and a health check; for Backhaul, the connection pool. Plus the kernel network stack (Optimize Network / Restore).
 - **Diagnostics** [PRO] — latency, jitter, MTU and speed tests; the same engine as `hashem doctor`.
 - **Setup** — create any tunnel: GRE + FRP, Backhaul (with or without GRE) or Bagher; bundles and peers.
@@ -56,7 +56,7 @@ The same rule is used by the Dashboard banner, the fleet cards and the topology 
 
 *Linked* is detected with `ss -Htn state established` on the control port (also `port+2` for the wss front and `port-2`).
 
-The dashboard's overall status uses the same function. The main tunnel counts as one more spoke of the hub (synthetic id `0`, named `Tunnel · <ip>`).
+The dashboard's overall status uses the same function. Every tunnel counts the same. The one made in Setup has no peer record: its id is `0`, and it is named `Tunnel · <ip>` until you name it. Removing it leaves the others as they are.
 
 **Latency** per link is taken in this order: (1) ICMP ping of the GRE inner address → kind `icmp`; (2) if ICMP fails, the kernel TCP RTT of the live session on the control port (from `ss -tin`) → kind `tcp`; (3) otherwise `—`. The hub summary (`/api/fleet` → `latency`) gives avg, min, max over links that have a value, the count, and how many are `icmp` vs `tcp`. History, sparkline, average, loss and uptime use the same value.
 

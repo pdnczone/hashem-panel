@@ -66,7 +66,7 @@ What a pool gives you:
 ## 2. Words used here
 
 - **Iran hub (hub):** the Iran server. Users connect to it.
-- **Foreign server:** the server abroad that the hub tunnels to. Hashem calls it a *peer* on the hub. Tunnel id `0` is the main tunnel made in Setup; `N` is peer N (`hashem peer-list`).
+- **Foreign server:** the server abroad that the hub tunnels to. Hashem calls it a *peer* on the hub. Tunnel id `0` is the tunnel made in Setup; `N` is peer N (`hashem peer-list`).
 - **Link / tunnel:** one hub ↔ foreign server tunnel (an `frps` or `backhaul-server` unit on the hub).
 - **Pool:** one public port on the hub (TCP, UDP or both) served by several links.
 - **Member:** a link in a pool.
@@ -95,7 +95,7 @@ Every step can be done in the panel (**Cluster** tab), in the terminal menu (`ha
 
 Goal: everything goes through foreign server A. If A dies, B takes over within seconds.
 
-1. On the hub, add A as a foreign server in **Setup** with port 443 (or use the main tunnel).
+1. On the hub, add A as a foreign server in **Setup** with port 443 (or use a tunnel you already have).
 2. **Cluster → New Pool** → port `443`, protocol TCP (or TCP and UDP), mode **Failover**. A is already ticked because it carries port 443. Save: A's relay restarts once to move behind the pool.
 3. Add B in **Setup**, also with port 443. A port without a pool belongs to one tunnel only, so B is accepted only now that the pool covers 443. B joins the pool by itself, already behind it.
 4. Give A priority `0` and B priority `1` (click B's line on the map, or Edit). The pool shows **Healthy**, with 100% on A.
@@ -449,7 +449,7 @@ hashem cluster pool rm|enable|disable|failback PORT [--proto P]
 
 hashem cluster member add|rm|drain|resume|set PORT LINK [--weight N] [--priority N] [--port N]
                               [--backup yes|no] [--max-conn N] [--proto P]
-                              # LINK: 0 = main tunnel, N = peer N
+                              # LINK: 0 = the tunnel made in Setup, N = peer N
 
 hashem cluster join-code
 hashem cluster add-hub hc1_...
@@ -498,7 +498,7 @@ All routes are under the panel's secret path. Changes need a session and the CSR
 ```
 
 - **Private addresses.** Each pooled relay listens on its own private address instead of `0.0.0.0`:
-  - the main tunnel (`frps` / `backhaul-server`) gets `169.254.77.1`;
+  - the tunnel made in Setup (`frps` / `backhaul-server`) gets `169.254.77.1`;
   - peer N (`frps-N` / `backhaul-server-N`) gets `169.254.77.(N+1)`.
 
   The addresses live on the dummy interface `hashem-lb`, which `hashem-lb-net.service` recreates at boot. FRP gets `proxyBindAddr`; Backhaul port entries become `169.254.77.N:port`. The script and the panel agree on the same addresses (`lb-binds`, `lb-ports` in `/etc/gre-panel`), so rewriting a peer keeps the binding.

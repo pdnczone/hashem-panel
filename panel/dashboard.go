@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -107,6 +108,40 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		case up > 0:
 			health = "DEGRADED"
 		}
+	} else if len(snap.Hubs) > 0 {
+		// a foreign server with several Iran hubs, with or without its first one
+		states := make([]string, 0, len(snap.Hubs)+1)
+		if hasFirstTunnel(st) {
+			h := spokeHealth(snap)
+			states = append(states, h.State)
+			reasons, icmpFiltered, latMs, latKind = h.Reasons, h.ICMPFiltered, h.LatencyMs, h.LatencyKind
+		}
+		for _, h := range snap.Hubs {
+			states = append(states, h.HealthState)
+			anyUp = anyUp || h.FrpUp
+			if h.HealthState != stateHealthy {
+				for _, rs := range h.Reasons {
+					reasons = append(reasons, h.Name+": "+rs)
+				}
+			}
+			if latKind == "" {
+				latMs, latKind = h.LatencyMs, h.LatencyKind
+			}
+		}
+		healthy, up := 0, 0
+		for _, s := range states {
+			if s == stateHealthy {
+				healthy++
+			}
+			if s != stateDown {
+				up++
+			}
+		}
+		if healthy == len(states) {
+			health = "HEALTHY"
+		} else if up > 0 {
+			health = "DEGRADED"
+		}
 	} else {
 		greConfigured := st.Gre.Exists || st.FrpUp
 		if greConfigured {
@@ -134,6 +169,18 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	lastErr := lastErrorEvent()
 
 	engine := st.Engine
+	if engine == "" && !hasFirstTunnel(st) { // every other tunnel's engine, when they agree
+		var kinds []string
+		for _, p := range peers {
+			kinds = append(kinds, peerCarrier(p.peerRecord).Engine)
+		}
+		for _, h := range snap.Hubs {
+			kinds = append(kinds, h.Engine)
+		}
+		if k := slices.Compact(slices.Sorted(slices.Values(kinds))); len(k) == 1 {
+			engine = k[0]
+		}
+	}
 	if engine == "" {
 		if strings.HasPrefix(st.FrpSvc, "backhaul") {
 			engine = "backhaul"
@@ -149,6 +196,8 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"health":          health,
 		"peer_count":      len(peers),
 		"peers":           peers,
+		"hubs":            snap.Hubs,
+		"base_peer":       st.BasePeer, // the first tunnel is this peer, not one more
 		"ping_ok":         st.PingOK,
 		"ping":            nilIfEmpty(st.PingMs),
 		"health_state":    strings.ToLower(health),
