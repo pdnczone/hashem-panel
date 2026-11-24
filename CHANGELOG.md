@@ -3,7 +3,9 @@
 Format: newest first. Versions are git tags; every tag has a GitHub release with `checksums.txt`.
 Builds before `v0.1.0` were numbered `panel-rN` (see the releases page).
 
-## Unreleased
+## v3.2.10 — 2026-11-24
+
+**The cluster shares users by the traffic each server really carries, has a failover mode, and keeps the domain right when the server that writes it is cut off; every tunnel stands on its own; GRE addresses do not clash.** Run `hashem update` on every server: the cluster's new modes need every hub on this version.
 
 - **Cluster: 50-50 is 50-50.** One Iran hub could get most users although the shares were equal. A domain name alone cannot split users (resolvers keep one answer for many phones, phones prefer one address, sessions stay for hours), and the panel made it worse: an IPv6 address was published for the only hub that had one, which took every IPv6 user; a panel restart took a hub out of the record for a moment; addresses of unlinked hubs, or old ones, stayed in it for good; a hub whose pools were all disabled counted as not working. All fixed. And the panel now measures the traffic every hub carries ("Carries now" on the card) and points the domain more to the one below its share until they match. A hub that users cannot reach is not sent more of them. Addresses in the record that are no hub's are shown. Failover mode and measured shares need every hub on this version: an older one that takes over the writing writes plain balance.
 - **Cluster: failover mode.** Besides Balance: all users on the first working hub of a list, the next one takes over, and back after the first has worked for a minute.
